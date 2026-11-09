@@ -1,0 +1,114 @@
+[
+  {
+    "screen": "S1 Home (Empty State)",
+    "compose_screenshot": "s1_home_empty.png",
+    "reference_still": "S1_home_no_keyboard.png",
+    "overlay_file": "s1_home_empty_overlay.png",
+    "mean_channel_diff_0_255": 2.01,
+    "structural_color_similarity_pct": 99.21
+  },
+  {
+    "screen": "S2 Composer Non-Empty",
+    "compose_screenshot": "s2_composer_non_empty.png",
+    "reference_still": "S2_composer_non_empty_send.png",
+    "overlay_file": "s2_composer_non_empty_overlay.png",
+    "mean_channel_diff_0_255": 84.47,
+    "structural_color_similarity_pct": 66.87
+  },
+  {
+    "screen": "S3 Chat Reasoning",
+    "compose_screenshot": "s3_chat_reasoning.png",
+    "reference_still": "S3_chat_reasoning_step1.png",
+    "overlay_file": "s3_chat_reasoning_overlay.png",
+    "mean_channel_diff_0_255": 4.46,
+    "structural_color_similarity_pct": 98.25
+  },
+  {
+    "screen": "S3 Chat Completed (Bidi Fixed)",
+    "compose_screenshot": "s3_chat_completed.png",
+    "reference_still": "S3_chat_completed_actions.png",
+    "overlay_file": "s3_chat_completed_overlay.png",
+    "mean_channel_diff_0_255": 3.82,
+    "structural_color_similarity_pct": 98.5
+  },
+  {
+    "screen": "S4 Steps Bottom Sheet",
+    "compose_screenshot": "s4_steps_sheet.png",
+    "reference_still": "S4_steps_sheet_open.png",
+    "overlay_file": "s4_steps_sheet_overlay.png",
+    "mean_channel_diff_0_255": 44.05,
+    "structural_color_similarity_pct": 82.73
+  },
+  {
+    "screen": "S5 Header Overflow Menu",
+    "compose_screenshot": "s5_overflow_menu.png",
+    "reference_still": "S5_header_overflow_menu.png",
+    "overlay_file": "s5_overflow_menu_overlay.png",
+    "mean_channel_diff_0_255": 5.43,
+    "structural_color_similarity_pct": 97.87
+  },
+  {
+    "screen": "S6 Attachment Sheet",
+    "compose_screenshot": "s6_attachment_sheet.png",
+    "reference_still": "S6_attachment_sheet.png",
+    "overlay_file": "s6_attachment_sheet_overlay.png",
+    "mean_channel_diff_0_255": 15.1,
+    "structural_color_similarity_pct": 94.08
+  },
+  {
+    "screen": "S7 Navigation Drawer (80%)",
+    "compose_screenshot": "s7_drawer_open.png",
+    "reference_still": "S7_drawer_open.png",
+    "overlay_file": "s7_drawer_open_overlay.png",
+    "mean_channel_diff_0_255": 6.53,
+    "structural_color_similarity_pct": 97.44
+  },
+  {
+    "screen": "S8 Notifications Screen",
+    "compose_screenshot": "s8_notifications.png",
+    "reference_still": "S8_notifications_screen.png",
+    "overlay_file": "s8_notifications_overlay.png",
+    "mean_channel_diff_0_255": 11.97,
+    "structural_color_similarity_pct": 95.31
+  },
+  {
+    "screen": "S9 Incognito Chat",
+    "compose_screenshot": "s9_incognito.png",
+    "reference_still": "S9_incognito_no_keyboard.png",
+    "overlay_file": "s9_incognito_overlay.png",
+    "mean_channel_diff_0_255": 3.04,
+    "structural_color_similarity_pct": 98.81
+  },
+  {
+    "screen": "S10 Settings Screen",
+    "compose_screenshot": "s10_settings.png",
+    "reference_still": "S10_settings_top.png",
+    "overlay_file": "s10_settings_overlay.png",
+    "mean_channel_diff_0_255": 15.14,
+    "structural_color_similarity_pct": 94.06
+  },
+  {
+    "screen": "S10 App Appearance",
+    "compose_screenshot": "s10_appearance.png",
+    "reference_still": "S10_settings_appearance.png",
+    "overlay_file": "s10_appearance_overlay.png",
+    "mean_channel_diff_0_255": 3.34,
+    "structural_color_similarity_pct": 98.69
+  },
+  {
+    "screen": "S10 App Info",
+    "compose_screenshot": "s10_app_info.png",
+    "reference_still": "S10_settings_app_info.png",
+    "overlay_file": "s10_app_info_overlay.png",
+    "mean_channel_diff_0_255": 3.09,
+    "structural_color_similarity_pct": 98.79
+  },
+  {
+    "screen": "S11 Voice Input Bar",
+    "compose_screenshot": "s11_voice_input.png",
+    "reference_still": "S11_voice_input_bar.png",
+    "overlay_file": "s11_voice_input_overlay.png",
+    "mean_channel_diff_0_255": 2.17,
+    "structural_color_similarity_pct": 99.15
+  }
+]
