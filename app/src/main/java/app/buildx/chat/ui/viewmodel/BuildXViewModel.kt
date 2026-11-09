@@ -10,12 +10,14 @@ import android.speech.SpeechRecognizer
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.buildx.chat.data.model.AppAppearance
+import app.buildx.chat.data.model.AppLanguage
 import app.buildx.chat.data.model.AppNotificationItem
 import app.buildx.chat.data.model.AttachmentRow
 import app.buildx.chat.data.model.ChatMessage
 import app.buildx.chat.data.model.ChatMode
 import app.buildx.chat.data.model.ChatSseEvent
 import app.buildx.chat.data.model.Conversation
+import app.buildx.chat.data.model.MainSurfacePane
 import app.buildx.chat.data.model.ReasoningStep
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
@@ -38,6 +40,8 @@ data class BuildXUiState(
     val authError: String? = null,
     val profile: UserProfile? = null,
     val appearance: AppAppearance = AppAppearance.AUTOMATIC,
+    val language: AppLanguage = AppLanguage.SYSTEM,
+    val activeSurfacePane: MainSurfacePane = MainSurfacePane.CHAT,
     val conversations: List<Conversation> = emptyList(),
     val filteredConversations: List<Conversation> = emptyList(),
     val unreadConversationIds: Set<String> = emptySet(),
@@ -47,6 +51,7 @@ data class BuildXUiState(
     val isStreaming: Boolean = false,
     val isIncognito: Boolean = false,
     val mode: ChatMode = ChatMode.THINKING,
+    val isModePopupOpen: Boolean = false,
     val composerText: String = "",
     val stagedAttachments: List<StagedAttachment> = emptyList(),
     val recentDeviceImages: List<StagedAttachment> = emptyList(),
@@ -73,7 +78,12 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     val repository = BuildXRepository(application.applicationContext)
 
-    private val _uiState = MutableStateFlow(BuildXUiState())
+    private val _uiState = MutableStateFlow(
+        BuildXUiState(
+            appearance = repository.getSavedAppearance(),
+            language = repository.getSavedLanguage()
+        )
+    )
     val uiState: StateFlow<BuildXUiState> = _uiState.asStateFlow()
 
     private var activeStreamJob: Job? = null
@@ -90,11 +100,13 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             if (uid != null) {
                 runCatching {
                     val profile = repository.ensureUserProfile()
+                    val resolvedAppearance = AppAppearance.fromDb(profile.appearance)
+                    repository.saveAppearanceLocal(resolvedAppearance)
                     _uiState.update {
                         it.copy(
                             isAuthenticated = true,
                             profile = profile,
-                            appearance = AppAppearance.fromDb(profile.appearance)
+                            appearance = resolvedAppearance
                         )
                     }
                     refreshConversationsAndAttachments()
@@ -112,13 +124,15 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { it.copy(isAuthLoading = true, authError = null) }
             val result = repository.signInWithEmail(email, password)
             result.onSuccess { profile ->
+                val resolvedAppearance = AppAppearance.fromDb(profile.appearance)
+                repository.saveAppearanceLocal(resolvedAppearance)
                 _uiState.update {
                     it.copy(
                         isAuthenticated = true,
                         isAuthLoading = false,
                         authError = null,
                         profile = profile,
-                        appearance = AppAppearance.fromDb(profile.appearance)
+                        appearance = resolvedAppearance
                     )
                 }
                 refreshConversationsAndAttachments()
@@ -144,13 +158,15 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { it.copy(isAuthLoading = true, authError = null) }
             val result = repository.signUpWithEmail(email, password, displayName, handle)
             result.onSuccess { profile ->
+                val resolvedAppearance = AppAppearance.fromDb(profile.appearance)
+                repository.saveAppearanceLocal(resolvedAppearance)
                 _uiState.update {
                     it.copy(
                         isAuthenticated = true,
                         isAuthLoading = false,
                         authError = null,
                         profile = profile,
-                        appearance = AppAppearance.fromDb(profile.appearance)
+                        appearance = resolvedAppearance
                     )
                 }
                 refreshConversationsAndAttachments()
@@ -169,7 +185,11 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         activeStreamJob?.cancel()
         viewModelScope.launch {
             repository.signOut()
-            _uiState.value = BuildXUiState(isAuthenticated = false)
+            _uiState.value = BuildXUiState(
+                isAuthenticated = false,
+                appearance = repository.getSavedAppearance(),
+                language = repository.getSavedLanguage()
+            )
         }
     }
 
@@ -184,7 +204,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     conversations = convs,
                     filteredConversations = if (state.searchQuery.isBlank()) convs else state.filteredConversations,
                     unreadConversationIds = unreadIds - setOfNotNull(state.activeConversationId),
-                    activeConversationTitle = activeConv?.title ?: "Build X",
+                    activeConversationTitle = activeConv?.cleanTitle ?: "Build X",
                     userUploadedAttachments = uploaded
                 )
             }
@@ -198,14 +218,50 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     fun toggleMode() {
         _uiState.update { state ->
             val nextMode = if (state.mode == ChatMode.THINKING) ChatMode.INSTANT else ChatMode.THINKING
-            state.copy(mode = nextMode)
+            state.copy(mode = nextMode, isModePopupOpen = false)
+        }
+    }
+
+    fun toggleModePopup(open: Boolean? = null) {
+        _uiState.update { state ->
+            val nextOpen = open ?: !state.isModePopupOpen
+            state.copy(
+                isModePopupOpen = nextOpen,
+                isOverflowMenuOpen = false
+            )
+        }
+    }
+
+    fun selectMode(mode: ChatMode) {
+        _uiState.update { state ->
+            state.copy(
+                mode = mode,
+                isModePopupOpen = false
+            )
         }
     }
 
     fun setDrawerOpen(open: Boolean) {
-        _uiState.update { it.copy(isDrawerOpen = open, isOverflowMenuOpen = false) }
+        _uiState.update {
+            it.copy(
+                isDrawerOpen = open,
+                isOverflowMenuOpen = false,
+                isModePopupOpen = false
+            )
+        }
         if (open) {
             refreshConversationsAndAttachments()
+        }
+    }
+
+    fun openSurfacePane(pane: MainSurfacePane) {
+        _uiState.update {
+            it.copy(
+                activeSurfacePane = pane,
+                isDrawerOpen = false,
+                isOverflowMenuOpen = false,
+                isModePopupOpen = false
+            )
         }
     }
 
@@ -213,6 +269,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         activeStreamJob?.cancel()
         _uiState.update {
             it.copy(
+                activeSurfacePane = MainSurfacePane.CHAT,
                 activeConversationId = null,
                 activeConversationTitle = "Build X",
                 messages = emptyList(),
@@ -221,7 +278,8 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 composerText = "",
                 stagedAttachments = emptyList(),
                 isDrawerOpen = false,
-                isOverflowMenuOpen = false
+                isOverflowMenuOpen = false,
+                isModePopupOpen = false
             )
         }
     }
@@ -234,13 +292,15 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             repository.markConversationRead(conversationId)
             _uiState.update { state ->
                 state.copy(
+                    activeSurfacePane = MainSurfacePane.CHAT,
                     activeConversationId = conversationId,
-                    activeConversationTitle = conv?.title ?: "Build X",
+                    activeConversationTitle = conv?.cleanTitle ?: "Build X",
                     messages = msgs,
                     isStreaming = false,
                     isIncognito = false,
                     isDrawerOpen = false,
                     isOverflowMenuOpen = false,
+                    isModePopupOpen = false,
                     unreadConversationIds = state.unreadConversationIds - conversationId
                 )
             }
@@ -311,7 +371,8 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 stagedAttachments = emptyList(),
                 messages = it.messages + userMsg + pendingAssistantMsg,
                 isStreaming = true,
-                isOverflowMenuOpen = false
+                isOverflowMenuOpen = false,
+                isModePopupOpen = false
             )
         }
 
@@ -395,10 +456,15 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                         }
 
                         is ChatSseEvent.TitleEvent -> {
+                            val cleanTitle = event.title
+                                .removePrefix("محادثة:")
+                                .removePrefix("محادثة :")
+                                .trim()
+                                .ifEmpty { event.title }
                             _uiState.update { s ->
                                 s.copy(
                                     activeConversationId = event.conversationId ?: s.activeConversationId,
-                                    activeConversationTitle = event.title
+                                    activeConversationTitle = cleanTitle
                                 )
                             }
                         }
@@ -426,7 +492,9 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                             }
                             if (!isIncognito && finalConvId != null) {
                                 val viewingThisConversation =
-                                    _uiState.value.activeConversationId == finalConvId && !_uiState.value.isDrawerOpen
+                                    _uiState.value.activeConversationId == finalConvId &&
+                                        !_uiState.value.isDrawerOpen &&
+                                        _uiState.value.activeSurfacePane == MainSurfacePane.CHAT
                                 if (viewingThisConversation) {
                                     repository.markConversationRead(finalConvId)
                                 } else {
@@ -470,7 +538,6 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
             } catch (ce: CancellationException) {
-                // User tapped Stop button: cancel stream and mark message status='stopped'
                 _uiState.update { s ->
                     val updatedMsgs = s.messages.map { msg ->
                         if (msg.id == tempAssistantMsgId || msg.status == "streaming") {
@@ -547,8 +614,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     if (it.id == messageId) it.copy(rating = newRating) else it
                 },
                 snackbarMessage = when (newRating) {
-                    1 -> "Feedback saved"
-                    -1 -> "Feedback saved"
+                    1, -1 -> "Feedback saved"
                     else -> null
                 }
             )
@@ -565,7 +631,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleOverflowMenu(open: Boolean) {
-        _uiState.update { it.copy(isOverflowMenuOpen = open) }
+        _uiState.update { it.copy(isOverflowMenuOpen = open, isModePopupOpen = false) }
     }
 
     fun togglePinActiveConversation() {
@@ -641,7 +707,13 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun openAttachmentSheet(open: Boolean) {
-        _uiState.update { it.copy(isAttachmentSheetOpen = open, selectedGalleryUris = emptySet()) }
+        _uiState.update {
+            it.copy(
+                isAttachmentSheetOpen = open,
+                selectedGalleryUris = emptySet(),
+                isModePopupOpen = false
+            )
+        }
         if (open) {
             viewModelScope.launch {
                 val recent = repository.queryRecentDeviceImages(limit = 12)
@@ -699,6 +771,8 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         )
         _uiState.update {
             it.copy(
+                activeSurfacePane = MainSurfacePane.CHAT,
+                isDrawerOpen = false,
                 stagedAttachments = (it.stagedAttachments + staged).distinctBy { a -> a.fileName },
                 showRecentUploadsPicker = false,
                 isAttachmentSheetOpen = false
@@ -724,10 +798,16 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setAppearance(appearance: AppAppearance) {
+        repository.saveAppearanceLocal(appearance)
         _uiState.update { it.copy(appearance = appearance) }
         viewModelScope.launch {
             repository.updateAppearance(appearance)
         }
+    }
+
+    fun setLanguage(language: AppLanguage) {
+        repository.saveLanguage(language)
+        _uiState.update { it.copy(language = language) }
     }
 
     fun updateProfile(displayName: String, handle: String) {
@@ -774,7 +854,11 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             repository.deleteAllConversations()
             repository.signOut()
-            _uiState.value = BuildXUiState(isAuthenticated = false)
+            _uiState.value = BuildXUiState(
+                isAuthenticated = false,
+                appearance = repository.getSavedAppearance(),
+                language = repository.getSavedLanguage()
+            )
         }
     }
 
@@ -869,10 +953,15 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
 
+        val langTag = when (_uiState.value.language) {
+            AppLanguage.ARABIC -> "ar"
+            AppLanguage.ENGLISH -> "en-US"
+            AppLanguage.SYSTEM -> Locale.getDefault().toLanguageTag()
+        }
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, langTag)
         }
         recognizer.startListening(intent)
     }

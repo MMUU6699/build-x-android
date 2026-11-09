@@ -27,6 +27,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,15 +37,19 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.buildx.chat.R
 import app.buildx.chat.data.model.ReasoningStep
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.ui.theme.BuildXTheme
+import app.buildx.chat.ui.theme.isRtlText
 import app.buildx.chat.ui.theme.softShadow
 import coil.compose.AsyncImage
 
@@ -61,114 +67,126 @@ fun StepsSheetContent(
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
+    val firstStepRtl = remember(steps, strings.isRtl) {
+        val sample = steps.firstOrNull()?.let { "${it.title} ${it.summary}" } ?: ""
+        isRtlText(sample, defaultRtl = strings.isRtl)
+    }
 
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-            .background(colors.cardBackground)
-            .padding(top = 10.dp, bottom = 32.dp, start = 20.dp, end = 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+    CompositionLocalProvider(
+        LocalLayoutDirection provides if (firstStepRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
     ) {
-        // Grab handle (32x4dp)
-        Box(
-            modifier = Modifier
-                .width(32.dp)
-                .height(4.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(colors.grabHandle)
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text(
-            text = "Steps",
-            color = colors.primaryText,
-            fontSize = 17.sp,
-            fontWeight = FontWeight.Bold
-        )
-
-        Spacer(modifier = Modifier.height(20.dp))
-
         Column(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
+                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                .background(colors.cardBackground)
+                .padding(top = 10.dp, bottom = 32.dp, start = 20.dp, end = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            steps.forEach { step ->
+            // Grab handle (32x4dp)
+            Box(
+                modifier = Modifier
+                    .width(32.dp)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(colors.grabHandle)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text = strings.stepsTitle,
+                color = colors.primaryText,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                steps.forEach { step ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        // Timeline dot + vertical connector
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.width(24.dp)
+                        ) {
+                            Spacer(modifier = Modifier.height(5.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(colors.secondaryText)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Box(
+                                modifier = Modifier
+                                    .width(1.5.dp)
+                                    .height(54.dp)
+                                    .background(colors.hairlineBorder)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(bottom = 16.dp)
+                        ) {
+                            Text(
+                                text = step.title,
+                                color = colors.secondaryText,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Start
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = step.summary,
+                                color = colors.secondaryText,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Normal,
+                                lineHeight = 20.sp,
+                                textAlign = TextAlign.Start
+                            )
+                        }
+                    }
+                }
+
+                // Final "Done" row with check-circle
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Top
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Timeline dot + vertical connector
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.width(24.dp)
+                    Box(
+                        modifier = Modifier.width(24.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Spacer(modifier = Modifier.height(5.dp))
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(colors.secondaryText)
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Box(
-                            modifier = Modifier
-                                .width(1.5.dp)
-                                .height(54.dp)
-                                .background(colors.hairlineBorder)
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_check_circle),
+                            contentDescription = strings.doneLabel,
+                            tint = colors.secondaryText,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
-
                     Spacer(modifier = Modifier.width(12.dp))
-
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(bottom = 16.dp)
-                    ) {
-                        Text(
-                            text = step.title,
-                            color = colors.secondaryText,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = step.summary,
-                            color = colors.secondaryText,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Normal,
-                            lineHeight = 20.sp
-                        )
-                    }
-                }
-            }
-
-            // Final "Done" row with check-circle
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier.width(24.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_check_circle),
-                        contentDescription = "Done",
-                        tint = colors.secondaryText,
-                        modifier = Modifier.size(18.dp)
+                    Text(
+                        text = strings.doneLabel,
+                        color = colors.secondaryText,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Start
                     )
                 }
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = "Done",
-                    color = colors.secondaryText,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold
-                )
             }
         }
     }
@@ -190,41 +208,42 @@ fun HeaderOverflowPopup(
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
 
     Column(
         modifier = modifier
-            .width(188.dp)
+            .width(196.dp)
             .softShadow(
                 color = colors.composerShadowColor,
                 cornerRadius = 16.dp,
-                blurRadius = 20.dp,
+                blurRadius = 22.dp,
                 offsetY = 6.dp
             )
             .clip(RoundedCornerShape(16.dp))
             .background(colors.cardBackground)
-            .border(1.dp, colors.hairlineBorder, RoundedCornerShape(16.dp))
+            .border(1.dp, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
             .padding(vertical = 4.dp)
     ) {
         OverflowMenuRow(
-            label = "Share a link",
+            label = strings.shareLink,
             iconRes = R.drawable.ic_link,
             onClick = onShareLink,
             showDivider = true
         )
         OverflowMenuRow(
-            label = if (isPinned) "Unpin" else "Pin",
+            label = if (isPinned) strings.unpinChat else strings.pinChat,
             iconRes = R.drawable.ic_pin,
             onClick = onTogglePin,
             showDivider = true
         )
         OverflowMenuRow(
-            label = "Rename",
+            label = strings.renameChat,
             iconRes = R.drawable.ic_pencil,
             onClick = onRename,
             showDivider = true
         )
         OverflowMenuRow(
-            label = "Delete chat",
+            label = strings.deleteChat,
             iconRes = R.drawable.ic_trash,
             isDestructive = true,
             onClick = onDelete,
@@ -256,6 +275,7 @@ private fun OverflowMenuRow(
                 color = tint,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Start,
                 modifier = Modifier.weight(1f)
             )
             Icon(
@@ -268,7 +288,7 @@ private fun OverflowMenuRow(
         if (showDivider) {
             HorizontalDivider(
                 thickness = 1.dp,
-                color = colors.hairlineBorder
+                color = colors.subtleSurfaceBorder
             )
         }
     }
@@ -277,13 +297,6 @@ private fun OverflowMenuRow(
 /**
  * S6 Attachment Sheet Content (tap Plus in composer):
  * Background #F1F3F0 (surfaceMuted), top radius 28dp, grab handle 32x4dp.
- * Header row: "Library" (bold gray) + "See all" (primary blue #0063D3).
- * Horizontal strip: first tile Camera (white, radius 16dp, 102dp square), then recent gallery
- * thumbnails with selection circle at top-right.
- * Below: a white GroupedCard (radius 20dp) with two rows:
- * - "Recently uploaded" (clock-history icon)
- * - "Files" (paperclip icon)
- * with hairline divider inset.
  */
 @Composable
 fun AttachmentSheetContent(
@@ -298,6 +311,7 @@ fun AttachmentSheetContent(
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
 
     Column(
         modifier = modifier
@@ -318,7 +332,7 @@ fun AttachmentSheetContent(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Header row: "Library" (bold gray) + "See all" (blue) or "Add (N)" when selected
+        // Header row: "Library" (bold gray) + "See all" (blue) or "Attach (N)" when selected
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -326,15 +340,16 @@ fun AttachmentSheetContent(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Library",
+                text = strings.libraryTitle,
                 color = colors.secondaryText,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Start,
                 modifier = Modifier.weight(1f)
             )
             if (selectedUris.isNotEmpty()) {
                 Text(
-                    text = "Attach (${selectedUris.size})",
+                    text = "${strings.attachSelectedPrefix} (${selectedUris.size})",
                     color = colors.primaryBlue,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
@@ -345,7 +360,7 @@ fun AttachmentSheetContent(
                 )
             } else {
                 Text(
-                    text = "See all",
+                    text = strings.seeAllButton,
                     color = colors.primaryBlue,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
@@ -366,13 +381,12 @@ fun AttachmentSheetContent(
             modifier = Modifier.fillMaxWidth()
         ) {
             item {
-                // First tile: Camera (white, radius 16dp, 102dp x 102dp)
                 Box(
                     modifier = Modifier
                         .size(102.dp)
+                        .pressScaleClickable(onClick = onCameraTileClick)
                         .clip(RoundedCornerShape(16.dp))
-                        .background(colors.cardBackground)
-                        .pressScaleClickable(onClick = onCameraTileClick),
+                        .background(colors.cardBackground),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -401,7 +415,6 @@ fun AttachmentSheetContent(
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
                     )
-                    // Selection circle at top-right (22dp)
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
@@ -437,13 +450,13 @@ fun AttachmentSheetContent(
         ) {
             SettingsRow(
                 iconRes = R.drawable.ic_clock_history,
-                title = "Recently uploaded",
+                title = strings.recentlyUploaded,
                 onClick = onRecentlyUploadedClick,
                 showDivider = true
             )
             SettingsRow(
                 iconRes = R.drawable.ic_paperclip,
-                title = "Files",
+                title = strings.filesLabel,
                 onClick = onFilesClick,
                 showDivider = false
             )
@@ -454,9 +467,6 @@ fun AttachmentSheetContent(
 /**
  * S11 Voice Dictation Bar:
  * Replaces composer bottom row while Android SpeechRecognizer is actively listening.
- * Left: 36dp Close X circle button.
- * Center: 36dp pill with live dotted/vertical-bar waveform driven by real microphone RMS dB.
- * Right: 36dp Confirm/Send circle button (disabled gray until speech recognized, then blue #0063D3).
  */
 @Composable
 fun VoiceDictationBar(
@@ -477,11 +487,11 @@ fun VoiceDictationBar(
                 color = colors.composerShadowColor,
                 cornerRadius = 28.dp,
                 blurRadius = 24.dp,
-                offsetY = 4.dp
+                offsetY = 5.dp
             )
             .clip(RoundedCornerShape(28.dp))
             .background(colors.cardBackground)
-            .border(1.dp, colors.hairlineBorder.copy(alpha = 0.7f), RoundedCornerShape(28.dp))
+            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(28.dp))
             .padding(horizontal = 14.dp, vertical = 12.dp)
     ) {
         if (hasSpeech) {
@@ -498,83 +508,91 @@ fun VoiceDictationBar(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Left: Close X circle (36dp)
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(colors.cardBackground)
-                    .border(1.dp, colors.hairlineBorder, CircleShape)
-                    .pressScaleClickable(onClick = onCancel),
-                contentAlignment = Alignment.Center
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_close),
-                    contentDescription = "Cancel voice input",
-                    tint = colors.primaryText,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // Center: Waveform pill (36dp tall, 1dp hairline border)
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(36.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(colors.cardBackground)
-                    .border(1.dp, colors.hairlineBorder, RoundedCornerShape(18.dp))
-                    .padding(horizontal = 12.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Canvas(
+                // Left: Close X circle (38dp)
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(20.dp)
-                ) {
-                    val count = amplitudes.size.coerceAtLeast(1)
-                    val totalW = size.width
-                    val step = totalW / count
-                    val barW = 2.5.dp.toPx()
-                    val maxH = size.height
-
-                    amplitudes.forEachIndexed { idx, normAmp ->
-                        val h = (normAmp.coerceIn(0.15f, 1f) * maxH).coerceAtLeast(3.dp.toPx())
-                        val x = idx * step + (step - barW) / 2f
-                        val y = (maxH - h) / 2f
-                        drawRoundRect(
-                            color = colors.secondaryText,
-                            topLeft = Offset(x, y),
-                            size = Size(barW, h),
-                            cornerRadius = CornerRadius(barW / 2f, barW / 2f)
+                        .size(38.dp)
+                        .pressScaleClickable(onClick = onCancel)
+                        .softShadow(
+                            color = colors.innerControlShadowColor,
+                            cornerRadius = 19.dp,
+                            blurRadius = 6.dp,
+                            offsetY = 1.5.dp
                         )
+                        .clip(CircleShape)
+                        .background(colors.cardBackground)
+                        .border(1.2.dp, colors.hairlineBorder, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_close),
+                        contentDescription = "Cancel voice input",
+                        tint = colors.primaryText,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // Center: Waveform pill (38dp tall, 1.2dp hairline border)
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(38.dp)
+                        .clip(RoundedCornerShape(19.dp))
+                        .background(colors.cardBackground)
+                        .border(1.2.dp, colors.hairlineBorder, RoundedCornerShape(19.dp))
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(20.dp)
+                    ) {
+                        val count = amplitudes.size.coerceAtLeast(1)
+                        val totalW = size.width
+                        val step = totalW / count
+                        val barW = 2.5.dp.toPx()
+                        val maxH = size.height
+
+                        amplitudes.forEachIndexed { idx, normAmp ->
+                            val h = (normAmp.coerceIn(0.15f, 1f) * maxH).coerceAtLeast(3.dp.toPx())
+                            val x = idx * step + (step - barW) / 2f
+                            val y = (maxH - h) / 2f
+                            drawRoundRect(
+                                color = colors.secondaryText,
+                                topLeft = Offset(x, y),
+                                size = Size(barW, h),
+                                cornerRadius = CornerRadius(barW / 2f, barW / 2f)
+                            )
+                        }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(8.dp))
 
-            // Right: Send / Confirm circle (36dp)
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(if (hasSpeech) colors.primaryBlue else colors.surfaceMuted)
-                    .pressScaleClickable(enabled = hasSpeech, onClick = onConfirm),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_arrow_up),
-                    contentDescription = "Confirm voice input",
-                    tint = if (hasSpeech) colors.onPrimaryBlue else colors.secondaryText,
-                    modifier = Modifier.size(18.dp)
-                )
+                // Right: Send / Confirm circle (38dp)
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .pressScaleClickable(enabled = hasSpeech, onClick = onConfirm)
+                        .clip(CircleShape)
+                        .background(if (hasSpeech) colors.primaryBlue else colors.surfaceMuted),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_arrow_up),
+                        contentDescription = "Confirm voice input",
+                        tint = if (hasSpeech) colors.onPrimaryBlue else colors.secondaryText,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         }
     }

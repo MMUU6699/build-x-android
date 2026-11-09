@@ -15,7 +15,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -46,8 +51,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import app.buildx.chat.data.model.MainSurfacePane
 import app.buildx.chat.ui.screens.AppAppearanceScreen
 import app.buildx.chat.ui.screens.AppInfoScreen
+import app.buildx.chat.ui.screens.AppLanguageScreen
 import app.buildx.chat.ui.screens.AuthScreen
 import app.buildx.chat.ui.screens.ChatAndDrawerScreen
 import app.buildx.chat.ui.screens.DataPrivacyScreen
@@ -173,10 +180,18 @@ fun BuildXRoot(
         }
     }
 
-    BuildXTheme(appearance = uiState.appearance) {
+    BuildXTheme(
+        appearance = uiState.appearance,
+        language = uiState.language
+    ) {
         val colors = BuildXTheme.colors
+        val strings = BuildXTheme.strings
 
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(colors.pageBackground)
+        ) {
             if (!uiState.isAuthenticated) {
                 AuthScreen(
                     isLoading = uiState.isAuthLoading,
@@ -188,11 +203,51 @@ fun BuildXRoot(
                     onDismissError = { viewModel.clearSnackbar() }
                 )
             } else {
+                // Opaque horizontal slide transitions eliminate the default washed-out white crossfade
                 NavHost(
                     navController = navController,
-                    startDestination = "chat"
+                    startDestination = "chat",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(colors.pageBackground),
+                    enterTransition = {
+                        slideIntoContainer(
+                            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                            animationSpec = tween(250, easing = FastOutSlowInEasing)
+                        )
+                    },
+                    exitTransition = {
+                        slideOutOfContainer(
+                            towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                            animationSpec = tween(250, easing = FastOutSlowInEasing),
+                            targetOffset = { fullWidth -> fullWidth / 4 }
+                        )
+                    },
+                    popEnterTransition = {
+                        slideIntoContainer(
+                            towards = AnimatedContentTransitionScope.SlideDirection.End,
+                            animationSpec = tween(250, easing = FastOutSlowInEasing),
+                            initialOffset = { fullWidth -> fullWidth / 4 }
+                        )
+                    },
+                    popExitTransition = {
+                        slideOutOfContainer(
+                            towards = AnimatedContentTransitionScope.SlideDirection.End,
+                            animationSpec = tween(250, easing = FastOutSlowInEasing)
+                        )
+                    }
                 ) {
-                    composable("chat") {
+                    composable(
+                        route = "chat",
+                        enterTransition = { EnterTransition.None },
+                        popEnterTransition = {
+                            slideIntoContainer(
+                                towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                animationSpec = tween(250, easing = FastOutSlowInEasing),
+                                initialOffset = { fullWidth -> fullWidth / 4 }
+                            )
+                        }
+                    ) {
                         ChatAndDrawerScreen(
                             uiState = uiState,
                             onToggleDrawer = { open -> viewModel.setDrawerOpen(open) },
@@ -201,16 +256,14 @@ fun BuildXRoot(
                             onSelectConversation = { id -> viewModel.selectConversation(id) },
                             onSearchQueryChange = { q -> viewModel.onSearchQueryChange(q) },
                             onNavigateToNotifications = {
-                                viewModel.setDrawerOpen(false)
-                                navController.navigate("notifications")
+                                viewModel.openSurfacePane(MainSurfacePane.NOTIFICATIONS)
                             },
                             onNavigateToSettings = {
                                 viewModel.setDrawerOpen(false)
                                 navController.navigate("settings")
                             },
                             onNavigateToMedia = {
-                                viewModel.setDrawerOpen(false)
-                                navController.navigate("media")
+                                viewModel.openSurfacePane(MainSurfacePane.MEDIA)
                             },
                             onComposerTextChange = { text -> viewModel.onComposerTextChange(text) },
                             onToggleMode = { viewModel.toggleMode() },
@@ -243,7 +296,7 @@ fun BuildXRoot(
                             onRateMessage = { msgId, rating -> viewModel.rateMessage(msgId, rating) },
                             onCopyMessage = { content ->
                                 copyToClipboard(context, content)
-                                viewModel.showSnackbar("Copied to clipboard")
+                                viewModel.showSnackbar(strings.copiedToClipboard)
                             },
                             onShareMessage = { content ->
                                 sharePlainText(context, content)
@@ -289,7 +342,23 @@ fun BuildXRoot(
                                 documentPickerLauncher.launch(arrayOf("*/*"))
                             },
                             onConfirmVoiceTranscript = { viewModel.confirmVoiceTranscript() },
-                            onCancelVoiceDictation = { viewModel.cancelVoiceDictation() }
+                            onCancelVoiceDictation = { viewModel.cancelVoiceDictation() },
+                            onToggleModePopup = { open -> viewModel.toggleModePopup(open) },
+                            onSelectMode = { mode -> viewModel.selectMode(mode) },
+                            onTurnOnNotifications = {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    postNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                } else {
+                                    viewModel.onNotificationPermissionResult(true)
+                                }
+                            },
+                            onDismissNotificationPermissionCard = {
+                                viewModel.dismissNotificationPermissionCard()
+                            },
+                            onSelectMediaAttachment = { att ->
+                                viewModel.attachExistingUploadedItem(att)
+                                viewModel.openSurfacePane(MainSurfacePane.CHAT)
+                            }
                         )
                     }
 
@@ -328,10 +397,12 @@ fun BuildXRoot(
                         SettingsScreen(
                             profile = uiState.profile,
                             appearance = uiState.appearance,
+                            language = uiState.language,
                             onCloseClick = { navController.popBackStack() },
                             onViewProfileClick = { navController.navigate("profile") },
                             onNotificationsClick = { navController.navigate("notifications") },
                             onAppAppearanceClick = { navController.navigate("appearance") },
+                            onAppLanguageClick = { navController.navigate("language") },
                             onHelpSupportClick = { navController.navigate("help_support") },
                             onDataPrivacyClick = { navController.navigate("data_privacy") },
                             onAppInfoClick = { navController.navigate("app_info") },
@@ -350,8 +421,18 @@ fun BuildXRoot(
                         )
                     }
 
+                    composable("language") {
+                        AppLanguageScreen(
+                            selectedLanguage = uiState.language,
+                            onSelectLanguage = { lang -> viewModel.setLanguage(lang) },
+                            onBackClick = { navController.popBackStack() }
+                        )
+                    }
+
                     composable("app_info") {
                         AppInfoScreen(
+                            language = uiState.language,
+                            onLanguageClick = { navController.navigate("language") },
                             onBackClick = { navController.popBackStack() }
                         )
                     }
@@ -408,7 +489,7 @@ fun BuildXRoot(
             if (uiState.showRenameDialog) {
                 val activeConv = uiState.conversations.firstOrNull { it.id == uiState.activeConversationId }
                 RenameChatDialog(
-                    initialTitle = activeConv?.title ?: "",
+                    initialTitle = activeConv?.cleanTitle ?: "",
                     onConfirm = { newTitle -> viewModel.renameActiveConversation(newTitle) },
                     onDismiss = { viewModel.openRenameDialog(false) }
                 )
@@ -427,7 +508,7 @@ fun BuildXRoot(
                     shareUrl = shareUrl,
                     onCopyLink = { url ->
                         copyToClipboard(context, url)
-                        viewModel.showSnackbar("Link copied to clipboard")
+                        viewModel.showSnackbar(strings.linkCopiedToClipboard)
                     },
                     onShareSystem = { url ->
                         sharePlainText(context, url)

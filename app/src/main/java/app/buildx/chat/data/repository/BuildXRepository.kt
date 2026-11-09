@@ -8,6 +8,7 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import app.buildx.chat.BuildConfig
 import app.buildx.chat.data.model.AppAppearance
+import app.buildx.chat.data.model.AppLanguage
 import app.buildx.chat.data.model.AttachmentRow
 import app.buildx.chat.data.model.ChatMessage
 import app.buildx.chat.data.model.ChatMode
@@ -61,6 +62,22 @@ import java.util.UUID
  * Storage, and the deployed /functions/v1/chat SSE Edge Function.
  */
 class BuildXRepository(private val context: Context) {
+
+    private val prefs = context.getSharedPreferences("buildx_prefs", Context.MODE_PRIVATE)
+
+    fun getSavedLanguage(): AppLanguage =
+        AppLanguage.fromCode(prefs.getString("app_language", AppLanguage.SYSTEM.code))
+
+    fun saveLanguage(language: AppLanguage) {
+        prefs.edit().putString("app_language", language.code).apply()
+    }
+
+    fun getSavedAppearance(): AppAppearance =
+        AppAppearance.fromDb(prefs.getString("app_appearance", AppAppearance.AUTOMATIC.dbValue))
+
+    fun saveAppearanceLocal(appearance: AppAppearance) {
+        prefs.edit().putString("app_appearance", appearance.dbValue).apply()
+    }
 
     val json = Json {
         ignoreUnknownKeys = true

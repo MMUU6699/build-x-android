@@ -33,7 +33,7 @@ function deriveCleanTitle(userMsg: string, assistantMsg: string): string {
     .trim();
   const words = cleaned.split(" ").filter(Boolean);
   if (words.length >= 2) {
-    return words.slice(0, 4).join(" ").slice(0, 48);
+    return words.slice(0, 5).join(" ").slice(0, 48);
   }
   const ansWords = assistantMsg
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
@@ -42,7 +42,12 @@ function deriveCleanTitle(userMsg: string, assistantMsg: string): string {
     .split(" ")
     .filter(Boolean);
   if (isArabicText(userMsg) || isArabicText(assistantMsg)) {
-    return words.length === 1 ? `محادثة: ${words[0]}` : ansWords.slice(0, 4).join(" ") || "محادثة جديدة";
+    if (words.length === 1 && /^(هلا|اهلا|أهلا|مرحبا|السلام|سلام|صباح|مساء)$/.test(words[0])) {
+      return "ترحيب وبدء المحادثة";
+    }
+    return words.length === 1
+      ? (ansWords.slice(0, 4).join(" ").slice(0, 44) || words[0])
+      : (ansWords.slice(0, 4).join(" ").slice(0, 44) || "محادثة جديدة");
   }
   return ansWords.slice(0, 4).join(" ").slice(0, 48) || cleaned || "New conversation";
 }
@@ -299,12 +304,12 @@ serve(async (req: Request) => {
       });
 
       try {
-        // 1. Emit reasoning steps when mode == "thinking"
+        // 1. Emit reasoning steps when mode == "thinking" (localized to Arabic when user writes in Arabic)
         if (mode === "thinking") {
           const step1 = isArabic
             ? {
-                title: "Analyzing request",
-                summary: `Understanding the user's message "${lastUserMsg.slice(0, 40)}" and preparing a natural Arabic response.`,
+                title: "تحليل الرسالة والسياق",
+                summary: `فهم طلب المستخدم "${lastUserMsg.slice(0, 40)}" وتجهيز إجابة دقيقة باللغة العربية.`,
               }
             : {
                 title: "Analyzing request",
@@ -323,8 +328,8 @@ serve(async (req: Request) => {
 
           const step2 = isArabic
             ? {
-                title: "Responding to greeting and context",
-                summary: "Drafting a helpful, well-structured answer in natural Arabic that directly addresses the prompt.",
+                title: "صياغة الإجابة وتنظيمها",
+                summary: "ترتيب الأفكار ومراجعة المعلومات لتقديم رد واضح ومتكامل باللغة العربية.",
               }
             : {
                 title: "Synthesizing detailed answer",
@@ -351,7 +356,7 @@ serve(async (req: Request) => {
         // 2. Stream the assistant answer (single upstream LLM stream per turn)
         const systemPrompt =
           mode === "thinking"
-            ? "You are Build X, a helpful, concise, and intelligent AI assistant. Respond in the same language as the user's message (e.g., natural Arabic if the user writes in Arabic, English if in English). Do not use emojis."
+            ? "You are Build X, a helpful, concise, and intelligent AI assistant. Respond in the same language as the user's message (e.g., natural, fluent Arabic if the user writes in Arabic, English if in English). Never use emojis."
             : "You are Build X, a fast and direct AI assistant. Give a clear, immediate answer in the user's language without emojis.";
 
         const attachmentNote =

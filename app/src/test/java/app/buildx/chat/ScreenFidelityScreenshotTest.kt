@@ -8,6 +8,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import app.buildx.chat.data.model.AppAppearance
+import app.buildx.chat.data.model.AppLanguage
 import app.buildx.chat.data.model.ChatMessage
 import app.buildx.chat.data.model.ChatMode
 import app.buildx.chat.data.model.Conversation
@@ -15,6 +16,7 @@ import app.buildx.chat.data.model.ReasoningStep
 import app.buildx.chat.data.model.UserProfile
 import app.buildx.chat.ui.screens.AppAppearanceScreen
 import app.buildx.chat.ui.screens.AppInfoScreen
+import app.buildx.chat.ui.screens.AppLanguageScreen
 import app.buildx.chat.ui.screens.ChatAndDrawerScreen
 import app.buildx.chat.ui.screens.NotificationsScreen
 import app.buildx.chat.ui.screens.SettingsScreen
@@ -32,13 +34,14 @@ import org.robolectric.annotation.GraphicsMode
 import java.io.File
 
 /**
- * Phase 2 & 3 Visual Fidelity Screenshot Verification Suite.
- * Captures every screen (S1..S11) at 411dp x 891dp portrait and outputs PNGs into
- * docs/design/screenshots/ for direct pixel-overlay comparison against the reference stills.
+ * Phase 2 & 3 Visual Fidelity Screenshot Verification Suite (v1.2).
+ * Captures every screen (S1..S11 + Mode Popup + Arabic RTL) at 411dp x 891dp portrait
+ * and outputs PNGs into docs/design/screenshots/ for direct pixel-overlay comparison.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34], qualifiers = RobolectricDeviceQualifiers.Pixel6)
+@OptIn(com.github.takahirom.roborazzi.ExperimentalRoborazziApi::class)
 class ScreenFidelityScreenshotTest {
 
     @get:Rule
@@ -90,6 +93,24 @@ class ScreenFidelityScreenshotTest {
     }
 
     @Test
+    fun capture_S2_Composer_Mode_Popup_Banner() {
+        val state = BuildXUiState(
+            isAuthenticated = true,
+            mode = ChatMode.INSTANT,
+            isModePopupOpen = true,
+            composerText = ""
+        )
+        composeRule.setContent {
+            BuildXTheme(appearance = AppAppearance.LIGHT) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    RenderChatScreen(state)
+                }
+            }
+        }
+        captureScreen("s2_composer_mode_popup.png")
+    }
+
+    @Test
     fun capture_S3_Chat_Reasoning_Streaming() {
         val state = BuildXUiState(
             isAuthenticated = true,
@@ -113,8 +134,8 @@ class ScreenFidelityScreenshotTest {
                     reasoningSteps = listOf(
                         ReasoningStep(
                             step = 1,
-                            title = "Responding to greeting",
-                            summary = "The user greeted me in Arabic. I will respond warmly in Arabic and offer assistance."
+                            title = "تحليل الرسالة والسياق",
+                            summary = "فهم طلب المستخدم وتجهيز إجابة دقيقة باللغة العربية."
                         )
                     ),
                     status = "streaming"
@@ -155,8 +176,8 @@ class ScreenFidelityScreenshotTest {
                     reasoningSteps = listOf(
                         ReasoningStep(
                             step = 1,
-                            title = "Responding to greeting",
-                            summary = "Prepared a warm Arabic welcome response."
+                            title = "تحليل الرسالة والسياق",
+                            summary = "تجهيز رد ترحيبي واضح باللغة العربية."
                         )
                     ),
                     status = "complete"
@@ -178,13 +199,13 @@ class ScreenFidelityScreenshotTest {
         val steps = listOf(
             ReasoningStep(
                 step = 1,
-                title = "Analyzing the user request",
-                summary = "Identifying the language and intent of the user greeting."
+                title = "تحليل الرسالة والسياق",
+                summary = "فهم طلب المستخدم وتحديد اللغة والسياق المناسب للرد."
             ),
             ReasoningStep(
                 step = 2,
-                title = "Responding to greeting",
-                summary = "Formulating a concise, natural Arabic greeting response."
+                title = "صياغة الإجابة وتنظيمها",
+                summary = "كتابة رد ترحيبي طبيعي ومختصر باللغة العربية."
             )
         )
         val state = BuildXUiState(
@@ -324,10 +345,12 @@ class ScreenFidelityScreenshotTest {
                         displayName = "Alex"
                     ),
                     appearance = AppAppearance.AUTOMATIC,
+                    language = AppLanguage.SYSTEM,
                     onCloseClick = {},
                     onViewProfileClick = {},
                     onNotificationsClick = {},
                     onAppAppearanceClick = {},
+                    onAppLanguageClick = {},
                     onHelpSupportClick = {},
                     onDataPrivacyClick = {},
                     onAppInfoClick = {},
@@ -338,6 +361,56 @@ class ScreenFidelityScreenshotTest {
             }
         }
         captureScreen("s10_settings.png")
+    }
+
+    @Test
+    fun capture_S10_Settings_Arabic_RTL() {
+        composeRule.setContent {
+            BuildXTheme(
+                appearance = AppAppearance.LIGHT,
+                language = AppLanguage.ARABIC
+            ) {
+                SettingsScreen(
+                    profile = UserProfile(
+                        id = "u1",
+                        handle = "musta_dev",
+                        displayName = "Mustafa"
+                    ),
+                    appearance = AppAppearance.AUTOMATIC,
+                    language = AppLanguage.ARABIC,
+                    onCloseClick = {},
+                    onViewProfileClick = {},
+                    onNotificationsClick = {},
+                    onAppAppearanceClick = {},
+                    onAppLanguageClick = {},
+                    onHelpSupportClick = {},
+                    onDataPrivacyClick = {},
+                    onAppInfoClick = {},
+                    onLegalSafetyClick = {},
+                    onSignOutClick = {},
+                    modifier = Modifier.padding(top = 24.dp, bottom = 14.dp)
+                )
+            }
+        }
+        captureScreen("s10_settings_arabic_rtl.png")
+    }
+
+    @Test
+    fun capture_S10_Language_Picker() {
+        composeRule.setContent {
+            BuildXTheme(
+                appearance = AppAppearance.LIGHT,
+                language = AppLanguage.ARABIC
+            ) {
+                AppLanguageScreen(
+                    selectedLanguage = AppLanguage.ARABIC,
+                    onSelectLanguage = {},
+                    onBackClick = {},
+                    modifier = Modifier.padding(top = 24.dp, bottom = 14.dp)
+                )
+            }
+        }
+        captureScreen("s10_language.png")
     }
 
     @Test
@@ -360,6 +433,8 @@ class ScreenFidelityScreenshotTest {
         composeRule.setContent {
             BuildXTheme(appearance = AppAppearance.LIGHT) {
                 AppInfoScreen(
+                    language = AppLanguage.SYSTEM,
+                    onLanguageClick = {},
                     onBackClick = {},
                     modifier = Modifier.padding(top = 24.dp, bottom = 14.dp)
                 )
@@ -427,6 +502,8 @@ class ScreenFidelityScreenshotTest {
             onPickFileDocument = {},
             onConfirmVoiceTranscript = {},
             onCancelVoiceDictation = {},
+            onToggleModePopup = {},
+            onSelectMode = {},
             modifier = Modifier.padding(top = 24.dp, bottom = 14.dp)
         )
     }

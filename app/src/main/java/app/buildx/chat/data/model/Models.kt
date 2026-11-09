@@ -24,7 +24,14 @@ data class Conversation(
     @SerialName("last_read_at") val lastReadAt: String = "1970-01-01T00:00:00Z",
     @SerialName("updated_at") val updatedAt: String = "1970-01-01T00:00:00Z",
     @SerialName("created_at") val createdAt: String? = null
-)
+) {
+    val cleanTitle: String
+        get() = title
+            .removePrefix("محادثة:")
+            .removePrefix("محادثة :")
+            .trim()
+            .ifEmpty { title }
+}
 
 @Serializable
 data class ReasoningStep(
@@ -89,6 +96,26 @@ enum class AppAppearance(val dbValue: String) {
             else -> AUTOMATIC
         }
     }
+}
+
+enum class AppLanguage(val code: String) {
+    SYSTEM("system"),
+    ENGLISH("en"),
+    ARABIC("ar");
+
+    companion object {
+        fun fromCode(code: String?): AppLanguage = when (code?.lowercase()) {
+            "en", "english" -> ENGLISH
+            "ar", "arabic" -> ARABIC
+            else -> SYSTEM
+        }
+    }
+}
+
+enum class MainSurfacePane {
+    CHAT,
+    NOTIFICATIONS,
+    MEDIA
 }
 
 /**

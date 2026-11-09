@@ -69,6 +69,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
@@ -89,6 +90,7 @@ import kotlin.math.sin
 
 /**
  * Press-scale modifier (0.97x over 100ms, no Material ripple).
+ * Applied BEFORE clip/background/border so borders are never clipped or invalidated by layer scaling.
  */
 @Composable
 fun Modifier.pressScaleClickable(
@@ -98,7 +100,7 @@ fun Modifier.pressScaleClickable(
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.97f else 1f,
+        targetValue = if (isPressed) 0.96f else 1f,
         animationSpec = tween(durationMillis = 100),
         label = "pressScale"
     )
@@ -188,7 +190,8 @@ fun MarkLoader(
 }
 
 /**
- * 2. HeaderCircleButton: 44dp circular icon button with faint soft halo shadow and 1dp hairline border.
+ * 2. HeaderCircleButton: 44dp circular icon button with real multi-layer soft halo shadow
+ * and whisper-soft surface contour matching f_018.png and t_015.png.
  */
 @Composable
 fun HeaderCircleButton(
@@ -200,26 +203,30 @@ fun HeaderCircleButton(
     iconTint: Color = BuildXTheme.colors.primaryText
 ) {
     val colors = BuildXTheme.colors
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val mirrorIcon = isRtl && (iconRes == R.drawable.ic_back || iconRes == R.drawable.ic_chevron_right)
     Box(
         modifier = modifier
             .size(44.dp)
+            .pressScaleClickable(onClick = onClick)
             .softShadow(
                 color = colors.headerHaloShadowColor,
                 cornerRadius = 22.dp,
-                blurRadius = 10.dp,
-                offsetY = 2.dp
+                blurRadius = 14.dp,
+                offsetY = 2.5.dp
             )
             .clip(CircleShape)
             .background(backgroundColor)
-            .border(1.dp, colors.hairlineBorder, CircleShape)
-            .pressScaleClickable(onClick = onClick),
+            .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape),
         contentAlignment = Alignment.Center
     ) {
         Icon(
             painter = painterResource(id = iconRes),
             contentDescription = contentDescription,
             tint = iconTint,
-            modifier = Modifier.size(22.dp)
+            modifier = Modifier
+                .size(22.dp)
+                .scale(scaleX = if (mirrorIcon) -1f else 1f, scaleY = 1f)
         )
     }
 }
@@ -234,19 +241,20 @@ fun ActionCapsule(
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
     Row(
         modifier = modifier
-            .width(91.dp)
+            .width(92.dp)
             .height(44.dp)
             .softShadow(
                 color = colors.headerHaloShadowColor,
                 cornerRadius = 22.dp,
-                blurRadius = 10.dp,
-                offsetY = 2.dp
+                blurRadius = 14.dp,
+                offsetY = 2.5.dp
             )
             .clip(RoundedCornerShape(22.dp))
             .background(colors.cardBackground)
-            .border(1.dp, colors.hairlineBorder, RoundedCornerShape(22.dp)),
+            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(22.dp)),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -258,9 +266,9 @@ fun ActionCapsule(
         ) {
             Icon(
                 painter = painterResource(id = R.drawable.ic_edit_compose),
-                contentDescription = "New chat",
+                contentDescription = strings.newChat,
                 tint = colors.primaryText,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(21.dp)
             )
         }
         Box(
@@ -274,19 +282,125 @@ fun ActionCapsule(
                 painter = painterResource(id = R.drawable.ic_more_horizontal),
                 contentDescription = "More options",
                 tint = colors.primaryText,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(21.dp)
             )
         }
     }
 }
 
 /**
- * 4. Composer: Multi-state floating composer card (radius 28dp, min height ~100dp, soft diffuse shadow).
- * Handles:
- * - S1/S2 Empty state (Plus circle, Thinking/Instant pill, Mic circle)
- * - S2 Non-empty state (Mic crossfades in 150ms to primaryBlue #0063D3 circular Send button)
- * - S2 Streaming state ("Reply..." hint, Mic stays, Stop button = 20dp rounded blue square inside 36dp light halo)
- * - S9 Incognito state ("Ask Build X privately...", minimal controls, disabled/active send circle)
+ * 3b. ModeSelectorPopup: The floating 2-option banner ("Instant" / "Thinking") observed in
+ * reference frames f_018.png..f_026.png (t=30.0s..32.6s) anchored directly above the Composer's
+ * bottom control row when the user taps the Thinking/Instant pill.
+ */
+@Composable
+fun ModeSelectorPopup(
+    selectedMode: ChatMode,
+    onSelectMode: (ChatMode) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 32.dp)
+            .softShadow(
+                color = colors.composerShadowColor,
+                cornerRadius = 18.dp,
+                blurRadius = 22.dp,
+                offsetY = 6.dp
+            )
+            .clip(RoundedCornerShape(18.dp))
+            .background(colors.cardBackground)
+            .border(1.dp, colors.subtleSurfaceBorder, RoundedCornerShape(18.dp))
+    ) {
+        // Row 1: Instant
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onSelectMode(ChatMode.INSTANT) }
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = strings.instantMode,
+                    color = colors.primaryText,
+                    fontSize = 16.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = BuildXFontFamily
+                )
+                Spacer(modifier = Modifier.height(3.dp))
+                Text(
+                    text = strings.instantDescription,
+                    color = colors.secondaryText,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = BuildXFontFamily
+                )
+            }
+            if (selectedMode == ChatMode.INSTANT) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_check),
+                    contentDescription = "Selected",
+                    tint = colors.secondaryText,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+
+        HorizontalDivider(
+            thickness = 1.dp,
+            color = colors.subtleSurfaceBorder
+        )
+
+        // Row 2: Thinking
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onSelectMode(ChatMode.THINKING) }
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = strings.thinkingMode,
+                    color = colors.primaryText,
+                    fontSize = 16.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = BuildXFontFamily
+                )
+                Spacer(modifier = Modifier.height(3.dp))
+                Text(
+                    text = strings.thinkingDescription,
+                    color = colors.secondaryText,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = BuildXFontFamily
+                )
+            }
+            if (selectedMode == ChatMode.THINKING) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_check),
+                    contentDescription = "Selected",
+                    tint = colors.secondaryText,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 4. Composer: Multi-state floating ChatBox card matching media_1794255314046_f725ed15.png:
+ * - Radius 28dp, min height ~104dp, rich diffuse downward drop shadow.
+ * - Placeholder "Ask Build X..." in 17sp Bold #6E7274.
+ * - Full RTL/LTR support: Arabic input starts flush at the right edge; English starts flush at the left edge.
+ * - Bottom controls: 38dp Plus circle, 38dp Thinking/Instant pill (with 1.2dp hairline border + subtle shadow),
+ *   and 38dp Mic/Send circle.
+ * - Tapping the Thinking/Instant pill opens the floating ModeSelectorPopup banner right above the bottom row.
  */
 @Composable
 fun Composer(
@@ -304,16 +418,22 @@ fun Composer(
     onRemoveStagedAttachment: (String) -> Unit,
     modifier: Modifier = Modifier,
     hasMessages: Boolean = false,
-    focusRequester: FocusRequester? = null
+    focusRequester: FocusRequester? = null,
+    isModePopupOpen: Boolean = false,
+    onModePillClick: (() -> Unit)? = null,
+    onSelectMode: ((ChatMode) -> Unit)? = null
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
     val hasContent = text.isNotBlank() || stagedAttachments.isNotEmpty()
     val hintText = when {
-        isIncognito -> "Ask Build X privately..."
-        isStreaming || hasMessages -> "Reply..."
-        else -> "Ask Build X..."
+        isIncognito -> strings.askPrivately
+        isStreaming || hasMessages -> strings.replyPlaceholder
+        else -> strings.askBuildX
     }
-    val isRtl = remember(text) { isRtlText(text) }
+    val isInputRtl = remember(text, strings.isRtl) {
+        isRtlText(text, defaultRtl = strings.isRtl)
+    }
 
     Column(
         modifier = modifier
@@ -323,19 +443,19 @@ fun Composer(
                 color = colors.composerShadowColor,
                 cornerRadius = 28.dp,
                 blurRadius = 24.dp,
-                offsetY = 4.dp
+                offsetY = 5.dp
             )
             .clip(RoundedCornerShape(28.dp))
             .background(colors.cardBackground)
-            .border(1.dp, colors.hairlineBorder.copy(alpha = 0.7f), RoundedCornerShape(28.dp))
-            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(28.dp))
+            .padding(start = 14.dp, end = 14.dp, top = 16.dp, bottom = 12.dp)
     ) {
         // Staged attachments preview strip
         if (stagedAttachments.isNotEmpty()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 8.dp),
+                    .padding(bottom = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 stagedAttachments.forEach { item ->
@@ -397,192 +517,236 @@ fun Composer(
             }
         }
 
-        // Text field area
+        // Text field area with true per-message/per-locale RTL/LTR alignment
         CompositionLocalProvider(
-            LocalLayoutDirection provides if (isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
+            LocalLayoutDirection provides if (isInputRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
         ) {
             BasicTextField(
                 value = text,
                 onValueChange = onTextChange,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 32.dp, max = 120.dp)
-                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                    .heightIn(min = 30.dp, max = 128.dp)
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
                     .then(
                         if (focusRequester != null) Modifier.focusRequester(focusRequester)
                         else Modifier
                     ),
                 textStyle = TextStyle(
                     fontFamily = BuildXFontFamily,
-                    fontSize = 16.sp,
+                    fontSize = 16.5.sp,
                     fontWeight = FontWeight.Normal,
                     color = colors.primaryText,
-                    lineHeight = 22.sp,
-                    textAlign = if (isRtl) TextAlign.Right else TextAlign.Left
+                    lineHeight = 23.sp,
+                    textAlign = TextAlign.Start,
+                    textDirection = if (isInputRtl) TextDirection.Rtl else TextDirection.Ltr
                 ),
                 cursorBrush = SolidColor(colors.primaryBlue),
                 decorationBox = { innerTextField ->
                     Box(
                         modifier = Modifier.fillMaxWidth(),
-                        contentAlignment = if (isRtl) Alignment.CenterEnd else Alignment.CenterStart
+                        contentAlignment = Alignment.CenterStart
                     ) {
                         if (text.isEmpty()) {
                             Text(
                                 text = hintText,
                                 color = colors.secondaryText,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                fontFamily = BuildXFontFamily
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = BuildXFontFamily,
+                                textAlign = TextAlign.Start,
+                                modifier = Modifier.fillMaxWidth()
                             )
                         }
-                        innerTextField()
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            innerTextField()
+                        }
                     }
                 }
             )
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
-        // Bottom control row
-        if (isIncognito) {
-            // S9 Incognito composer row: right-aligned send circle (disabled gray when empty, blue when non-empty)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (isStreaming) {
-                    StopButton(onClick = onStopClick)
-                } else {
-                    val enabled = hasContent
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (enabled) colors.primaryBlue else colors.surfaceMuted
+        // Bottom control row (kept LTR so + stays left and Thinking + Mic stay right as in reference image)
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            if (isIncognito) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (isStreaming) {
+                        StopButton(onClick = onStopClick)
+                    } else {
+                        val enabled = hasContent
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .pressScaleClickable(enabled = enabled, onClick = onSendClick)
+                                .clip(CircleShape)
+                                .background(
+                                    if (enabled) colors.primaryBlue else colors.surfaceMuted
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_arrow_up),
+                                contentDescription = "Send",
+                                tint = if (enabled) colors.onPrimaryBlue else colors.secondaryText,
+                                modifier = Modifier.size(19.dp)
                             )
-                            .pressScaleClickable(enabled = enabled, onClick = onSendClick),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_arrow_up),
-                            contentDescription = "Send",
-                            tint = if (enabled) colors.onPrimaryBlue else colors.secondaryText,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        }
                     }
                 }
-            }
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Plus circle button (36dp, 1dp hairline border)
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(colors.cardBackground)
-                        .border(1.dp, colors.hairlineBorder, CircleShape)
-                        .pressScaleClickable(onClick = onPlusClick),
-                    contentAlignment = Alignment.Center
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_plus),
-                        contentDescription = "Add attachment",
-                        tint = colors.primaryText,
-                        modifier = Modifier.size(19.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                // Thinking / Instant pill (height 36dp, ~101dp wide, 1dp hairline border)
-                Box(
-                    modifier = Modifier
-                        .height(36.dp)
-                        .widthIn(min = 100.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(colors.cardBackground)
-                        .border(1.dp, colors.hairlineBorder, RoundedCornerShape(18.dp))
-                        .pressScaleClickable(onClick = onToggleMode)
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (mode == ChatMode.THINKING) "Thinking" else "Instant",
-                        color = colors.primaryText,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = BuildXFontFamily
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                // Trailing action: Streaming -> Mic + Stop; Non-Streaming -> 150ms crossfade Mic <-> Send
-                if (isStreaming) {
+                    // Plus circle button (38dp, 1.2dp hairline border + subtle shadow)
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(38.dp)
+                            .pressScaleClickable(onClick = onPlusClick)
+                            .softShadow(
+                                color = colors.innerControlShadowColor,
+                                cornerRadius = 19.dp,
+                                blurRadius = 6.dp,
+                                offsetY = 1.5.dp
+                            )
                             .clip(CircleShape)
                             .background(colors.cardBackground)
-                            .border(1.dp, colors.hairlineBorder, CircleShape)
-                            .pressScaleClickable(onClick = onMicClick),
+                            .border(1.2.dp, colors.hairlineBorder, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            painter = painterResource(id = R.drawable.ic_mic),
-                            contentDescription = "Voice input",
+                            painter = painterResource(id = R.drawable.ic_plus),
+                            contentDescription = "Add attachment",
                             tint = colors.primaryText,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(19.dp)
                         )
                     }
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    // Thinking / Instant pill (height 38dp, ~104dp wide, 1.2dp hairline border + subtle shadow)
+                    Box(
+                        modifier = Modifier
+                            .height(38.dp)
+                            .widthIn(min = 104.dp)
+                            .pressScaleClickable(
+                                onClick = {
+                                    if (onModePillClick != null) {
+                                        onModePillClick()
+                                    } else {
+                                        onToggleMode()
+                                    }
+                                }
+                            )
+                            .softShadow(
+                                color = colors.innerControlShadowColor,
+                                cornerRadius = 19.dp,
+                                blurRadius = 6.dp,
+                                offsetY = 1.5.dp
+                            )
+                            .clip(RoundedCornerShape(19.dp))
+                            .background(colors.cardBackground)
+                            .border(1.2.dp, colors.hairlineBorder, RoundedCornerShape(19.dp))
+                            .padding(horizontal = 18.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (mode == ChatMode.THINKING) strings.thinkingMode else strings.instantMode,
+                            color = colors.primaryText,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = BuildXFontFamily
+                        )
+                    }
+
                     Spacer(modifier = Modifier.width(8.dp))
-                    StopButton(onClick = onStopClick)
-                } else {
-                    AnimatedContent(
-                        targetState = hasContent,
-                        transitionSpec = {
-                            (fadeIn(tween(150)) + scaleIn(tween(150), initialScale = 0.85f))
-                                .togetherWith(fadeOut(tween(150)) + scaleOut(tween(150), targetScale = 0.85f))
-                        },
-                        label = "micSendSwap"
-                    ) { showSend ->
-                        if (showSend) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(colors.primaryBlue)
-                                    .pressScaleClickable(onClick = onSendClick),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_arrow_up),
-                                    contentDescription = "Send message",
-                                    tint = colors.onPrimaryBlue,
-                                    modifier = Modifier.size(19.dp)
+
+                    // Trailing action: Streaming -> Mic + Stop; Non-Streaming -> 150ms crossfade Mic <-> Send
+                    if (isStreaming) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .pressScaleClickable(onClick = onMicClick)
+                                .softShadow(
+                                    color = colors.innerControlShadowColor,
+                                    cornerRadius = 19.dp,
+                                    blurRadius = 6.dp,
+                                    offsetY = 1.5.dp
                                 )
-                            }
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(colors.cardBackground)
-                                    .border(1.dp, colors.hairlineBorder, CircleShape)
-                                    .pressScaleClickable(onClick = onMicClick),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_mic),
-                                    contentDescription = "Voice input",
-                                    tint = colors.primaryText,
-                                    modifier = Modifier.size(18.dp)
-                                )
+                                .clip(CircleShape)
+                                .background(colors.cardBackground)
+                                .border(1.2.dp, colors.hairlineBorder, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_mic),
+                                contentDescription = "Voice input",
+                                tint = colors.primaryText,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        StopButton(onClick = onStopClick)
+                    } else {
+                        AnimatedContent(
+                            targetState = hasContent,
+                            transitionSpec = {
+                                (fadeIn(tween(150)) + scaleIn(tween(150), initialScale = 0.85f))
+                                    .togetherWith(fadeOut(tween(150)) + scaleOut(tween(150), targetScale = 0.85f))
+                            },
+                            label = "micSendSwap"
+                        ) { showSend ->
+                            if (showSend) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .pressScaleClickable(onClick = onSendClick)
+                                        .softShadow(
+                                            color = colors.primaryBlue.copy(alpha = 0.28f),
+                                            cornerRadius = 19.dp,
+                                            blurRadius = 8.dp,
+                                            offsetY = 2.dp
+                                        )
+                                        .clip(CircleShape)
+                                        .background(colors.primaryBlue),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_arrow_up),
+                                        contentDescription = "Send message",
+                                        tint = colors.onPrimaryBlue,
+                                        modifier = Modifier.size(19.dp)
+                                    )
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .pressScaleClickable(onClick = onMicClick)
+                                        .softShadow(
+                                            color = colors.innerControlShadowColor,
+                                            cornerRadius = 19.dp,
+                                            blurRadius = 6.dp,
+                                            offsetY = 1.5.dp
+                                        )
+                                        .clip(CircleShape)
+                                        .background(colors.cardBackground)
+                                        .border(1.2.dp, colors.hairlineBorder, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_mic),
+                                        contentDescription = "Voice input",
+                                        tint = colors.primaryText,
+                                        modifier = Modifier.size(19.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -593,7 +757,7 @@ fun Composer(
 }
 
 /**
- * Stop button during streaming: 20dp rounded blue (#0063D3) square inside a 36dp light halo circle.
+ * Stop button during streaming: rounded blue (#0063D3) square inside a 38dp light halo circle.
  */
 @Composable
 fun StopButton(
@@ -603,23 +767,23 @@ fun StopButton(
     val colors = BuildXTheme.colors
     Box(
         modifier = modifier
-            .size(36.dp)
+            .size(38.dp)
+            .pressScaleClickable(onClick = onClick)
             .clip(CircleShape)
-            .background(colors.stopHaloBackground)
-            .pressScaleClickable(onClick = onClick),
+            .background(colors.stopHaloBackground),
         contentAlignment = Alignment.Center
     ) {
         Box(
             modifier = Modifier
                 .size(16.dp)
-                .clip(RoundedCornerShape(4.dp))
+                .clip(RoundedCornerShape(4.5.dp))
                 .background(colors.primaryBlue)
         )
     }
 }
 
 /**
- * 5. UserBubble: Right-aligned pill bubble (#F1F3F0, min height 38dp, full pill radius).
+ * 5. UserBubble: Right-aligned pill bubble (#F1F3F0, min height 40dp, full pill radius).
  * Resolves text direction per message from the first strong character (Bidi fix).
  */
 @Composable
@@ -628,32 +792,39 @@ fun UserBubble(
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
-    val isRtl = remember(text) { isRtlText(text) }
+    val strings = BuildXTheme.strings
+    val isRtl = remember(text, strings.isRtl) { isRtlText(text, defaultRtl = strings.isRtl) }
 
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.End
-    ) {
-        CompositionLocalProvider(
-            LocalLayoutDirection provides if (isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Row(
+            modifier = modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
         ) {
-            Box(
-                modifier = Modifier
-                    .widthIn(min = 48.dp, max = 300.dp)
-                    .heightIn(min = 38.dp)
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(colors.surfaceMuted)
-                    .padding(horizontal = 16.dp, vertical = 9.dp),
-                contentAlignment = Alignment.Center
+            CompositionLocalProvider(
+                LocalLayoutDirection provides if (isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
             ) {
-                Text(
-                    text = text,
-                    color = colors.primaryText,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium,
-                    lineHeight = 22.sp,
-                    textAlign = if (isRtl) TextAlign.Right else TextAlign.Left
-                )
+                Box(
+                    modifier = Modifier
+                        .widthIn(min = 48.dp, max = 308.dp)
+                        .heightIn(min = 40.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(colors.surfaceMuted)
+                        .padding(horizontal = 16.dp, vertical = 9.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    Text(
+                        text = text,
+                        color = colors.primaryText,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        lineHeight = 22.sp,
+                        textAlign = TextAlign.Start,
+                        style = TextStyle(
+                            fontFamily = BuildXFontFamily,
+                            textDirection = if (isRtl) TextDirection.Rtl else TextDirection.Ltr
+                        )
+                    )
+                }
             }
         }
     }
@@ -674,72 +845,82 @@ fun ThinkingRow(
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
     val currentStep = reasoningSteps.lastOrNull()
+    val stepRtl = remember(currentStep?.title, currentStep?.summary, strings.isRtl) {
+        isRtlText(currentStep?.title ?: currentStep?.summary ?: "", defaultRtl = strings.isRtl)
+    }
 
     if (isStreamingReasoning) {
-        Column(
-            modifier = modifier
-                .fillMaxWidth()
-                .padding(vertical = 6.dp)
+        CompositionLocalProvider(
+            LocalLayoutDirection provides if (stepRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp)
             ) {
-                MarkLoader(
-                    size = 22.dp,
-                    isSpinning = true
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = currentStep?.title ?: "Thinking",
-                    color = colors.secondaryText,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            if (!currentStep?.summary.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(6.dp))
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    MarkLoader(
+                        size = 22.dp,
+                        isSpinning = true
+                    )
                     Spacer(modifier = Modifier.width(10.dp))
-                    // Vertical purple-to-gray gradient rail
-                    Box(
-                        modifier = Modifier
-                            .width(2.dp)
-                            .height(38.dp)
-                            .clip(RoundedCornerShape(1.dp))
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(
-                                        colors.markVioletMid,
-                                        colors.secondaryText.copy(alpha = 0.35f)
+                    Text(
+                        text = currentStep?.title ?: strings.thinkingMode,
+                        color = colors.secondaryText,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Start
+                    )
+                }
+                if (!currentStep?.summary.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Spacer(modifier = Modifier.width(10.dp))
+                        // Vertical purple-to-gray gradient rail
+                        Box(
+                            modifier = Modifier
+                                .width(2.5.dp)
+                                .height(40.dp)
+                                .clip(RoundedCornerShape(1.25.dp))
+                                .background(
+                                    Brush.verticalGradient(
+                                        colors = listOf(
+                                            colors.markVioletMid,
+                                            colors.secondaryText.copy(alpha = 0.35f)
+                                        )
                                     )
                                 )
-                            )
-                    )
-                    Spacer(modifier = Modifier.width(18.dp))
-                    Text(
-                        text = currentStep?.summary.orEmpty(),
-                        color = colors.secondaryText,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        lineHeight = 19.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text(
+                            text = currentStep?.summary.orEmpty(),
+                            color = colors.secondaryText,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            lineHeight = 19.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Start,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
             }
         }
     } else if (reasoningSteps.isNotEmpty()) {
         Row(
             modifier = modifier
-                .clip(RoundedCornerShape(12.dp))
                 .pressScaleClickable(onClick = onOpenStepsSheet)
+                .clip(RoundedCornerShape(12.dp))
                 .padding(vertical = 6.dp, horizontal = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -749,7 +930,7 @@ fun ThinkingRow(
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Show thinking",
+                text = strings.showThinking,
                 color = colors.secondaryText,
                 fontSize = 14.5.sp,
                 fontWeight = FontWeight.Bold
@@ -757,9 +938,11 @@ fun ThinkingRow(
             Spacer(modifier = Modifier.width(4.dp))
             Icon(
                 painter = painterResource(id = R.drawable.ic_chevron_right),
-                contentDescription = "View reasoning steps",
+                contentDescription = strings.showThinking,
                 tint = colors.secondaryText,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier
+                    .size(16.dp)
+                    .rotate(if (strings.isRtl) 180f else 0f)
             )
         }
     }
@@ -843,6 +1026,12 @@ fun GroupedCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .softShadow(
+                color = colors.headerHaloShadowColor,
+                cornerRadius = 20.dp,
+                blurRadius = 10.dp,
+                offsetY = 2.dp
+            )
             .clip(RoundedCornerShape(20.dp))
             .background(colors.cardBackground),
         content = content
@@ -864,6 +1053,7 @@ fun SettingsRow(
     showDivider: Boolean = false
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
     val tint = if (isDestructive) colors.destructiveRed else colors.primaryText
 
     Column(modifier = modifier.fillMaxWidth()) {
@@ -886,7 +1076,8 @@ fun SettingsRow(
                     text = title,
                     color = tint,
                     fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Start
                 )
                 if (!subtitle.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(2.dp))
@@ -894,7 +1085,8 @@ fun SettingsRow(
                         text = subtitle,
                         color = colors.secondaryText,
                         fontSize = 13.5.sp,
-                        fontWeight = FontWeight.Normal
+                        fontWeight = FontWeight.Normal,
+                        textAlign = TextAlign.Start
                     )
                 }
             }
@@ -903,7 +1095,9 @@ fun SettingsRow(
                     painter = painterResource(id = R.drawable.ic_chevron_right),
                     contentDescription = null,
                     tint = colors.secondaryText,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier
+                        .size(18.dp)
+                        .rotate(if (strings.isRtl) 180f else 0f)
                 )
             }
         }
@@ -911,21 +1105,22 @@ fun SettingsRow(
             HorizontalDivider(
                 modifier = Modifier.padding(start = 56.dp, end = 18.dp),
                 thickness = 1.dp,
-                color = colors.hairlineBorder
+                color = colors.subtleSurfaceBorder
             )
         }
     }
 }
 
 /**
- * 10. AppearanceRadioRow: Label left + custom radio circle right (t=64s App appearance).
+ * 10. AppearanceRadioRow: Label left + custom radio circle right (t=64s App appearance & App language).
  */
 @Composable
 fun AppearanceRadioRow(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
-    showDivider: Boolean = false
+    showDivider: Boolean = false,
+    subtitle: String? = null
 ) {
     val colors = BuildXTheme.colors
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -936,13 +1131,25 @@ fun AppearanceRadioRow(
                 .padding(horizontal = 18.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = label,
-                color = colors.primaryText,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f)
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = label,
+                    color = colors.primaryText,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Start
+                )
+                if (!subtitle.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = subtitle,
+                        color = colors.secondaryText,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Normal,
+                        textAlign = TextAlign.Start
+                    )
+                }
+            }
             Box(
                 modifier = Modifier
                     .size(22.dp)
@@ -958,7 +1165,7 @@ fun AppearanceRadioRow(
             HorizontalDivider(
                 modifier = Modifier.padding(horizontal = 18.dp),
                 thickness = 1.dp,
-                color = colors.hairlineBorder
+                color = colors.subtleSurfaceBorder
             )
         }
     }
@@ -966,21 +1173,27 @@ fun AppearanceRadioRow(
 
 /**
  * 11. DrawerNavRow & DrawerChatRow: Used in S7 Navigation Drawer.
+ * Redesigned for clean, logical alignment matching t_015.png:
+ * - All titles align consistently in a single vertical column.
+ * - Pinned conversations show a crisp angled pin icon right next to the title.
+ * - Unread conversations show bold text + a trailing 8dp #0063D3 blue dot.
  */
 @Composable
 fun DrawerNavRow(
     @DrawableRes iconRes: Int,
     label: String,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isActive: Boolean = false
 ) {
     val colors = BuildXTheme.colors
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
+            .background(if (isActive) colors.surfaceMuted else Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
@@ -989,12 +1202,13 @@ fun DrawerNavRow(
             tint = colors.primaryText,
             modifier = Modifier.size(22.dp)
         )
-        Spacer(modifier = Modifier.width(14.dp))
+        Spacer(modifier = Modifier.width(15.dp))
         Text(
             text = label,
             color = colors.primaryText,
             fontSize = 16.sp,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Start
         )
     }
 }
@@ -1009,41 +1223,40 @@ fun DrawerChatRow(
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
-    val isRtl = remember(title) { isRtlText(title) }
+    val cleanDisplayTitle = remember(title) {
+        title.removePrefix("محادثة:").removePrefix("محادثة :").trim().ifEmpty { title }
+    }
 
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(if (isSelected) colors.surfaceMuted else Color.Transparent)
+            .background(
+                if (isSelected) colors.surfaceMuted.copy(alpha = 0.85f) else Color.Transparent
+            )
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 11.dp),
+            .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (isPinned) {
             Icon(
                 painter = painterResource(id = R.drawable.ic_pin),
                 contentDescription = "Pinned",
-                tint = colors.secondaryText,
-                modifier = Modifier
-                    .size(15.dp)
-                    .padding(end = 2.dp)
+                tint = colors.primaryBlue,
+                modifier = Modifier.size(16.dp)
             )
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(10.dp))
         }
-        CompositionLocalProvider(
-            LocalLayoutDirection provides if (isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
-        ) {
-            Text(
-                text = title,
-                color = colors.primaryText,
-                fontSize = 15.5.sp,
-                fontWeight = if (isUnread) FontWeight.Bold else FontWeight.Normal,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-        }
+        Text(
+            text = cleanDisplayTitle,
+            color = colors.primaryText,
+            fontSize = 15.5.sp,
+            fontWeight = if (isUnread || isSelected) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Start,
+            modifier = Modifier.weight(1f)
+        )
         if (isUnread) {
             Spacer(modifier = Modifier.width(10.dp))
             Box(
@@ -1057,23 +1270,28 @@ fun DrawerChatRow(
 }
 
 /**
- * 12. NotificationPermissionCard: Used in S8 Notifications screen (and inline banner).
+ * 12. NotificationPermissionCard: Used in S8 Notifications screen.
  */
 @Composable
 fun NotificationPermissionCard(
     onTurnOn: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
-    title: String = "Turn on notifications",
-    body: String = "Get personalised recommendations, never miss a response and stay up to date on the latest features."
+    title: String? = null,
+    body: String? = null
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
+    val resolvedTitle = title ?: strings.turnOnNotificationsTitle
+    val resolvedBody = body ?: strings.turnOnNotificationsBody
+
     Column(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
             .clip(RoundedCornerShape(20.dp))
             .background(colors.surfaceMuted)
+            .border(1.dp, colors.subtleSurfaceBorder, RoundedCornerShape(20.dp))
             .padding(18.dp)
     ) {
         Row(
@@ -1098,30 +1316,32 @@ fun NotificationPermissionCard(
         }
         Spacer(modifier = Modifier.height(10.dp))
         Text(
-            text = title,
+            text = resolvedTitle,
             color = colors.primaryText,
             fontSize = 16.sp,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Start
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = body,
+            text = resolvedBody,
             color = colors.secondaryText,
             fontSize = 14.sp,
-            lineHeight = 19.sp
+            lineHeight = 19.sp,
+            textAlign = TextAlign.Start
         )
         Spacer(modifier = Modifier.height(14.dp))
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(42.dp)
+                .pressScaleClickable(onClick = onTurnOn)
                 .clip(RoundedCornerShape(999.dp))
-                .background(colors.primaryBlue)
-                .pressScaleClickable(onClick = onTurnOn),
+                .background(colors.primaryBlue),
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "Turn on",
+                text = strings.turnOnButton,
                 color = colors.onPrimaryBlue,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold

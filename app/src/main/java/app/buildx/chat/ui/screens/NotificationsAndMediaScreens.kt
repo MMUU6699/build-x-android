@@ -63,6 +63,7 @@ fun NotificationsScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
 
     Column(
         modifier = modifier
@@ -84,7 +85,7 @@ fun NotificationsScreen(
             )
             Spacer(modifier = Modifier.width(12.dp))
             Text(
-                text = "Notifications",
+                text = strings.notificationsTitle,
                 color = colors.primaryText,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
@@ -120,7 +121,7 @@ fun NotificationsScreen(
                     )
                     Spacer(modifier = Modifier.height(14.dp))
                     Text(
-                        text = "No notifications",
+                        text = strings.noNotificationsTitle,
                         color = colors.secondaryText,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold,
@@ -128,7 +129,7 @@ fun NotificationsScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "No notifications to show.",
+                        text = strings.noNotificationsSubtitle,
                         color = colors.secondaryText,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Normal,
@@ -208,6 +209,7 @@ fun MediaScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
 
     Column(
         modifier = modifier
@@ -222,13 +224,13 @@ fun MediaScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             HeaderCircleButton(
-                iconRes = R.drawable.ic_back,
-                contentDescription = "Back",
+                iconRes = R.drawable.ic_menu,
+                contentDescription = "Menu",
                 onClick = onBackClick
             )
             Spacer(modifier = Modifier.width(12.dp))
             Text(
-                text = "Media",
+                text = strings.mediaTitle,
                 color = colors.primaryText,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
@@ -254,14 +256,14 @@ fun MediaScreen(
                     )
                     Spacer(modifier = Modifier.height(14.dp))
                     Text(
-                        text = "No media yet",
+                        text = strings.noMediaTitle,
                         color = colors.secondaryText,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Photos and files you attach in chats will appear here.",
+                        text = strings.noMediaSubtitle,
                         color = colors.secondaryText,
                         fontSize = 15.sp,
                         textAlign = TextAlign.Center

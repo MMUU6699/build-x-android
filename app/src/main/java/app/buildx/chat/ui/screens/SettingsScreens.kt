@@ -1,5 +1,7 @@
 package app.buildx.chat.ui.screens
 
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -32,15 +34,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.buildx.chat.BuildConfig
 import app.buildx.chat.R
 import app.buildx.chat.data.model.AppAppearance
+import app.buildx.chat.data.model.AppLanguage
 import app.buildx.chat.data.model.AttachmentRow
 import app.buildx.chat.data.model.UserProfile
 import app.buildx.chat.ui.components.AppearanceRadioRow
@@ -51,15 +58,46 @@ import app.buildx.chat.ui.theme.BuildXTheme
 import coil.compose.AsyncImage
 
 /**
- * S10 Settings Screen (video t=61s..69s).
+ * Helper to resolve real live app version & build number from PackageManager + BuildConfig.
+ */
+@Composable
+fun rememberAppVersionText(): Pair<String, Long> {
+    val context = LocalContext.current
+    return remember(context) {
+        try {
+            val pkgInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }
+            val vName = pkgInfo.versionName ?: BuildConfig.VERSION_NAME
+            val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                pkgInfo.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                pkgInfo.versionCode.toLong()
+            }
+            vName to vCode
+        } catch (_: Throwable) {
+            BuildConfig.VERSION_NAME to BuildConfig.VERSION_CODE.toLong()
+        }
+    }
+}
+
+/**
+ * S10 Settings Screen (video t=61s..69s + v1.2 Language & Live Version additions).
  * Page background: #F1F3F0 (colors.surfaceMuted).
  * Header: Close X circle button (44dp) + "Settings" (20sp Bold).
  * Profile card: white card, 44dp avatar circle, "View profile" (16sp Bold),
  * "@handle" (14sp SemiBold #0063D3), trailing chevron.
  * Section header: "App settings" (14sp Bold #6E7274).
- * Grouped white card: Notifications, App appearance, Help & support,
+ * Grouped white card: Notifications, App appearance, App language, Help & support,
  * Data & privacy, App info, Legal & safety.
- * Bottom card: Log out in #C3192E crimson red.
+ * Bottom card: Log out in #C3192E crimson red, followed by live dynamic version footer.
  */
 @Composable
 fun SettingsScreen(
@@ -74,10 +112,15 @@ fun SettingsScreen(
     onAppInfoClick: () -> Unit,
     onLegalSafetyClick: () -> Unit,
     onSignOutClick: () -> Unit,
+    language: AppLanguage = AppLanguage.SYSTEM,
+    onAppLanguageClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
-    val handleText = profile?.handle?.let { if (it.startsWith("@")) it else "@$it" } ?: "@user"
+    val strings = BuildXTheme.strings
+    val rawHandle = profile?.handle?.let { if (it.startsWith("@")) it else "@$it" } ?: "@user"
+    val handleText = "\u200E$rawHandle"
+    val (versionName, versionCode) = rememberAppVersionText()
 
     Column(
         modifier = modifier
@@ -96,12 +139,12 @@ fun SettingsScreen(
         ) {
             HeaderCircleButton(
                 iconRes = R.drawable.ic_close,
-                contentDescription = "Close settings",
+                contentDescription = strings.closeButton,
                 onClick = onCloseClick
             )
             Spacer(modifier = Modifier.width(12.dp))
             Text(
-                text = "Settings",
+                text = strings.settingsTitle,
                 color = colors.primaryText,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
@@ -133,7 +176,7 @@ fun SettingsScreen(
                     if (!profile?.avatarUrl.isNullOrBlank()) {
                         AsyncImage(
                             model = profile?.avatarUrl,
-                            contentDescription = "Profile photo",
+                            contentDescription = strings.profileTitle,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()
                         )
@@ -149,7 +192,7 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "View profile",
+                        text = strings.viewProfile,
                         color = colors.primaryText,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold
@@ -166,7 +209,9 @@ fun SettingsScreen(
                     painter = painterResource(id = R.drawable.ic_chevron_right),
                     contentDescription = null,
                     tint = colors.secondaryText,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier
+                        .size(20.dp)
+                        .scale(scaleX = if (strings.isRtl) -1f else 1f, scaleY = 1f)
                 )
             }
         }
@@ -174,14 +219,14 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(22.dp))
 
         Text(
-            text = "App settings",
+            text = strings.appSettingsSection,
             color = colors.secondaryText,
             fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp)
         )
 
-        // Grouped App settings card (6 rows only — no dead rows)
+        // Grouped App settings card
         GroupedCard(
             modifier = Modifier
                 .fillMaxWidth()
@@ -189,42 +234,54 @@ fun SettingsScreen(
         ) {
             SettingsRow(
                 iconRes = R.drawable.ic_bell,
-                title = "Notifications",
+                title = strings.notificationsTitle,
                 onClick = onNotificationsClick,
                 showDivider = true
             )
             SettingsRow(
                 iconRes = R.drawable.ic_settings,
-                title = "App appearance",
+                title = strings.appAppearance,
                 subtitle = when (appearance) {
-                    AppAppearance.AUTOMATIC -> "Automatic"
-                    AppAppearance.LIGHT -> "Light"
-                    AppAppearance.DARK -> "Dark"
+                    AppAppearance.AUTOMATIC -> strings.appearanceAutomatic
+                    AppAppearance.LIGHT -> strings.appearanceLight
+                    AppAppearance.DARK -> strings.appearanceDark
                 },
                 onClick = onAppAppearanceClick,
                 showDivider = true
             )
             SettingsRow(
+                iconRes = R.drawable.ic_language,
+                title = strings.appLanguage,
+                subtitle = when (language) {
+                    AppLanguage.SYSTEM -> strings.languageSystem
+                    AppLanguage.ENGLISH -> strings.languageEnglish
+                    AppLanguage.ARABIC -> strings.languageArabic
+                },
+                onClick = onAppLanguageClick,
+                showDivider = true
+            )
+            SettingsRow(
                 iconRes = R.drawable.ic_help,
-                title = "Help & support",
+                title = strings.helpAndSupport,
                 onClick = onHelpSupportClick,
                 showDivider = true
             )
             SettingsRow(
                 iconRes = R.drawable.ic_shield,
-                title = "Data & privacy",
+                title = strings.dataAndPrivacy,
                 onClick = onDataPrivacyClick,
                 showDivider = true
             )
             SettingsRow(
                 iconRes = R.drawable.ic_info,
-                title = "App info",
+                title = strings.appInfo,
+                subtitle = "v$versionName ($versionCode)",
                 onClick = onAppInfoClick,
                 showDivider = true
             )
             SettingsRow(
                 iconRes = R.drawable.ic_shield,
-                title = "Legal & safety",
+                title = strings.legalAndSafety,
                 onClick = onLegalSafetyClick,
                 showDivider = false
             )
@@ -240,13 +297,27 @@ fun SettingsScreen(
         ) {
             SettingsRow(
                 iconRes = R.drawable.ic_log_out,
-                title = "Log out",
+                title = strings.logOut,
                 isDestructive = true,
                 showChevron = false,
                 showDivider = false,
                 onClick = onSignOutClick
             )
         }
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        // Real dynamic app version footer
+        Text(
+            text = "Build X v$versionName (Build $versionCode) • ${BuildConfig.BUILD_DATE}",
+            color = colors.secondaryText.copy(alpha = 0.78f),
+            fontSize = 12.5.sp,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+        )
     }
 }
 
@@ -263,6 +334,7 @@ fun AppAppearanceScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
 
     Column(
         modifier = modifier
@@ -283,7 +355,7 @@ fun AppAppearanceScreen(
             )
             Spacer(modifier = Modifier.width(12.dp))
             Text(
-                text = "App appearance",
+                text = strings.appAppearance,
                 color = colors.primaryText,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
@@ -298,19 +370,19 @@ fun AppAppearanceScreen(
                 .padding(horizontal = 16.dp)
         ) {
             AppearanceRadioRow(
-                label = "Automatic",
+                label = strings.appearanceAutomatic,
                 selected = selectedAppearance == AppAppearance.AUTOMATIC,
                 onClick = { onSelectAppearance(AppAppearance.AUTOMATIC) },
                 showDivider = true
             )
             AppearanceRadioRow(
-                label = "Light",
+                label = strings.appearanceLight,
                 selected = selectedAppearance == AppAppearance.LIGHT,
                 onClick = { onSelectAppearance(AppAppearance.LIGHT) },
                 showDivider = true
             )
             AppearanceRadioRow(
-                label = "Dark",
+                label = strings.appearanceDark,
                 selected = selectedAppearance == AppAppearance.DARK,
                 onClick = { onSelectAppearance(AppAppearance.DARK) },
                 showDivider = false
@@ -320,16 +392,18 @@ fun AppAppearanceScreen(
 }
 
 /**
- * S10 Sub-page: App Info Screen (video t=69s).
- * Header: Back < circle button (44dp) + "App info" (20sp Bold).
- * White grouped card with "App version" and "App language".
+ * S10 Sub-page: App Language Screen.
+ * Allows switching between System default, English, and Arabic with full RTL/LTR layout updates.
  */
 @Composable
-fun AppInfoScreen(
+fun AppLanguageScreen(
+    selectedLanguage: AppLanguage,
+    onSelectLanguage: (AppLanguage) -> Unit,
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
 
     Column(
         modifier = modifier
@@ -350,7 +424,78 @@ fun AppInfoScreen(
             )
             Spacer(modifier = Modifier.width(12.dp))
             Text(
-                text = "App info",
+                text = strings.appLanguage,
+                color = colors.primaryText,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        GroupedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
+            AppearanceRadioRow(
+                label = strings.languageSystem,
+                selected = selectedLanguage == AppLanguage.SYSTEM,
+                onClick = { onSelectLanguage(AppLanguage.SYSTEM) },
+                showDivider = true
+            )
+            AppearanceRadioRow(
+                label = strings.languageEnglish,
+                selected = selectedLanguage == AppLanguage.ENGLISH,
+                onClick = { onSelectLanguage(AppLanguage.ENGLISH) },
+                showDivider = true
+            )
+            AppearanceRadioRow(
+                label = strings.languageArabic,
+                selected = selectedLanguage == AppLanguage.ARABIC,
+                onClick = { onSelectLanguage(AppLanguage.ARABIC) },
+                showDivider = false
+            )
+        }
+    }
+}
+
+/**
+ * S10 Sub-page: App Info Screen (video t=69s).
+ * Header: Back < circle button (44dp) + "App info" (20sp Bold).
+ * White grouped card with real dynamic "App version" and clickable "App language".
+ */
+@Composable
+fun AppInfoScreen(
+    onBackClick: () -> Unit,
+    language: AppLanguage = AppLanguage.SYSTEM,
+    onLanguageClick: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
+    val (versionName, versionCode) = rememberAppVersionText()
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(colors.surfaceMuted)
+            .statusBarsPadding()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            HeaderCircleButton(
+                iconRes = R.drawable.ic_back,
+                contentDescription = "Back",
+                onClick = onBackClick
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = strings.appInfo,
                 color = colors.primaryText,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
@@ -370,14 +515,14 @@ fun AppInfoScreen(
                     .padding(horizontal = 18.dp, vertical = 15.dp)
             ) {
                 Text(
-                    text = "App version",
+                    text = strings.appVersionLabel,
                     color = colors.primaryText,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold
                 )
                 Spacer(modifier = Modifier.height(3.dp))
                 Text(
-                    text = "1.0.0 (Build 100)",
+                    text = "$versionName (Build $versionCode • ${BuildConfig.BUILD_DATE})",
                     color = colors.secondaryText,
                     fontSize = 14.sp
                 )
@@ -387,22 +532,38 @@ fun AppInfoScreen(
                 thickness = 1.dp,
                 color = colors.hairlineBorder
             )
-            Column(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = 15.dp)
+                    .clickable(onClick = onLanguageClick)
+                    .padding(horizontal = 18.dp, vertical = 15.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "App language",
-                    color = colors.primaryText,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(modifier = Modifier.height(3.dp))
-                Text(
-                    text = "System default (English / Arabic)",
-                    color = colors.secondaryText,
-                    fontSize = 14.sp
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = strings.appLanguage,
+                        color = colors.primaryText,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = when (language) {
+                            AppLanguage.SYSTEM -> strings.languageSystem
+                            AppLanguage.ENGLISH -> strings.languageEnglish
+                            AppLanguage.ARABIC -> strings.languageArabic
+                        },
+                        color = colors.secondaryText,
+                        fontSize = 14.sp
+                    )
+                }
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_chevron_right),
+                    contentDescription = null,
+                    tint = colors.secondaryText,
+                    modifier = Modifier
+                        .size(20.dp)
+                        .scale(scaleX = if (strings.isRtl) -1f else 1f, scaleY = 1f)
                 )
             }
         }
@@ -422,6 +583,7 @@ fun ProfileEditScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
     var displayName by remember(profile?.displayName) {
         mutableStateOf(profile?.displayName ?: "")
     }
@@ -449,7 +611,7 @@ fun ProfileEditScreen(
             )
             Spacer(modifier = Modifier.width(12.dp))
             Text(
-                text = "Profile",
+                text = strings.profileTitle,
                 color = colors.primaryText,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
@@ -474,7 +636,7 @@ fun ProfileEditScreen(
                 if (!profile?.avatarUrl.isNullOrBlank()) {
                     AsyncImage(
                         model = profile?.avatarUrl,
-                        contentDescription = "Avatar",
+                        contentDescription = strings.profileTitle,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -489,7 +651,7 @@ fun ProfileEditScreen(
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Change photo",
+                text = strings.changePhoto,
                 color = colors.primaryBlue,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -510,7 +672,7 @@ fun ProfileEditScreen(
                     .padding(horizontal = 18.dp, vertical = 14.dp)
             ) {
                 Text(
-                    text = "Display name",
+                    text = strings.displayNameLabel,
                     color = colors.secondaryText,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold
@@ -540,7 +702,7 @@ fun ProfileEditScreen(
                     .padding(horizontal = 18.dp, vertical = 14.dp)
             ) {
                 Text(
-                    text = "Handle",
+                    text = strings.handleLabel,
                     color = colors.secondaryText,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold
@@ -578,7 +740,7 @@ fun ProfileEditScreen(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "Save changes",
+                text = strings.saveChanges,
                 color = colors.onPrimaryBlue,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold
@@ -600,6 +762,7 @@ fun DataPrivacyScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
     var confirmDeleteChats by remember { mutableStateOf(false) }
     var confirmDeleteAccount by remember { mutableStateOf(false) }
 
@@ -622,7 +785,7 @@ fun DataPrivacyScreen(
             )
             Spacer(modifier = Modifier.width(12.dp))
             Text(
-                text = "Data & privacy",
+                text = strings.dataAndPrivacy,
                 color = colors.primaryText,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
@@ -638,23 +801,23 @@ fun DataPrivacyScreen(
         ) {
             SettingsRow(
                 iconRes = R.drawable.ic_share,
-                title = "Export my data",
-                subtitle = "Download your profile, conversations, and messages as JSON",
+                title = strings.exportMyData,
+                subtitle = strings.exportMyDataSubtitle,
                 onClick = onExportDataClick,
                 showDivider = true
             )
             SettingsRow(
                 iconRes = R.drawable.ic_trash,
-                title = "Delete all chats",
-                subtitle = "Permanently remove all saved conversations",
+                title = strings.deleteAllChats,
+                subtitle = strings.deleteAllChatsSubtitle,
                 isDestructive = true,
                 onClick = { confirmDeleteChats = true },
                 showDivider = true
             )
             SettingsRow(
                 iconRes = R.drawable.ic_trash,
-                title = "Delete account",
-                subtitle = "Permanently delete your account and all associated data",
+                title = strings.deleteAccount,
+                subtitle = strings.deleteAccountSubtitle,
                 isDestructive = true,
                 onClick = { confirmDeleteAccount = true },
                 showDivider = false
@@ -668,8 +831,8 @@ fun DataPrivacyScreen(
             containerColor = colors.cardBackground,
             titleContentColor = colors.primaryText,
             textContentColor = colors.secondaryText,
-            title = { Text("Delete all chats?", fontWeight = FontWeight.Bold) },
-            text = { Text("This will permanently remove all of your conversations and messages from the database.") },
+            title = { Text(strings.deleteAllChats, fontWeight = FontWeight.Bold) },
+            text = { Text(strings.deleteAllChatsSubtitle) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -677,12 +840,12 @@ fun DataPrivacyScreen(
                         onDeleteAllChatsClick()
                     }
                 ) {
-                    Text("Delete all", color = colors.destructiveRed, fontWeight = FontWeight.Bold)
+                    Text(strings.deleteButton, color = colors.destructiveRed, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { confirmDeleteChats = false }) {
-                    Text("Cancel", color = colors.primaryText)
+                    Text(strings.cancelButton, color = colors.primaryText)
                 }
             }
         )
@@ -694,8 +857,8 @@ fun DataPrivacyScreen(
             containerColor = colors.cardBackground,
             titleContentColor = colors.primaryText,
             textContentColor = colors.secondaryText,
-            title = { Text("Delete account?", fontWeight = FontWeight.Bold) },
-            text = { Text("Your profile, conversations, messages, and attachments will be permanently deleted.") },
+            title = { Text(strings.deleteAccount, fontWeight = FontWeight.Bold) },
+            text = { Text(strings.deleteAccountSubtitle) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -703,12 +866,12 @@ fun DataPrivacyScreen(
                         onDeleteAccountClick()
                     }
                 ) {
-                    Text("Delete account", color = colors.destructiveRed, fontWeight = FontWeight.Bold)
+                    Text(strings.deleteButton, color = colors.destructiveRed, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { confirmDeleteAccount = false }) {
-                    Text("Cancel", color = colors.primaryText)
+                    Text(strings.cancelButton, color = colors.primaryText)
                 }
             }
         )
@@ -724,6 +887,7 @@ fun HelpSupportScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -744,7 +908,7 @@ fun HelpSupportScreen(
             )
             Spacer(modifier = Modifier.width(12.dp))
             Text(
-                text = "Help & support",
+                text = strings.helpAndSupport,
                 color = colors.primaryText,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
@@ -760,28 +924,28 @@ fun HelpSupportScreen(
         ) {
             Column(modifier = Modifier.padding(18.dp)) {
                 Text(
-                    text = "Thinking vs Instant modes",
+                    text = "${strings.thinkingMode} / ${strings.instantMode}",
                     color = colors.primaryText,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Tap the Thinking pill in the composer to switch between deeper multi-step reasoning (Thinking) and fast responses (Instant). Tap Show thinking on any completed response to inspect the step-by-step reasoning timeline.",
+                    text = "${strings.thinkingDescription}. ${strings.instantDescription}.",
                     color = colors.secondaryText,
                     fontSize = 14.sp,
                     lineHeight = 20.sp
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = "Temporary incognito chats",
+                    text = strings.incognitoSubtitle,
                     color = colors.primaryText,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Open the navigation drawer and tap the incognito button next to Search to start a temporary session. Temporary chats are never saved to your conversation history.",
+                    text = strings.incognitoEmptyNotice,
                     color = colors.secondaryText,
                     fontSize = 14.sp,
                     lineHeight = 20.sp
@@ -800,6 +964,7 @@ fun LegalSafetyScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -820,7 +985,7 @@ fun LegalSafetyScreen(
             )
             Spacer(modifier = Modifier.width(12.dp))
             Text(
-                text = "Legal & safety",
+                text = strings.legalAndSafety,
                 color = colors.primaryText,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
@@ -836,7 +1001,7 @@ fun LegalSafetyScreen(
         ) {
             Column(modifier = Modifier.padding(18.dp)) {
                 Text(
-                    text = "Terms of Service & Privacy Policy",
+                    text = strings.dataAndPrivacy,
                     color = colors.primaryText,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
@@ -877,6 +1042,7 @@ fun RenameChatDialog(
     onDismiss: () -> Unit
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
     var title by remember(initialTitle) { mutableStateOf(initialTitle) }
 
     AlertDialog(
@@ -884,7 +1050,7 @@ fun RenameChatDialog(
         containerColor = colors.cardBackground,
         titleContentColor = colors.primaryText,
         textContentColor = colors.primaryText,
-        title = { Text("Rename chat", fontWeight = FontWeight.Bold) },
+        title = { Text(strings.renameDialogTitle, fontWeight = FontWeight.Bold) },
         text = {
             Box(
                 modifier = Modifier
@@ -909,12 +1075,12 @@ fun RenameChatDialog(
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(title) }) {
-                Text("Save", color = colors.primaryBlue, fontWeight = FontWeight.Bold)
+                Text(strings.saveButton, color = colors.primaryBlue, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = colors.secondaryText)
+                Text(strings.cancelButton, color = colors.secondaryText)
             }
         }
     )
@@ -926,21 +1092,22 @@ fun DeleteChatDialog(
     onDismiss: () -> Unit
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.cardBackground,
         titleContentColor = colors.primaryText,
         textContentColor = colors.secondaryText,
-        title = { Text("Delete chat?", fontWeight = FontWeight.Bold) },
-        text = { Text("This conversation and its messages will be permanently deleted.") },
+        title = { Text(strings.deleteDialogTitle, fontWeight = FontWeight.Bold) },
+        text = { Text(strings.deleteDialogBody) },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text("Delete", color = colors.destructiveRed, fontWeight = FontWeight.Bold)
+                Text(strings.deleteButton, color = colors.destructiveRed, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = colors.primaryText)
+                Text(strings.cancelButton, color = colors.primaryText)
             }
         }
     )
@@ -955,15 +1122,16 @@ fun ShareLinkDialog(
     onDismiss: () -> Unit
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.cardBackground,
         titleContentColor = colors.primaryText,
         textContentColor = colors.secondaryText,
-        title = { Text("Shared link active", fontWeight = FontWeight.Bold) },
+        title = { Text(strings.shareDialogTitle, fontWeight = FontWeight.Bold) },
         text = {
             Column {
-                Text("Anyone with this read-only link can view a snapshot of this conversation:")
+                Text(strings.shareDialogBody)
                 Spacer(modifier = Modifier.height(10.dp))
                 Box(
                     modifier = Modifier
@@ -984,19 +1152,19 @@ fun ShareLinkDialog(
         confirmButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onRevokeLink) {
-                    Text("Revoke", color = colors.destructiveRed, fontWeight = FontWeight.SemiBold)
+                    Text(strings.revokeLinkButton, color = colors.destructiveRed, fontWeight = FontWeight.SemiBold)
                 }
                 TextButton(onClick = { onCopyLink(shareUrl) }) {
-                    Text("Copy", color = colors.primaryBlue, fontWeight = FontWeight.Bold)
+                    Text(strings.copyLinkButton, color = colors.primaryBlue, fontWeight = FontWeight.Bold)
                 }
                 TextButton(onClick = { onShareSystem(shareUrl) }) {
-                    Text("Share", color = colors.primaryBlue, fontWeight = FontWeight.Bold)
+                    Text(strings.shareButton, color = colors.primaryBlue, fontWeight = FontWeight.Bold)
                 }
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close", color = colors.secondaryText)
+                Text(strings.closeButton, color = colors.secondaryText)
             }
         }
     )
@@ -1009,15 +1177,16 @@ fun RecentUploadsDialog(
     onDismiss: () -> Unit
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.cardBackground,
         titleContentColor = colors.primaryText,
         textContentColor = colors.secondaryText,
-        title = { Text("Recently uploaded", fontWeight = FontWeight.Bold) },
+        title = { Text(strings.recentlyUploaded, fontWeight = FontWeight.Bold) },
         text = {
             if (attachments.isEmpty()) {
-                Text("No previous uploads found in your account.")
+                Text(strings.noMediaSubtitle)
             } else {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1055,7 +1224,7 @@ fun RecentUploadsDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close", color = colors.primaryBlue, fontWeight = FontWeight.Bold)
+                Text(strings.closeButton, color = colors.primaryBlue, fontWeight = FontWeight.Bold)
             }
         }
     )
