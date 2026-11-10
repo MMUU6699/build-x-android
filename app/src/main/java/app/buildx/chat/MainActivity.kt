@@ -83,12 +83,25 @@ import kotlinx.coroutines.delay
 import java.io.File
 
 class MainActivity : ComponentActivity() {
+    private var vm: BuildXViewModel? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            BuildXRoot()
+            val viewModel: BuildXViewModel = viewModel()
+            vm = viewModel
+            LaunchedEffect(intent) {
+                intent?.let { viewModel.handleAuthDeeplink(it) }
+            }
+            BuildXRoot(viewModel)
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        vm?.handleAuthDeeplink(intent)
     }
 }
 
@@ -210,6 +223,8 @@ fun BuildXRoot(
                         viewModel.signUp(email, password, displayName, handle)
                     },
                     onGoogleSignIn = { viewModel.signInWithGoogle() },
+                    onToggleLanguage = { viewModel.toggleLanguage() },
+                    onToggleAppearance = { viewModel.toggleAppearance() },
                     onDismissError = { viewModel.clearSnackbar() }
                 )
             } else {

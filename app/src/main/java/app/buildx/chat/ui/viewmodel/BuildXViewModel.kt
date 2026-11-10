@@ -28,6 +28,7 @@ import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
 import app.buildx.chat.data.model.VerificationStatusInfo
 import app.buildx.chat.data.repository.BuildXRepository
+import io.github.jan.supabase.auth.handleDeeplinks
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -280,6 +281,17 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
     }
+
+    fun handleAuthDeeplink(intent: Intent) {
+        viewModelScope.launch {
+            runCatching {
+                repository.supabase.handleDeeplinks(intent) {
+                    checkExistingSession()
+                }
+            }
+        }
+    }
+
 
 
     fun signOut() {
@@ -1278,6 +1290,17 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     fun setLanguage(language: AppLanguage) {
         repository.saveLanguage(language)
         _uiState.update { it.copy(language = language) }
+    }
+
+    fun toggleLanguage() {
+        val next = if (_uiState.value.language == AppLanguage.ARABIC) AppLanguage.ENGLISH else AppLanguage.ARABIC
+        setLanguage(next)
+    }
+
+    fun toggleAppearance() {
+        val current = _uiState.value.appearance
+        val next = if (current == AppAppearance.DARK) AppAppearance.LIGHT else AppAppearance.DARK
+        setAppearance(next)
     }
 
     fun updateProfile(displayName: String, handle: String) {

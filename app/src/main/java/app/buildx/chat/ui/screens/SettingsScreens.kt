@@ -291,6 +291,7 @@ fun SettingsScreen(
                 title = strings.requestVerificationTitle,
                 subtitle = if (profile?.isVerified == true) strings.verifiedAccountDescription else null,
                 onClick = onRequestVerificationClick,
+                iconTint = colors.primaryBlue,
                 showDivider = false
             )
         }

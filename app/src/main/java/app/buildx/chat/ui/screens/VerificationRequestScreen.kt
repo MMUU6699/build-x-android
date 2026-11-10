@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
@@ -49,6 +53,7 @@ import app.buildx.chat.ui.components.MarkLoader
 import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.theme.BuildXTheme
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun VerificationRequestScreen(
     verificationStatus: VerificationStatusInfo?,
@@ -69,7 +74,7 @@ fun VerificationRequestScreen(
     }
 
     var fullName by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf("Tech & Development") }
+    var selectedCategory by remember { mutableStateOf(strings.categoryTech) }
     var links by remember { mutableStateOf("") }
     var reason by remember { mutableStateOf("") }
     var validationError by remember { mutableStateOf<String?>(null) }
@@ -133,7 +138,7 @@ fun VerificationRequestScreen(
             .statusBarsPadding()
             .imePadding()
     ) {
-        // Top Bar
+        // Top Bar with verified badge icon in header
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -146,12 +151,24 @@ fun VerificationRequestScreen(
                 contentDescription = strings.closeButton,
                 onClick = onBackClick
             )
-            Text(
-                text = strings.requestVerificationTitle,
-                color = colors.primaryText,
-                fontSize = 19.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_verified_badge),
+                    contentDescription = null,
+                    tint = colors.primaryBlue,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = strings.requestVerificationTitle,
+                    color = colors.primaryText,
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
             Spacer(modifier = Modifier.size(44.dp))
         }
 
@@ -166,7 +183,7 @@ fun VerificationRequestScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
             // Case 1: Already Verified
             if (verificationStatus?.isVerified == true) {
@@ -179,7 +196,7 @@ fun VerificationRequestScreen(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(72.dp)
+                                .size(76.dp)
                                 .clip(CircleShape)
                                 .background(colors.primaryBlue.copy(alpha = 0.12f)),
                             contentAlignment = Alignment.Center
@@ -188,7 +205,7 @@ fun VerificationRequestScreen(
                                 painter = painterResource(id = R.drawable.ic_verified_badge),
                                 contentDescription = null,
                                 tint = colors.primaryBlue,
-                                modifier = Modifier.size(40.dp)
+                                modifier = Modifier.size(44.dp)
                             )
                         }
                         Spacer(modifier = Modifier.height(16.dp))
@@ -200,11 +217,11 @@ fun VerificationRequestScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = strings.verificationCriteriaBody,
+                            text = strings.accountVerifiedDesc,
                             color = colors.secondaryText,
-                            fontSize = 14.sp,
+                            fontSize = 14.5.sp,
                             textAlign = TextAlign.Center,
-                            lineHeight = 20.sp
+                            lineHeight = 21.sp
                         )
                     }
                 }
@@ -217,33 +234,33 @@ fun VerificationRequestScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(20.dp)
+                            .padding(22.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 modifier = Modifier
-                                    .size(10.dp)
+                                    .size(12.dp)
                                     .clip(CircleShape)
-                                    .background(androidx.compose.ui.graphics.Color(0xFFD97706))
+                                    .background(Color(0xFFD97706))
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = strings.verificationStatusPending,
+                                text = strings.verificationUnderReview,
                                 color = colors.primaryText,
-                                fontSize = 16.sp,
+                                fontSize = 17.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = strings.verificationCriteriaBody,
+                            text = strings.verificationReviewDesc,
                             color = colors.secondaryText,
                             fontSize = 14.sp,
                             lineHeight = 20.sp
                         )
 
                         if (!verificationStatus.fullName.isNullOrBlank()) {
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(14.dp))
                             Text(
                                 text = "${strings.verificationFullNameLabel}: ${verificationStatus.fullName}",
                                 color = colors.primaryText,
@@ -261,20 +278,20 @@ fun VerificationRequestScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(22.dp))
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(46.dp)
                                 .clip(RoundedCornerShape(999.dp))
-                                .border(1.dp, colors.destructiveRed.copy(alpha = 0.5f), RoundedCornerShape(999.dp))
+                                .border(1.2.dp, colors.destructiveRed.copy(alpha = 0.5f), RoundedCornerShape(999.dp))
                                 .clickable { showWithdrawConfirm = true },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = strings.verificationWithdrawButton,
                                 color = colors.destructiveRed,
-                                fontSize = 14.sp,
+                                fontSize = 14.5.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -283,26 +300,26 @@ fun VerificationRequestScreen(
                 return@Column
             }
 
-            // Case 3: Rejected Request (Show notice + option to retry)
+            // Case 3: Rejected Request
             if (!forceNewForm && verificationStatus?.hasRequest == true && verificationStatus.status == "rejected") {
                 GroupedCard(modifier = Modifier.fillMaxWidth()) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(20.dp)
+                            .padding(22.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 modifier = Modifier
-                                    .size(10.dp)
+                                    .size(12.dp)
                                     .clip(CircleShape)
                                     .background(colors.destructiveRed)
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
                             Text(
                                 text = strings.verificationStatusRejected,
                                 color = colors.destructiveRed,
-                                fontSize = 16.sp,
+                                fontSize = 17.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -314,7 +331,7 @@ fun VerificationRequestScreen(
                                 fontSize = 14.sp
                             )
                         }
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(18.dp))
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -327,7 +344,7 @@ fun VerificationRequestScreen(
                             Text(
                                 text = strings.retryButton,
                                 color = colors.onPrimaryBlue,
-                                fontSize = 14.sp,
+                                fontSize = 14.5.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -337,22 +354,49 @@ fun VerificationRequestScreen(
                 return@Column
             }
 
-            // Case 4: Application Form
-            // Criteria information card
+            // Case 4: Application Form with Extended Conditions & Guidelines
             GroupedCard(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = strings.verificationCriteriaHeading,
-                        color = colors.primaryText,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_verified_badge),
+                            contentDescription = null,
+                            tint = colors.primaryBlue,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = strings.verificationCriteriaHeading,
+                            color = colors.primaryText,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
                     Text(
                         text = strings.verificationCriteriaBody,
                         color = colors.secondaryText,
                         fontSize = 13.5.sp,
-                        lineHeight = 19.sp
+                        lineHeight = 20.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Structured Condition Checklist
+                    ConditionRow(
+                        title = if (strings.isRtl) "١. الأصالة والهوية الحقيقية" else "1. Authenticity & Real Identity",
+                        description = if (strings.isRtl) "يجب أن يمثل الحساب شخصية حقيقية، أو علامة تجارية مسجلة، أو مشروعاً رسمياً." else "Account must represent a real individual, registered organization, or official project."
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    ConditionRow(
+                        title = if (strings.isRtl) "٢. النشاط والأعمال الموثقة" else "2. Public Presence & Track Record",
+                        description = if (strings.isRtl) "يجب أن يكون لديك نشاط أو أعمال سابقة موثقة (مثل مستودعات GitHub، موقع رسمي، أو مقالات منشورة)." else "Active presence, verified repositories, official portfolio, or recognized contributions."
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    ConditionRow(
+                        title = if (strings.isRtl) "٣. اكتمال الملف الشخصي" else "3. Profile Completeness",
+                        description = if (strings.isRtl) "يجب أن يحتوي ملفك على صورة شخصية، ونبذة تعريفية، واسم مستخدم محدد مسبقاً." else "Your profile must have an avatar, a bio, and a confirmed username."
                     )
                 }
             }
@@ -379,76 +423,52 @@ fun VerificationRequestScreen(
                 Spacer(modifier = Modifier.height(14.dp))
             }
 
-            // Form card
+            // Form inputs
             GroupedCard(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    // Category selector pills
+                Column(modifier = Modifier.padding(20.dp)) {
+                    // Category selector using responsive FlowRow so pills NEVER cut off
                     Text(
                         text = strings.verificationCategoryLabel,
                         color = colors.primaryText,
-                        fontSize = 14.sp,
+                        fontSize = 14.5.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(10.dp))
-                    Row(
+
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        categories.take(3).forEach { (label, key) ->
+                        categories.forEach { (label, key) ->
                             val isSelected = selectedCategory == key
                             Box(
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .height(36.dp)
-                                    .clip(RoundedCornerShape(18.dp))
+                                    .wrapContentWidth()
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(19.dp))
                                     .background(if (isSelected) colors.primaryBlue else colors.surfaceMuted)
-                                    .clickable { selectedCategory = key },
+                                    .clickable { selectedCategory = key }
+                                    .padding(horizontal = 16.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     text = label,
-                                    color = if (isSelected) colors.onPrimaryBlue else colors.secondaryText,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        categories.drop(3).forEach { (label, key) ->
-                            val isSelected = selectedCategory == key
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(36.dp)
-                                    .clip(RoundedCornerShape(18.dp))
-                                    .background(if (isSelected) colors.primaryBlue else colors.surfaceMuted)
-                                    .clickable { selectedCategory = key },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = label,
-                                    color = if (isSelected) colors.onPrimaryBlue else colors.secondaryText,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1
+                                    color = if (isSelected) colors.onPrimaryBlue else colors.primaryText,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(18.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
 
                     // Full legal name
                     Text(
                         text = strings.verificationFullNameLabel,
                         color = colors.primaryText,
-                        fontSize = 14.sp,
+                        fontSize = 14.5.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(6.dp))
@@ -458,14 +478,20 @@ fun VerificationRequestScreen(
                         hintText = "e.g. John Doe / Studio X"
                     )
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(18.dp))
 
-                    // Links / proof
+                    // Evidence / Verification Links
                     Text(
                         text = strings.verificationLinksLabel,
                         color = colors.primaryText,
-                        fontSize = 14.sp,
+                        fontSize = 14.5.sp,
                         fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (strings.isRtl) "أضف روابط لموقعك، GitHub، أو حساباتك الموثقة" else "Links to your website, GitHub, or public profiles",
+                        color = colors.secondaryText,
+                        fontSize = 12.sp
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     VerificationTextField(
@@ -474,14 +500,20 @@ fun VerificationRequestScreen(
                         hintText = "https://github.com/..., https://..."
                     )
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(18.dp))
 
                     // Reason / statement (10 - 500 chars)
                     Text(
                         text = strings.verificationReasonLabel,
                         color = colors.primaryText,
-                        fontSize = 14.sp,
+                        fontSize = 14.5.sp,
                         fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (strings.isRtl) "اشرح بإيجاز لماذا يجب توثيق حسابك وما الذي تمثله (١٠ أحرف كحد أدنى)" else "Briefly explain why your account should be verified (min 10 characters)",
+                        color = colors.secondaryText,
+                        fontSize = 12.sp
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     VerificationTextArea(
@@ -492,7 +524,7 @@ fun VerificationRequestScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(26.dp))
 
             // Submit Button
             Box(
@@ -507,11 +539,11 @@ fun VerificationRequestScreen(
                         enabled = !isSubmitting,
                         onClick = {
                             if (fullName.trim().length < 2) {
-                                validationError = "Please enter your full legal or brand name."
+                                validationError = if (strings.isRtl) "يرجى إدخال الاسم الكامل أو اسم الجهة." else "Please enter your full legal or brand name."
                                 return@pressScaleClickable
                             }
                             if (reason.trim().length < 10) {
-                                validationError = "Please provide at least 10 characters explaining your request."
+                                validationError = if (strings.isRtl) "يرجى تقديم سبب من ١٠ أحرف على الأقل." else "Please provide at least 10 characters explaining your request."
                                 return@pressScaleClickable
                             }
                             onSubmitRequest(
@@ -532,8 +564,37 @@ fun VerificationRequestScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(36.dp))
         }
+    }
+}
+
+@Composable
+private fun ConditionRow(
+    title: String,
+    description: String
+) {
+    val colors = BuildXTheme.colors
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(colors.surfaceMuted)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+    ) {
+        Text(
+            text = title,
+            color = colors.primaryText,
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(3.dp))
+        Text(
+            text = description,
+            color = colors.secondaryText,
+            fontSize = 12.5.sp,
+            lineHeight = 17.sp
+        )
     }
 }
 
@@ -547,10 +608,10 @@ private fun VerificationTextField(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(48.dp)
+            .height(50.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(colors.surfaceMuted)
-            .padding(horizontal = 14.dp),
+            .padding(horizontal = 16.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         if (value.isEmpty()) {
@@ -566,7 +627,7 @@ private fun VerificationTextField(
             singleLine = true,
             textStyle = TextStyle(
                 color = colors.primaryText,
-                fontSize = 14.sp,
+                fontSize = 14.5.sp,
                 fontWeight = FontWeight.Medium
             ),
             cursorBrush = SolidColor(colors.primaryBlue),
@@ -585,7 +646,7 @@ private fun VerificationTextArea(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(110.dp)
+            .height(115.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(colors.surfaceMuted)
             .padding(14.dp),
@@ -604,7 +665,7 @@ private fun VerificationTextArea(
             singleLine = false,
             textStyle = TextStyle(
                 color = colors.primaryText,
-                fontSize = 14.sp,
+                fontSize = 14.5.sp,
                 fontWeight = FontWeight.Medium
             ),
             cursorBrush = SolidColor(colors.primaryBlue),

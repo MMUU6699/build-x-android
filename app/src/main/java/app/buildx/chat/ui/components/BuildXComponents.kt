@@ -118,24 +118,24 @@ fun Modifier.pressScaleClickable(
 }
 
 /**
- * 1. MarkLoader: 12-spoke radial sunburst mark matching Image 2 with signature gradient.
- * Supports idle breathing/rotation and fast loader rotation during reasoning and loading.
+ * 1. MarkLoader: Lume Studio rosette logo with serene, graceful rotation (slower than medium speed).
+ * Color: black in light mode, white in dark mode (matching colors.primaryText).
  */
 @Composable
 fun MarkLoader(
     modifier: Modifier = Modifier,
     size: Dp = 68.dp,
     isSpinning: Boolean = false,
-    useBrandGradient: Boolean = true
+    useBrandGradient: Boolean = false,
+    tint: Color = BuildXTheme.colors.primaryText
 ) {
-    val colors = BuildXTheme.colors
     val infiniteTransition = rememberInfiniteTransition(label = "markRotation")
     val angle by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
             animation = tween(
-                durationMillis = if (isSpinning) 1200 else 8000,
+                durationMillis = if (isSpinning) 3600 else 14000,
                 easing = LinearEasing
             ),
             repeatMode = RepeatMode.Restart
@@ -143,53 +143,24 @@ fun MarkLoader(
         label = "markAngle"
     )
     val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.98f,
-        targetValue = 1.02f,
+        initialValue = 0.985f,
+        targetValue = 1.015f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1800, easing = FastOutSlowInEasing),
+            animation = tween(durationMillis = 2400, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "markPulse"
     )
 
-    val gradientBrush = if (useBrandGradient) {
-        Brush.linearGradient(
-            colors = listOf(
-                colors.markPurpleStart,
-                colors.markVioletMid,
-                colors.markBlueEnd
-            )
-        )
-    } else {
-        SolidColor(colors.primaryText)
-    }
-
-    Canvas(
+    Icon(
+        painter = painterResource(id = R.drawable.ic_buildx_mark),
+        contentDescription = "Build X Logo",
+        tint = tint,
         modifier = modifier
             .size(size)
-            .scale(if (isSpinning) 1f else pulseScale)
+            .scale(pulseScale)
             .rotate(angle)
-    ) {
-        val canvasSize = this.size.minDimension
-        val scaleFactor = canvasSize / 96f
-        val spokeW = 7.6f * scaleFactor
-        val spokeL = 21.0f * scaleFactor
-        val ringR = 31.0f * scaleFactor
-        val cx = this.size.width / 2f
-        val cy = this.size.height / 2f
-
-        for (i in 0 until 12) {
-            val angleDeg = i * 30f
-            rotate(degrees = angleDeg, pivot = Offset(cx, cy)) {
-                drawRoundRect(
-                    brush = gradientBrush,
-                    topLeft = Offset(cx - spokeW / 2f, cy - ringR - spokeL / 2f),
-                    size = Size(spokeW, spokeL),
-                    cornerRadius = CornerRadius(spokeW / 2f, spokeW / 2f)
-                )
-            }
-        }
-    }
+    )
 }
 
 /**
@@ -1259,11 +1230,16 @@ fun SettingsRow(
     subtitle: String? = null,
     isDestructive: Boolean = false,
     showChevron: Boolean = true,
-    showDivider: Boolean = false
+    showDivider: Boolean = false,
+    iconTint: Color? = null
 ) {
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
-    val tint = if (isDestructive) colors.destructiveRed else colors.primaryText
+    val tint = when {
+        isDestructive -> colors.destructiveRed
+        iconTint != null -> iconTint
+        else -> colors.primaryText
+    }
 
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
