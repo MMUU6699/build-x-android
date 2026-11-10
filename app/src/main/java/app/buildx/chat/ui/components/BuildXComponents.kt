@@ -118,14 +118,15 @@ fun Modifier.pressScaleClickable(
 }
 
 /**
- * 1. MarkLoader: Original 8-petal ring mark with purple-to-blue gradient (#C24DFB -> #8842FA -> #4B3EF6).
- * Supports idle breathing/slow rotation (size ~68dp on Home) and fast loader rotation (size ~22dp during reasoning).
+ * 1. MarkLoader: 12-spoke radial sunburst mark matching Image 2 with signature gradient.
+ * Supports idle breathing/rotation and fast loader rotation during reasoning and loading.
  */
 @Composable
 fun MarkLoader(
     modifier: Modifier = Modifier,
     size: Dp = 68.dp,
-    isSpinning: Boolean = false
+    isSpinning: Boolean = false,
+    useBrandGradient: Boolean = true
 ) {
     val colors = BuildXTheme.colors
     val infiniteTransition = rememberInfiniteTransition(label = "markRotation")
@@ -134,7 +135,7 @@ fun MarkLoader(
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
             animation = tween(
-                durationMillis = if (isSpinning) 1400 else 9000,
+                durationMillis = if (isSpinning) 1200 else 8000,
                 easing = LinearEasing
             ),
             repeatMode = RepeatMode.Restart
@@ -142,8 +143,8 @@ fun MarkLoader(
         label = "markAngle"
     )
     val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.97f,
-        targetValue = 1.03f,
+        initialValue = 0.98f,
+        targetValue = 1.02f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 1800, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
@@ -151,13 +152,17 @@ fun MarkLoader(
         label = "markPulse"
     )
 
-    val gradientBrush = Brush.linearGradient(
-        colors = listOf(
-            colors.markPurpleStart,
-            colors.markVioletMid,
-            colors.markBlueEnd
+    val gradientBrush = if (useBrandGradient) {
+        Brush.linearGradient(
+            colors = listOf(
+                colors.markPurpleStart,
+                colors.markVioletMid,
+                colors.markBlueEnd
+            )
         )
-    )
+    } else {
+        SolidColor(colors.primaryText)
+    }
 
     Canvas(
         modifier = modifier
@@ -167,25 +172,20 @@ fun MarkLoader(
     ) {
         val canvasSize = this.size.minDimension
         val scaleFactor = canvasSize / 96f
-        val ringR = 26.5f * scaleFactor
-        val petalW = 14.2f * scaleFactor
-        val petalL = 24.5f * scaleFactor
+        val spokeW = 7.6f * scaleFactor
+        val spokeL = 21.0f * scaleFactor
+        val ringR = 31.0f * scaleFactor
         val cx = this.size.width / 2f
         val cy = this.size.height / 2f
 
-        for (i in 0 until 8) {
-            val thetaDeg = i * 45f - 90f
-            val thetaRad = Math.toRadians(thetaDeg.toDouble())
-            val px = cx + (ringR * cos(thetaRad)).toFloat()
-            val py = cy + (ringR * sin(thetaRad)).toFloat()
-            val tiltDeg = thetaDeg + 52f
-
-            rotate(degrees = tiltDeg, pivot = Offset(px, py)) {
+        for (i in 0 until 12) {
+            val angleDeg = i * 30f
+            rotate(degrees = angleDeg, pivot = Offset(cx, cy)) {
                 drawRoundRect(
                     brush = gradientBrush,
-                    topLeft = Offset(px - petalW / 2f, py - petalL / 2f),
-                    size = Size(petalW, petalL),
-                    cornerRadius = CornerRadius(petalW / 2f, petalW / 2f)
+                    topLeft = Offset(cx - spokeW / 2f, cy - ringR - spokeL / 2f),
+                    size = Size(spokeW, spokeL),
+                    cornerRadius = CornerRadius(spokeW / 2f, spokeW / 2f)
                 )
             }
         }

@@ -14,8 +14,8 @@ android {
         applicationId = "app.buildx.chat"
         minSdk = 26
         targetSdk = 35
-        versionCode = 104
-        versionName = "1.4.0"
+        versionCode = 105
+        versionName = "1.4.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

@@ -114,6 +114,7 @@ fun SettingsScreen(
     onSignOutClick: () -> Unit,
     language: AppLanguage = AppLanguage.SYSTEM,
     onAppLanguageClick: () -> Unit = {},
+    onRequestVerificationClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
@@ -283,6 +284,13 @@ fun SettingsScreen(
                 iconRes = R.drawable.ic_shield,
                 title = strings.legalAndSafety,
                 onClick = onLegalSafetyClick,
+                showDivider = true
+            )
+            SettingsRow(
+                iconRes = R.drawable.ic_verified_badge,
+                title = strings.requestVerificationTitle,
+                subtitle = if (profile?.isVerified == true) strings.verifiedAccountDescription else null,
+                onClick = onRequestVerificationClick,
                 showDivider = false
             )
         }

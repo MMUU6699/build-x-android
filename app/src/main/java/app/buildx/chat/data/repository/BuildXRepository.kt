@@ -3,6 +3,7 @@ package app.buildx.chat.data.repository
 import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.Context
+import android.content.SharedPreferences
 import android.net.Uri
 import android.provider.MediaStore
 import android.provider.OpenableColumns
@@ -22,10 +23,15 @@ import app.buildx.chat.data.model.PublicProfile
 import app.buildx.chat.data.model.ReasoningStep
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
+import app.buildx.chat.data.model.VerificationStatusInfo
+import app.buildx.chat.util.AuthValidation
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
+import io.github.jan.supabase.auth.SessionManager
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.providers.builtin.Email
+import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.from
@@ -92,11 +98,49 @@ class BuildXRepository(private val context: Context) {
         encodeDefaults = true
     }
 
+    private class SharedPreferencesSessionManager(
+        private val prefs: SharedPreferences,
+        private val json: Json
+    ) : SessionManager {
+        private val sessionKey = "buildx_auth_session_json"
+
+        override suspend fun saveSession(session: UserSession) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val str = json.encodeToString(UserSession.serializer(), session)
+                    prefs.edit().putString(sessionKey, str).commit()
+                }
+            }
+        }
+
+        override suspend fun loadSession(): UserSession? {
+            return withContext(Dispatchers.IO) {
+                runCatching {
+                    val str = prefs.getString(sessionKey, null) ?: return@runCatching null
+                    json.decodeFromString(UserSession.serializer(), str)
+                }.getOrNull()
+            }
+        }
+
+        override suspend fun deleteSession() {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    prefs.edit().remove(sessionKey).commit()
+                }
+            }
+        }
+    }
+
     val supabase: SupabaseClient = createSupabaseClient(
         supabaseUrl = BuildConfig.SUPABASE_URL,
         supabaseKey = BuildConfig.SUPABASE_ANON_KEY
     ) {
-        install(Auth)
+        install(Auth) {
+            sessionManager = SharedPreferencesSessionManager(prefs, json)
+            autoLoadFromStorage = true
+            autoSaveToStorage = true
+            alwaysAutoRefresh = true
+        }
         install(Postgrest)
         install(Storage)
         install(Realtime)
@@ -107,6 +151,12 @@ class BuildXRepository(private val context: Context) {
             requestTimeoutMillis = 120_000L
             connectTimeoutMillis = 20_000L
             socketTimeoutMillis = 120_000L
+        }
+    }
+
+    suspend fun awaitAuthInitialization() {
+        runCatching {
+            supabase.auth.awaitInitialization()
         }
     }
 
@@ -125,6 +175,44 @@ class BuildXRepository(private val context: Context) {
             }
         }
 
+    suspend fun signInWithIdentifier(identifier: String, password: String): Result<UserProfile> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val trimmed = identifier.trim()
+                if (trimmed.isEmpty()) error("Identifier cannot be empty")
+                if (password.isEmpty()) error("Password cannot be empty")
+
+                val targetEmail: String = if (trimmed.contains("@") && !trimmed.startsWith("@") && trimmed.contains(".")) {
+                    trimmed
+                } else {
+                    val clean = trimmed.removePrefix("@").lowercase()
+                    val resolved = runCatching {
+                        val params = buildJsonObject { put("p_identifier", clean) }
+                        val resp = supabase.postgrest.rpc("get_login_email", params)
+                        resp.data.trim().trim('"')
+                    }.getOrNull()
+
+                    if (resolved.isNullOrBlank() || resolved == "null") {
+                        error("No account found for username @$clean")
+                    }
+                    resolved
+                }
+
+                supabase.auth.signInWith(Email) {
+                    this.email = targetEmail
+                    this.password = password
+                }
+                ensureUserProfile()
+            }
+        }
+
+    suspend fun signInWithGoogle(): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            supabase.auth.signInWith(Google)
+        }
+    }
+
+
     suspend fun signUpWithEmail(
         email: String,
         password: String,
@@ -132,27 +220,94 @@ class BuildXRepository(private val context: Context) {
         handle: String
     ): Result<UserProfile> = withContext(Dispatchers.IO) {
         runCatching {
-            val cleanHandle = handle.trim().removePrefix("@").lowercase()
+            val cleanUsername = handle.trim().removePrefix("@").lowercase()
+            val cleanEmail = email.trim()
+
+            // Validate anti-fake / disposable email
+            val emailError = AuthValidation.validateEmail(cleanEmail)
+            if (emailError != null) error(emailError)
+
+            // Validate username
+            val userError = AuthValidation.validateUsername(cleanUsername)
+            if (userError != null) error(userError)
+
+            // Validate password
+            val passError = AuthValidation.validatePassword(password)
+            if (passError != null) error(passError)
+
+            // Check availability
+            val isAvail = checkUsernameAvailable(cleanUsername).getOrDefault(true)
+            if (!isAvail) error("Username @$cleanUsername is already taken")
+
             supabase.auth.signUpWith(Email) {
-                this.email = email.trim()
+                this.email = cleanEmail
                 this.password = password
                 this.data = buildJsonObject {
-                    put("display_name", displayName.trim())
-                    put("handle", cleanHandle)
+                    put("display_name", displayName.trim().ifBlank { cleanUsername })
+                    put("username", cleanUsername)
+                    put("handle", cleanUsername)
                 }
             }
             if (supabase.auth.currentSessionOrNull() == null) {
                 supabase.auth.signInWith(Email) {
-                    this.email = email.trim()
+                    this.email = cleanEmail
                     this.password = password
                 }
             }
             ensureUserProfile(
-                fallbackDisplayName = displayName.trim(),
-                fallbackHandle = cleanHandle
+                fallbackDisplayName = displayName.trim().ifBlank { cleanUsername },
+                fallbackHandle = cleanUsername
             )
         }
     }
+
+    suspend fun getMyVerificationStatus(): Result<VerificationStatusInfo> = withContext(Dispatchers.IO) {
+        runCatching {
+            val response = supabase.postgrest.rpc("get_my_verification_status")
+            response.decodeAs<VerificationStatusInfo>()
+        }
+    }
+
+    suspend fun submitVerificationRequest(
+        fullName: String,
+        category: String,
+        links: String,
+        reason: String
+    ): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("full_name", fullName.trim())
+                put("category", category.trim())
+                put("links", links.trim())
+                put("reason", reason.trim())
+            }
+            val response = supabase.postgrest.rpc("request_verification", params)
+            val obj = response.decodeAs<JsonObject>()
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            if (!success) {
+                val err = obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to submit request"
+                error(err)
+            }
+            true
+        }
+    }
+
+    suspend fun withdrawVerificationRequest(requestId: String? = null): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val uid = currentUserId() ?: error("Not authenticated")
+            supabase.from("verification_requests").delete {
+                filter {
+                    eq("user_id", uid)
+                    eq("status", "pending")
+                    if (!requestId.isNullOrBlank()) {
+                        eq("id", requestId)
+                    }
+                }
+            }
+            true
+        }
+    }
+
 
     suspend fun signOut(): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {

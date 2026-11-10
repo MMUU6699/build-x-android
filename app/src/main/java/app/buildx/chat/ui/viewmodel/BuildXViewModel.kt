@@ -26,6 +26,7 @@ import app.buildx.chat.data.model.PublicProfile
 import app.buildx.chat.data.model.ReasoningStep
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
+import app.buildx.chat.data.model.VerificationStatusInfo
 import app.buildx.chat.data.repository.BuildXRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -103,7 +104,12 @@ data class BuildXUiState(
     val activeAssistantMessageMenuId: String? = null,
     val editingMessageId: String? = null,
     val editingMessageText: String = "",
-    val activeSelectTextMessage: String? = null
+    val activeSelectTextMessage: String? = null,
+    // Verification system
+    val verificationStatus: VerificationStatusInfo? = null,
+    val isVerificationLoading: Boolean = false,
+    val verificationError: String? = null,
+    val isVerificationSubmitting: Boolean = false
 )
 
 class BuildXViewModel(application: Application) : AndroidViewModel(application) {
@@ -128,6 +134,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun checkExistingSession() {
         viewModelScope.launch {
+            repository.awaitAuthInitialization()
             val uid = repository.currentUserId()
             if (uid != null) {
                 runCatching {
@@ -151,13 +158,17 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun signIn(email: String, password: String) {
-        if (email.isBlank() || password.isBlank()) {
-            _uiState.update { it.copy(authError = "Please enter both email and password.") }
+        signInWithIdentifier(email, password)
+    }
+
+    fun signInWithIdentifier(identifier: String, password: String) {
+        if (identifier.isBlank() || password.isBlank()) {
+            _uiState.update { it.copy(authError = "Please enter your username or email and password.") }
             return
         }
         viewModelScope.launch {
             _uiState.update { it.copy(isAuthLoading = true, authError = null) }
-            val result = repository.signInWithEmail(email, password)
+            val result = repository.signInWithIdentifier(identifier, password)
             result.onSuccess { profile ->
                 val resolvedAppearance = AppAppearance.fromDb(profile.appearance)
                 repository.saveAppearanceLocal(resolvedAppearance)
@@ -183,12 +194,6 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun signUp(email: String, password: String, displayName: String, handle: String) {
-        if (email.isBlank() || password.length < 6) {
-            _uiState.update {
-                it.copy(authError = "Enter a valid email and a password of at least 6 characters.")
-            }
-            return
-        }
         viewModelScope.launch {
             _uiState.update { it.copy(isAuthLoading = true, authError = null) }
             val result = repository.signUpWithEmail(email, password, displayName, handle)
@@ -215,6 +220,67 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
     }
+
+    fun signInWithGoogle() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isAuthLoading = true, authError = null) }
+            val result = repository.signInWithGoogle()
+            result.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        isAuthLoading = false,
+                        authError = err.message ?: "Google sign in failed."
+                    )
+                }
+            }
+        }
+    }
+
+    fun loadVerificationStatus() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isVerificationLoading = true, verificationError = null) }
+            val res = repository.getMyVerificationStatus()
+            res.onSuccess { info ->
+                _uiState.update { it.copy(verificationStatus = info, isVerificationLoading = false) }
+            }.onFailure { err ->
+                _uiState.update { it.copy(isVerificationLoading = false, verificationError = err.message) }
+            }
+        }
+    }
+
+    fun submitVerificationRequest(
+        fullName: String,
+        category: String,
+        links: String,
+        reason: String,
+        onSuccess: () -> Unit
+    ) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isVerificationSubmitting = true, verificationError = null) }
+            val res = repository.submitVerificationRequest(fullName, category, links, reason)
+            res.onSuccess {
+                _uiState.update { it.copy(isVerificationSubmitting = false) }
+                loadVerificationStatus()
+                onSuccess()
+            }.onFailure { err ->
+                _uiState.update { it.copy(isVerificationSubmitting = false, verificationError = err.message) }
+            }
+        }
+    }
+
+    fun withdrawVerificationRequest(requestId: String? = null) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isVerificationSubmitting = true, verificationError = null) }
+            val res = repository.withdrawVerificationRequest(requestId)
+            res.onSuccess {
+                _uiState.update { it.copy(isVerificationSubmitting = false) }
+                loadVerificationStatus()
+            }.onFailure { err ->
+                _uiState.update { it.copy(isVerificationSubmitting = false, verificationError = err.message) }
+            }
+        }
+    }
+
 
     fun signOut() {
         activeStreamJob?.cancel()

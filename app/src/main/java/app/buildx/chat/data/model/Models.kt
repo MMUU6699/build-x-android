@@ -218,3 +218,20 @@ data class AppNotificationItem(
     val body: String,
     val timestampMillis: Long
 )
+
+@Serializable
+data class VerificationStatusInfo(
+    @SerialName("is_verified") val isVerified: Boolean = false,
+    @SerialName("verified_at") val verifiedAt: String? = null,
+    @SerialName("has_request") val hasRequest: Boolean = false,
+    @SerialName("request_id") val requestId: String? = null,
+    @SerialName("status") val status: String? = null,
+    @SerialName("reason") val reason: String? = null,
+    @SerialName("full_name") val fullName: String? = null,
+    @SerialName("category") val category: String? = null,
+    @SerialName("links") val links: String? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("decision_reason") val decisionReason: String? = null,
+    @SerialName("reviewed_at") val reviewedAt: String? = null
+)
+

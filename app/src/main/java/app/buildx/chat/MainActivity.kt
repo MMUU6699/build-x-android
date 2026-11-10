@@ -76,6 +76,7 @@ import app.buildx.chat.ui.screens.RecentUploadsDialog
 import app.buildx.chat.ui.screens.RenameChatDialog
 import app.buildx.chat.ui.screens.SettingsScreen
 import app.buildx.chat.ui.screens.ShareLinkDialog
+import app.buildx.chat.ui.screens.VerificationRequestScreen
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.viewmodel.BuildXViewModel
 import kotlinx.coroutines.delay
@@ -204,10 +205,11 @@ fun BuildXRoot(
                 AuthScreen(
                     isLoading = uiState.isAuthLoading,
                     errorMessage = uiState.authError,
-                    onSignIn = { email, password -> viewModel.signIn(email, password) },
+                    onSignIn = { identifier, password -> viewModel.signInWithIdentifier(identifier, password) },
                     onSignUp = { email, password, displayName, handle ->
                         viewModel.signUp(email, password, displayName, handle)
                     },
+                    onGoogleSignIn = { viewModel.signInWithGoogle() },
                     onDismissError = { viewModel.clearSnackbar() }
                 )
             } else {
@@ -414,9 +416,29 @@ fun BuildXRoot(
                             onDataPrivacyClick = { navController.navigate("data_privacy") },
                             onAppInfoClick = { navController.navigate("app_info") },
                             onLegalSafetyClick = { navController.navigate("legal_safety") },
+                            onRequestVerificationClick = { navController.navigate("verification") },
                             onSignOutClick = {
                                 viewModel.signOut()
                             }
+                        )
+                    }
+
+                    composable("verification") {
+                        VerificationRequestScreen(
+                            verificationStatus = uiState.verificationStatus,
+                            isLoading = uiState.isVerificationLoading,
+                            isSubmitting = uiState.isVerificationSubmitting,
+                            errorMessage = uiState.verificationError,
+                            onLoadStatus = { viewModel.loadVerificationStatus() },
+                            onSubmitRequest = { fullName, category, links, reason ->
+                                viewModel.submitVerificationRequest(fullName, category, links, reason) {
+                                    viewModel.showSnackbar("Verification request submitted successfully.")
+                                }
+                            },
+                            onWithdrawRequest = { requestId ->
+                                viewModel.withdrawVerificationRequest(requestId)
+                            },
+                            onBackClick = { navController.popBackStack() }
                         )
                     }
 
