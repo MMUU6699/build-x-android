@@ -75,7 +75,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import app.buildx.chat.R
+import app.buildx.chat.data.model.ChatMessage
 import app.buildx.chat.data.model.ChatMode
 import app.buildx.chat.data.model.ReasoningStep
 import app.buildx.chat.data.model.StagedAttachment
@@ -784,45 +787,255 @@ fun StopButton(
 
 /**
  * 5. UserBubble: Right-aligned pill bubble (#F1F3F0, min height 40dp, full pill radius).
- * Resolves text direction per message from the first strong character (Bidi fix).
+ * - Resolves text direction per message from the first strong character (Bidi fix).
+ * - Tap to open anchored popup (Copy, Edit, Resend, Select text) with subtle pressed tint.
+ * - In-place inline editor when isEditing is true with Cancel/Send pills and replacement hint.
+ * - Shows small gray "Edited" label when message has been edited.
  */
 @Composable
 fun UserBubble(
     text: String,
     modifier: Modifier = Modifier
 ) {
+    UserBubble(
+        message = ChatMessage(id = "", conversationId = "", role = "user", content = text),
+        modifier = modifier
+    )
+}
+
+@Composable
+fun UserBubble(
+    message: ChatMessage,
+    isMenuOpen: Boolean = false,
+    isEditing: Boolean = false,
+    editingText: String = message.content,
+    isStreaming: Boolean = false,
+    onBubbleClick: () -> Unit = {},
+    onDismissMenu: () -> Unit = {},
+    onCopy: () -> Unit = {},
+    onStartEdit: () -> Unit = {},
+    onCancelEdit: () -> Unit = {},
+    onSendEdit: (String) -> Unit = {},
+    onResend: () -> Unit = {},
+    onSelectText: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
-    val isRtl = remember(text, strings.isRtl) { isRtlText(text, defaultRtl = strings.isRtl) }
 
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-        Row(
-            modifier = modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End
+    if (isEditing) {
+        var textInput by remember(editingText) { mutableStateOf(editingText) }
+        val focusRequester = remember { FocusRequester() }
+        val isChanged = textInput.trim() != message.content.trim()
+        val canSend = textInput.trim().isNotEmpty() && isChanged
+
+        LaunchedEffect(Unit) {
+            focusRequester.requestFocus()
+        }
+
+        Column(
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            horizontalAlignment = Alignment.End
         ) {
-            CompositionLocalProvider(
-                LocalLayoutDirection provides if (isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(colors.surfaceMuted)
+                    .border(1.dp, colors.subtleSurfaceBorder, RoundedCornerShape(20.dp))
+                    .padding(horizontal = 16.dp, vertical = 14.dp)
             ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    BasicTextField(
+                        value = textInput,
+                        onValueChange = { textInput = it },
+                        textStyle = TextStyle(
+                            fontFamily = BuildXFontFamily,
+                            fontSize = 16.sp,
+                            color = colors.primaryText,
+                            lineHeight = 22.sp,
+                            textDirection = TextDirection.Content
+                        ),
+                        cursorBrush = SolidColor(colors.primaryBlue),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester)
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = strings.editReplacesLaterHint,
+                        color = colors.secondaryText,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Normal,
+                        textAlign = TextAlign.Start,
+                        style = TextStyle(textDirection = TextDirection.Content)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Cancel pill
                 Box(
                     modifier = Modifier
-                        .widthIn(min = 48.dp, max = 308.dp)
-                        .heightIn(min = 40.dp)
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(colors.surfaceMuted)
-                        .padding(horizontal = 16.dp, vertical = 9.dp),
-                    contentAlignment = Alignment.CenterStart
+                        .clip(CircleShape)
+                        .background(colors.cardBackground)
+                        .border(1.dp, colors.subtleSurfaceBorder, CircleShape)
+                        .clickable(onClick = onCancelEdit)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = text,
-                        color = colors.primaryText,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        lineHeight = 22.sp,
-                        textAlign = TextAlign.Start,
-                        style = TextStyle(
-                            fontFamily = BuildXFontFamily,
-                            textDirection = if (isRtl) TextDirection.Rtl else TextDirection.Ltr
-                        )
+                        text = strings.cancelButton,
+                        color = colors.secondaryText,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                // Send pill
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(if (canSend) colors.primaryBlue else colors.primaryBlue.copy(alpha = 0.35f))
+                        .clickable(enabled = canSend) { onSendEdit(textInput.trim()) }
+                        .padding(horizontal = 18.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = strings.sendButton,
+                        color = if (canSend) colors.onPrimaryBlue else colors.onPrimaryBlue.copy(alpha = 0.5f),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    } else {
+        val isRtl = remember(message.content, strings.isRtl) {
+            isRtlText(message.content, defaultRtl = strings.isRtl)
+        }
+
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Column(
+                modifier = modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.End
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    CompositionLocalProvider(
+                        LocalLayoutDirection provides if (isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .widthIn(min = 48.dp, max = 308.dp)
+                                .heightIn(min = 40.dp)
+                                .clip(RoundedCornerShape(22.dp))
+                                .background(
+                                    if (isMenuOpen) colors.surfaceMuted.copy(alpha = 0.82f) else colors.surfaceMuted
+                                )
+                                .border(
+                                    width = if (isMenuOpen) 1.dp else 0.dp,
+                                    color = if (isMenuOpen) colors.primaryText.copy(alpha = 0.15f) else Color.Transparent,
+                                    shape = RoundedCornerShape(22.dp)
+                                )
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = onBubbleClick
+                                )
+                                .padding(horizontal = 16.dp, vertical = 9.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            Text(
+                                text = message.content,
+                                color = colors.primaryText,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium,
+                                lineHeight = 22.sp,
+                                textAlign = TextAlign.Start,
+                                style = TextStyle(
+                                    fontFamily = BuildXFontFamily,
+                                    textDirection = if (isRtl) TextDirection.Rtl else TextDirection.Ltr
+                                )
+                            )
+
+                            if (isMenuOpen) {
+                                val popupProvider = remember(isRtl) { BubblePopupPositionProvider(isRtl) }
+                                Popup(
+                                    popupPositionProvider = popupProvider,
+                                    onDismissRequest = onDismissMenu,
+                                    properties = PopupProperties(
+                                        focusable = true,
+                                        dismissOnClickOutside = true,
+                                        dismissOnBackPress = true
+                                    )
+                                ) {
+                                    var isVisible by remember { mutableStateOf(false) }
+                                    LaunchedEffect(Unit) { isVisible = true }
+                                    androidx.compose.animation.AnimatedVisibility(
+                                        visible = isVisible,
+                                        enter = scaleIn(tween(160)) + fadeIn(tween(160)),
+                                        exit = scaleOut(tween(160)) + fadeOut(tween(160))
+                                    ) {
+                                        val menuItems = buildList {
+                                            if (message.content.isNotBlank()) {
+                                                add(
+                                                    ActionMenuItem(
+                                                        label = strings.copyAction,
+                                                        iconRes = R.drawable.ic_copy,
+                                                        onClick = onCopy
+                                                    )
+                                                )
+                                            }
+                                            if (!isStreaming) {
+                                                add(
+                                                    ActionMenuItem(
+                                                        label = strings.editAction,
+                                                        iconRes = R.drawable.ic_pencil,
+                                                        onClick = onStartEdit
+                                                    )
+                                                )
+                                                add(
+                                                    ActionMenuItem(
+                                                        label = strings.resendAction,
+                                                        iconRes = R.drawable.ic_refresh,
+                                                        onClick = onResend
+                                                    )
+                                                )
+                                            }
+                                            if (message.content.isNotBlank()) {
+                                                add(
+                                                    ActionMenuItem(
+                                                        label = strings.selectTextAction,
+                                                        iconRes = R.drawable.ic_select_text,
+                                                        onClick = onSelectText
+                                                    )
+                                                )
+                                            }
+                                        }
+                                        ActionMenuPopup(items = menuItems)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (message.isEdited) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = strings.editedLabel,
+                        color = colors.secondaryText,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Normal,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.padding(end = 4.dp)
                     )
                 }
             }
@@ -949,8 +1162,7 @@ fun ThinkingRow(
 }
 
 /**
- * 7. ActionRow: Thumbs-up, thumbs-down, copy, share (20dp gray outline icons, ~22dp spacing).
- * The share icon fades in ~350ms after the first three icons appear.
+ * 7. ActionRow: Thumbs-up, thumbs-down, copy, three-dots more button (24dp icon, 48dp touch target).
  */
 @Composable
 fun ActionRow(
@@ -958,20 +1170,16 @@ fun ActionRow(
     onThumbUp: () -> Unit,
     onThumbDown: () -> Unit,
     onCopy: () -> Unit,
-    onShare: () -> Unit,
-    modifier: Modifier = Modifier
+    onShare: () -> Unit = {},
+    onMoreClick: () -> Unit = {},
+    modifier: Modifier = Modifier,
+    popupContent: (@Composable () -> Unit)? = null
 ) {
     val colors = BuildXTheme.colors
-    var showShare by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        delay(350L)
-        showShare = true
-    }
 
     Row(
-        modifier = modifier.padding(top = 8.dp, bottom = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(22.dp),
+        modifier = modifier.padding(top = 4.dp, bottom = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
@@ -998,18 +1206,19 @@ fun ActionRow(
                 .size(20.dp)
                 .pressScaleClickable(onClick = onCopy)
         )
-        AnimatedVisibility(
-            visible = showShare,
-            enter = fadeIn(animationSpec = tween(200))
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .pressScaleClickable(onClick = onMoreClick),
+            contentAlignment = Alignment.Center
         ) {
             Icon(
-                painter = painterResource(id = R.drawable.ic_share),
-                contentDescription = "Share response",
+                painter = painterResource(id = R.drawable.ic_more_horizontal),
+                contentDescription = "More options",
                 tint = colors.secondaryText,
-                modifier = Modifier
-                    .size(20.dp)
-                    .pressScaleClickable(onClick = onShare)
+                modifier = Modifier.size(24.dp)
             )
+            popupContent?.invoke()
         }
     }
 }

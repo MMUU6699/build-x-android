@@ -7,11 +7,85 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class UserProfile(
     val id: String,
+    val username: String = "user",
     val handle: String = "user",
     @SerialName("display_name") val displayName: String = "User",
+    val bio: String? = null,
     @SerialName("avatar_url") val avatarUrl: String? = null,
+    @SerialName("is_verified") val isVerified: Boolean = false,
+    @SerialName("verified_at") val verifiedAt: String? = null,
+    @SerialName("following_count") val followingCount: Int = 0,
+    @SerialName("followers_count") val followersCount: Int = 0,
+    @SerialName("username_changed_at") val usernameChangedAt: String? = null,
+    @SerialName("username_reviewed_at") val usernameReviewedAt: String? = null,
     @SerialName("theme_mode") val appearance: String = "automatic",
     @SerialName("created_at") val createdAt: String? = null
+) {
+    val effectiveUsername: String
+        get() = username.ifBlank { handle.ifBlank { "user" } }
+}
+
+@Serializable
+data class PublicNote(
+    val id: String = "",
+    @SerialName("user_id") val userId: String = "",
+    val content: String = "",
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("expires_at") val expiresAt: String = "",
+    @SerialName("is_active") val isActive: Boolean = true
+)
+
+@Serializable
+data class PublicProfile(
+    val id: String,
+    val username: String,
+    @SerialName("display_name") val displayName: String,
+    @SerialName("avatar_url") val avatarUrl: String? = null,
+    val bio: String? = null,
+    @SerialName("is_verified") val isVerified: Boolean = false,
+    @SerialName("following_count") val followingCount: Int = 0,
+    @SerialName("followers_count") val followersCount: Int = 0,
+    @SerialName("is_following") val isFollowing: Boolean = false,
+    @SerialName("follows_you") val followsYou: Boolean = false,
+    @SerialName("active_note") val activeNote: PublicNote? = null
+)
+
+@Serializable
+data class FollowUserItem(
+    val id: String,
+    val username: String,
+    @SerialName("display_name") val displayName: String,
+    @SerialName("avatar_url") val avatarUrl: String? = null,
+    @SerialName("is_verified") val isVerified: Boolean = false,
+    @SerialName("is_following") val isFollowing: Boolean = false,
+    @SerialName("follows_you") val followsYou: Boolean = false
+)
+
+@Serializable
+data class PersonSearchResult(
+    val id: String,
+    val username: String,
+    @SerialName("display_name") val displayName: String,
+    @SerialName("avatar_url") val avatarUrl: String? = null,
+    @SerialName("is_verified") val isVerified: Boolean = false,
+    @SerialName("followers_count") val followersCount: Int = 0,
+    @SerialName("is_following") val isFollowing: Boolean = false
+)
+
+@Serializable
+data class NotificationRow(
+    val id: String,
+    @SerialName("user_id") val userId: String,
+    @SerialName("actor_id") val actorId: String,
+    val type: String, // "follow", "note"
+    @SerialName("reference_id") val referenceId: String? = null,
+    @SerialName("is_read") val isRead: Boolean = false,
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("actor_username") val actorUsername: String? = null,
+    @SerialName("actor_display_name") val actorDisplayName: String? = null,
+    @SerialName("actor_avatar_url") val actorAvatarUrl: String? = null,
+    @SerialName("actor_is_verified") val actorIsVerified: Boolean = false,
+    @SerialName("note_content") val noteContent: String? = null
 )
 
 @Serializable
@@ -49,8 +123,12 @@ data class ChatMessage(
     @SerialName("reasoning") val reasoningSteps: List<ReasoningStep> = emptyList(),
     val status: String = "done", // "streaming", "done", "stopped", "error"
     val rating: Int? = null,     // -1, 1, or null
-    @SerialName("created_at") val createdAt: String = ""
-)
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("edited_at") val editedAt: String? = null
+) {
+    val isEdited: Boolean
+        get() = !editedAt.isNullOrBlank()
+}
 
 @Serializable
 data class AttachmentRow(

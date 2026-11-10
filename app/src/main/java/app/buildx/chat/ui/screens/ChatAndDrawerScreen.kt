@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Icon
@@ -47,7 +48,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,6 +70,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import app.buildx.chat.R
 import app.buildx.chat.data.model.AttachmentRow
 import app.buildx.chat.data.model.ChatMessage
@@ -75,8 +80,11 @@ import app.buildx.chat.data.model.Conversation
 import app.buildx.chat.data.model.MainSurfacePane
 import app.buildx.chat.data.model.ReasoningStep
 import app.buildx.chat.ui.components.ActionCapsule
+import app.buildx.chat.ui.components.ActionMenuItem
+import app.buildx.chat.ui.components.ActionMenuPopup
 import app.buildx.chat.ui.components.ActionRow
 import app.buildx.chat.ui.components.AttachmentSheetContent
+import app.buildx.chat.ui.components.BubblePopupPositionProvider
 import app.buildx.chat.ui.components.Composer
 import app.buildx.chat.ui.components.DrawerChatRow
 import app.buildx.chat.ui.components.DrawerNavRow
@@ -84,6 +92,7 @@ import app.buildx.chat.ui.components.HeaderCircleButton
 import app.buildx.chat.ui.components.HeaderOverflowPopup
 import app.buildx.chat.ui.components.MarkLoader
 import app.buildx.chat.ui.components.ModeSelectorPopup
+import app.buildx.chat.ui.components.SelectTextSheetContent
 import app.buildx.chat.ui.components.StepsSheetContent
 import app.buildx.chat.ui.components.ThinkingRow
 import app.buildx.chat.ui.components.UserBubble
@@ -110,6 +119,8 @@ fun ChatAndDrawerScreen(
     onNavigateToNotifications: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToMedia: () -> Unit,
+    onNavigateToProfile: () -> Unit = {},
+    onNavigateToSearch: () -> Unit = {},
     onComposerTextChange: (String) -> Unit,
     onToggleMode: () -> Unit,
     onPlusClick: () -> Unit,
@@ -136,6 +147,16 @@ fun ChatAndDrawerScreen(
     onPickFileDocument: () -> Unit,
     onConfirmVoiceTranscript: () -> Unit,
     onCancelVoiceDictation: () -> Unit,
+    onToggleUserMessageMenu: (String?) -> Unit = {},
+    onToggleAssistantMessageMenu: (String?) -> Unit = {},
+    onDismissAllMessageMenus: () -> Unit = {},
+    onStartEditMessage: (String) -> Unit = {},
+    onCancelEditMessage: () -> Unit = {},
+    onSendEditMessage: (String, String) -> Unit = { _, _ -> },
+    onResendUserMessage: (ChatMessage) -> Unit = {},
+    onRegenerateAssistant: (ChatMessage) -> Unit = {},
+    onOpenSelectText: (String) -> Unit = {},
+    onCloseSelectText: () -> Unit = {},
     modifier: Modifier = Modifier,
     onToggleModePopup: ((Boolean?) -> Unit)? = null,
     onSelectMode: ((ChatMode) -> Unit)? = null,
@@ -180,6 +201,7 @@ fun ChatAndDrawerScreen(
                 onSearchQueryChange = onSearchQueryChange,
                 conversations = uiState.filteredConversations,
                 unreadIds = uiState.unreadConversationIds,
+                unreadNotificationsCount = uiState.unreadNotificationsCount,
                 activeConversationId = uiState.activeConversationId,
                 activeSurfacePane = uiState.activeSurfacePane,
                 onStartIncognito = {
@@ -193,6 +215,14 @@ fun ChatAndDrawerScreen(
                 onOpenMedia = {
                     focusManager.clearFocus()
                     onNavigateToMedia()
+                },
+                onOpenProfile = {
+                    focusManager.clearFocus()
+                    onNavigateToProfile()
+                },
+                onOpenSearch = {
+                    focusManager.clearFocus()
+                    onNavigateToSearch()
                 },
                 onSelectConversation = { id ->
                     focusManager.clearFocus()
@@ -254,26 +284,31 @@ fun ChatAndDrawerScreen(
                         onShareMessage = onShareMessage,
                         onOpenStepsSheet = onOpenStepsSheet,
                         onConfirmVoiceTranscript = onConfirmVoiceTranscript,
-                        onCancelVoiceDictation = onCancelVoiceDictation
+                        onCancelVoiceDictation = onCancelVoiceDictation,
+                        onToggleUserMessageMenu = onToggleUserMessageMenu,
+                        onToggleAssistantMessageMenu = onToggleAssistantMessageMenu,
+                        onDismissAllMessageMenus = onDismissAllMessageMenus,
+                        onStartEditMessage = onStartEditMessage,
+                        onCancelEditMessage = onCancelEditMessage,
+                        onSendEditMessage = onSendEditMessage,
+                        onResendUserMessage = onResendUserMessage,
+                        onRegenerateAssistant = onRegenerateAssistant,
+                        onOpenSelectText = onOpenSelectText
                     )
                 }
 
                 MainSurfacePane.NOTIFICATIONS -> {
                     NotificationsScreen(
-                        showPermissionCard = uiState.showNotificationPermissionCard,
-                        notifications = uiState.notifications,
+                        showPermissionCard = false,
+                        notifications = uiState.inAppNotifications,
                         onMenuOrBackClick = {
                             focusManager.clearFocus()
                             onToggleDrawer(true)
                         },
-                        onTurnOnNotifications = {
-                            onTurnOnNotifications?.invoke()
-                        },
-                        onDismissPermissionCard = {
-                            onDismissNotificationPermissionCard?.invoke()
-                        },
-                        onOpenConversation = { convId ->
-                            onSelectConversation(convId)
+                        onNotificationClick = { notif ->
+                            if (!notif.actorUsername.isNullOrBlank()) {
+                                onNavigateToProfile()
+                            }
                         }
                     )
                 }
@@ -420,6 +455,40 @@ fun ChatAndDrawerScreen(
                 )
             }
         }
+
+        // Select Text Bottom Sheet over 30% scrim
+        val selectText = uiState.activeSelectTextMessage
+        AnimatedVisibility(
+            visible = selectText != null,
+            enter = fadeIn(tween(220)) + slideInVertically(tween(240)) { it / 3 },
+            exit = fadeOut(tween(180)) + slideOutVertically(tween(200)) { it / 3 }
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(colors.scrimColor)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onCloseSelectText
+                    ),
+                contentAlignment = Alignment.BottomCenter
+            ) {
+                if (selectText != null) {
+                    SelectTextSheetContent(
+                        text = selectText,
+                        onClose = onCloseSelectText,
+                        modifier = Modifier
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = {}
+                            )
+                            .navigationBarsPadding()
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -443,13 +512,28 @@ private fun MainChatSurface(
     onShareMessage: (String) -> Unit,
     onOpenStepsSheet: (List<ReasoningStep>) -> Unit,
     onConfirmVoiceTranscript: () -> Unit,
-    onCancelVoiceDictation: () -> Unit
+    onCancelVoiceDictation: () -> Unit,
+    onToggleUserMessageMenu: (String?) -> Unit,
+    onToggleAssistantMessageMenu: (String?) -> Unit,
+    onDismissAllMessageMenus: () -> Unit,
+    onStartEditMessage: (String) -> Unit,
+    onCancelEditMessage: () -> Unit,
+    onSendEditMessage: (String, String) -> Unit,
+    onResendUserMessage: (ChatMessage) -> Unit,
+    onRegenerateAssistant: (ChatMessage) -> Unit,
+    onOpenSelectText: (String) -> Unit
 ) {
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
     val hasMessages = uiState.messages.isNotEmpty()
     val listState = rememberLazyListState()
     val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) {
+            onDismissAllMessageMenus()
+        }
+    }
 
     // Auto-scroll during streaming unless user scrolled up
     val lastMsgContentLen by remember(uiState.messages) {
@@ -608,12 +692,41 @@ private fun MainChatSurface(
                         verticalArrangement = Arrangement.spacedBy(18.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
+                        val lastAssistantId = uiState.messages.lastOrNull { it.role != "user" }?.id
                         items(uiState.messages, key = { it.id }) { msg ->
                             if (msg.role == "user") {
-                                UserBubble(text = msg.content)
+                                UserBubble(
+                                    message = msg,
+                                    isMenuOpen = uiState.activeUserMessageMenuId == msg.id,
+                                    isEditing = uiState.editingMessageId == msg.id,
+                                    editingText = if (uiState.editingMessageId == msg.id) uiState.editingMessageText else msg.content,
+                                    isStreaming = uiState.isStreaming,
+                                    onBubbleClick = { onToggleUserMessageMenu(msg.id) },
+                                    onDismissMenu = { onDismissAllMessageMenus() },
+                                    onCopy = {
+                                        onCopyMessage(msg.content)
+                                        onDismissAllMessageMenus()
+                                    },
+                                    onStartEdit = {
+                                        onStartEditMessage(msg.id)
+                                        onDismissAllMessageMenus()
+                                    },
+                                    onCancelEdit = { onCancelEditMessage() },
+                                    onSendEdit = { newText -> onSendEditMessage(msg.id, newText) },
+                                    onResend = {
+                                        onResendUserMessage(msg)
+                                        onDismissAllMessageMenus()
+                                    },
+                                    onSelectText = {
+                                        onOpenSelectText(msg.content)
+                                        onDismissAllMessageMenus()
+                                    }
+                                )
                             } else {
                                 AssistantMessageBlock(
                                     message = msg,
+                                    isLastAssistantMessage = msg.id == lastAssistantId,
+                                    isMenuOpen = uiState.activeAssistantMessageMenuId == msg.id,
                                     onOpenStepsSheet = {
                                         if (msg.reasoningSteps.isNotEmpty()) {
                                             onOpenStepsSheet(msg.reasoningSteps)
@@ -622,7 +735,17 @@ private fun MainChatSurface(
                                     onThumbUp = { onRateMessage(msg.id, 1) },
                                     onThumbDown = { onRateMessage(msg.id, -1) },
                                     onCopy = { onCopyMessage(msg.content) },
-                                    onShare = { onShareMessage(msg.content) }
+                                    onShare = { onShareMessage(msg.content) },
+                                    onToggleMenu = { onToggleAssistantMessageMenu(msg.id) },
+                                    onDismissMenu = { onDismissAllMessageMenus() },
+                                    onRegenerate = {
+                                        onRegenerateAssistant(msg)
+                                        onDismissAllMessageMenus()
+                                    },
+                                    onSelectText = {
+                                        onOpenSelectText(msg.content)
+                                        onDismissAllMessageMenus()
+                                    }
                                 )
                             }
                         }
@@ -630,45 +753,47 @@ private fun MainChatSurface(
                 }
             }
 
-            // Bottom composer or S11 Voice Dictation bar
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 12.dp, top = 4.dp)
-            ) {
-                if (uiState.isVoiceListening) {
-                    VoiceDictationBar(
-                        amplitudes = uiState.voiceAmplitudes,
-                        recognizedText = uiState.voicePartialTranscript,
-                        onCancel = onCancelVoiceDictation,
-                        onConfirm = onConfirmVoiceTranscript
-                    )
-                } else {
-                    Composer(
-                        text = uiState.composerText,
-                        onTextChange = onComposerTextChange,
-                        mode = uiState.mode,
-                        isStreaming = uiState.isStreaming,
-                        isIncognito = uiState.isIncognito,
-                        stagedAttachments = uiState.stagedAttachments,
-                        onToggleMode = onToggleMode,
-                        onModePillClick = {
-                            if (onToggleModePopup != null) {
-                                onToggleModePopup(null)
-                            } else {
-                                onToggleMode()
-                            }
-                        },
-                        onSelectMode = onSelectMode,
-                        isModePopupOpen = uiState.isModePopupOpen,
-                        onPlusClick = onPlusClick,
-                        onMicClick = onMicClick,
-                        onSendClick = onSendClick,
-                        onStopClick = onStopClick,
-                        onRemoveStagedAttachment = onRemoveStagedAttachment,
-                        hasMessages = hasMessages,
-                        focusRequester = focusRequester
-                    )
+            // Bottom composer or S11 Voice Dictation bar (hidden while inline message editing)
+            if (uiState.editingMessageId == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp, top = 4.dp)
+                ) {
+                    if (uiState.isVoiceListening) {
+                        VoiceDictationBar(
+                            amplitudes = uiState.voiceAmplitudes,
+                            recognizedText = uiState.voicePartialTranscript,
+                            onCancel = onCancelVoiceDictation,
+                            onConfirm = onConfirmVoiceTranscript
+                        )
+                    } else {
+                        Composer(
+                            text = uiState.composerText,
+                            onTextChange = onComposerTextChange,
+                            mode = uiState.mode,
+                            isStreaming = uiState.isStreaming,
+                            isIncognito = uiState.isIncognito,
+                            stagedAttachments = uiState.stagedAttachments,
+                            onToggleMode = onToggleMode,
+                            onModePillClick = {
+                                if (onToggleModePopup != null) {
+                                    onToggleModePopup(null)
+                                } else {
+                                    onToggleMode()
+                                }
+                            },
+                            onSelectMode = onSelectMode,
+                            isModePopupOpen = uiState.isModePopupOpen,
+                            onPlusClick = onPlusClick,
+                            onMicClick = onMicClick,
+                            onSendClick = onSendClick,
+                            onStopClick = onStopClick,
+                            onRemoveStagedAttachment = onRemoveStagedAttachment,
+                            hasMessages = hasMessages,
+                            focusRequester = focusRequester
+                        )
+                    }
                 }
             }
         }
@@ -717,16 +842,22 @@ private fun MainChatSurface(
  * - Directly after send, small rotating petal mark + reasoning step title & 2-line summary with purple rail.
  * - When answer starts, collapses to "Show thinking >" and streams text with soft fade-in.
  * - Resolves text direction per message from first strong character (Arabic aligns right/RTL, Latin aligns left/LTR).
- * - After completion, displays ActionRow (thumbs-up, thumbs-down, copy, share).
+ * - After completion, displays ActionRow (thumbs-up, thumbs-down, copy, more popup).
  */
 @Composable
 private fun AssistantMessageBlock(
     message: ChatMessage,
+    isLastAssistantMessage: Boolean,
+    isMenuOpen: Boolean,
     onOpenStepsSheet: () -> Unit,
     onThumbUp: () -> Unit,
     onThumbDown: () -> Unit,
     onCopy: () -> Unit,
-    onShare: () -> Unit
+    onShare: () -> Unit,
+    onToggleMenu: () -> Unit,
+    onDismissMenu: () -> Unit,
+    onRegenerate: () -> Unit,
+    onSelectText: () -> Unit
 ) {
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
@@ -785,14 +916,66 @@ private fun AssistantMessageBlock(
             )
         }
 
-        // Action row (thumbs-up, thumbs-down, copy, share) once generation finishes
+        // Action row (thumbs-up, thumbs-down, copy, more options popup) once generation finishes
         if (!isStreaming && message.content.isNotEmpty()) {
             ActionRow(
                 rating = message.rating,
                 onThumbUp = onThumbUp,
                 onThumbDown = onThumbDown,
                 onCopy = onCopy,
-                onShare = onShare
+                onShare = onShare,
+                onMoreClick = onToggleMenu,
+                popupContent = {
+                    if (isMenuOpen) {
+                        val popupProvider = remember(isRtl) { BubblePopupPositionProvider(isRtl) }
+                        Popup(
+                            popupPositionProvider = popupProvider,
+                            onDismissRequest = onDismissMenu,
+                            properties = PopupProperties(
+                                focusable = true,
+                                dismissOnClickOutside = true,
+                                dismissOnBackPress = true
+                            )
+                        ) {
+                            var isVisible by remember { mutableStateOf(false) }
+                            LaunchedEffect(Unit) { isVisible = true }
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible = isVisible,
+                                enter = scaleIn(tween(160)) + fadeIn(tween(160)),
+                                exit = scaleOut(tween(160)) + fadeOut(tween(160))
+                            ) {
+                                val items = buildList {
+                                    if (isLastAssistantMessage) {
+                                        add(
+                                            ActionMenuItem(
+                                                label = strings.regenerateAction,
+                                                iconRes = R.drawable.ic_refresh,
+                                                onClick = onRegenerate
+                                            )
+                                        )
+                                    }
+                                    add(
+                                        ActionMenuItem(
+                                            label = strings.shareAction,
+                                            iconRes = R.drawable.ic_share,
+                                            onClick = onShare
+                                        )
+                                    )
+                                    if (message.content.isNotBlank()) {
+                                        add(
+                                            ActionMenuItem(
+                                                label = strings.selectTextAction,
+                                                iconRes = R.drawable.ic_select_text,
+                                                onClick = onSelectText
+                                            )
+                                        )
+                                    }
+                                }
+                                ActionMenuPopup(items = items)
+                            }
+                        }
+                    }
+                }
             )
         }
     }
@@ -814,11 +997,14 @@ private fun DrawerContent(
     onSearchQueryChange: (String) -> Unit,
     conversations: List<Conversation>,
     unreadIds: Set<String>,
+    unreadNotificationsCount: Int = 0,
     activeConversationId: String?,
     activeSurfacePane: MainSurfacePane,
     onStartIncognito: () -> Unit,
     onNewChat: () -> Unit,
     onOpenMedia: () -> Unit,
+    onOpenProfile: () -> Unit = {},
+    onOpenSearch: () -> Unit = {},
     onSelectConversation: (String) -> Unit,
     onOpenNotifications: () -> Unit,
     onOpenSettings: () -> Unit
@@ -852,6 +1038,7 @@ private fun DrawerContent(
                         .height(44.dp)
                         .clip(RoundedCornerShape(22.dp))
                         .background(colors.surfaceMuted)
+                        .clickable { onOpenSearch() }
                         .padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -862,53 +1049,13 @@ private fun DrawerContent(
                         modifier = Modifier.size(19.dp)
                     )
                     Spacer(modifier = Modifier.width(10.dp))
-                    CompositionLocalProvider(
-                        LocalLayoutDirection provides if (isSearchRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
-                    ) {
-                        BasicTextField(
-                            value = searchQuery,
-                            onValueChange = onSearchQueryChange,
-                            singleLine = true,
-                            textStyle = TextStyle(
-                                fontFamily = BuildXFontFamily,
-                                fontSize = 15.5.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = colors.primaryText,
-                                textAlign = TextAlign.Start
-                            ),
-                            cursorBrush = SolidColor(colors.primaryBlue),
-                            modifier = Modifier.weight(1f),
-                            decorationBox = { innerTextField ->
-                                Box(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    contentAlignment = Alignment.CenterStart
-                                ) {
-                                    if (searchQuery.isEmpty()) {
-                                        Text(
-                                            text = strings.searchPlaceholder,
-                                            color = colors.secondaryText,
-                                            fontSize = 15.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            textAlign = TextAlign.Start
-                                        )
-                                    }
-                                    Box(modifier = Modifier.fillMaxWidth()) {
-                                        innerTextField()
-                                    }
-                                }
-                            }
-                        )
-                    }
-                    if (searchQuery.isNotEmpty()) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_close),
-                            contentDescription = "Clear search",
-                            tint = colors.secondaryText,
-                            modifier = Modifier
-                                .size(18.dp)
-                                .clickable { onSearchQueryChange("") }
-                        )
-                    }
+                    Text(
+                        text = strings.searchPlaceholder,
+                        color = colors.secondaryText,
+                        fontSize = 15.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Start
+                    )
                 }
 
                 Spacer(modifier = Modifier.width(12.dp))
@@ -951,6 +1098,12 @@ private fun DrawerContent(
                     label = strings.mediaTitle,
                     isActive = activeSurfacePane == MainSurfacePane.MEDIA,
                     onClick = onOpenMedia
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                DrawerNavRow(
+                    iconRes = R.drawable.ic_user,
+                    label = strings.profileTitle,
+                    onClick = onOpenProfile
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -1025,12 +1178,23 @@ private fun DrawerContent(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                HeaderCircleButton(
-                    iconRes = R.drawable.ic_bell,
-                    contentDescription = strings.notificationsTitle,
-                    onClick = onOpenNotifications,
-                    backgroundColor = colors.cardBackground
-                )
+                Box(contentAlignment = Alignment.TopEnd) {
+                    HeaderCircleButton(
+                        iconRes = R.drawable.ic_bell,
+                        contentDescription = strings.notificationsTitle,
+                        onClick = onOpenNotifications,
+                        backgroundColor = colors.cardBackground
+                    )
+                    if (unreadNotificationsCount > 0) {
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 4.dp, end = 4.dp)
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(colors.primaryBlue)
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.width(12.dp))
                 HeaderCircleButton(
                     iconRes = R.drawable.ic_settings,

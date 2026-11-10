@@ -48,10 +48,13 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import app.buildx.chat.data.model.MainSurfacePane
+import app.buildx.chat.ui.components.UsernameReviewSheet
 import app.buildx.chat.ui.screens.AppAppearanceScreen
 import app.buildx.chat.ui.screens.AppInfoScreen
 import app.buildx.chat.ui.screens.AppLanguageScreen
@@ -59,11 +62,16 @@ import app.buildx.chat.ui.screens.AuthScreen
 import app.buildx.chat.ui.screens.ChatAndDrawerScreen
 import app.buildx.chat.ui.screens.DataPrivacyScreen
 import app.buildx.chat.ui.screens.DeleteChatDialog
+import app.buildx.chat.ui.screens.EditProfileScreen
+import app.buildx.chat.ui.screens.FollowListsScreen
+import app.buildx.chat.ui.screens.FullScreenSearchScreen
 import app.buildx.chat.ui.screens.HelpSupportScreen
 import app.buildx.chat.ui.screens.LegalSafetyScreen
 import app.buildx.chat.ui.screens.MediaScreen
 import app.buildx.chat.ui.screens.NotificationsScreen
 import app.buildx.chat.ui.screens.ProfileEditScreen
+import app.buildx.chat.ui.screens.ProfileScreen
+import app.buildx.chat.ui.screens.PublicNoteSheet
 import app.buildx.chat.ui.screens.RecentUploadsDialog
 import app.buildx.chat.ui.screens.RenameChatDialog
 import app.buildx.chat.ui.screens.SettingsScreen
@@ -256,7 +264,8 @@ fun BuildXRoot(
                             onSelectConversation = { id -> viewModel.selectConversation(id) },
                             onSearchQueryChange = { q -> viewModel.onSearchQueryChange(q) },
                             onNavigateToNotifications = {
-                                viewModel.openSurfacePane(MainSurfacePane.NOTIFICATIONS)
+                                viewModel.setDrawerOpen(false)
+                                navController.navigate("notifications")
                             },
                             onNavigateToSettings = {
                                 viewModel.setDrawerOpen(false)
@@ -264,6 +273,14 @@ fun BuildXRoot(
                             },
                             onNavigateToMedia = {
                                 viewModel.openSurfacePane(MainSurfacePane.MEDIA)
+                            },
+                            onNavigateToProfile = {
+                                viewModel.setDrawerOpen(false)
+                                navController.navigate("profile")
+                            },
+                            onNavigateToSearch = {
+                                viewModel.setDrawerOpen(false)
+                                navController.navigate("search")
                             },
                             onComposerTextChange = { text -> viewModel.onComposerTextChange(text) },
                             onToggleMode = { viewModel.toggleMode() },
@@ -343,6 +360,16 @@ fun BuildXRoot(
                             },
                             onConfirmVoiceTranscript = { viewModel.confirmVoiceTranscript() },
                             onCancelVoiceDictation = { viewModel.cancelVoiceDictation() },
+                            onToggleUserMessageMenu = { id -> viewModel.toggleUserMessageMenu(id) },
+                            onToggleAssistantMessageMenu = { id -> viewModel.toggleAssistantMessageMenu(id) },
+                            onDismissAllMessageMenus = { viewModel.dismissAllMessageMenus() },
+                            onStartEditMessage = { id -> viewModel.startEditingMessage(id) },
+                            onCancelEditMessage = { viewModel.cancelEditingMessage() },
+                            onSendEditMessage = { id, text -> viewModel.sendEditedMessage(id, text) },
+                            onResendUserMessage = { msg -> viewModel.resendUserMessage(msg) },
+                            onRegenerateAssistant = { msg -> viewModel.regenerateLastAssistantMessage(msg) },
+                            onOpenSelectText = { text -> viewModel.openSelectText(text) },
+                            onCloseSelectText = { viewModel.closeSelectText() },
                             onToggleModePopup = { open -> viewModel.toggleModePopup(open) },
                             onSelectMode = { mode -> viewModel.selectMode(mode) },
                             onTurnOnNotifications = {
@@ -358,26 +385,6 @@ fun BuildXRoot(
                             onSelectMediaAttachment = { att ->
                                 viewModel.attachExistingUploadedItem(att)
                                 viewModel.openSurfacePane(MainSurfacePane.CHAT)
-                            }
-                        )
-                    }
-
-                    composable("notifications") {
-                        NotificationsScreen(
-                            showPermissionCard = uiState.showNotificationPermissionCard,
-                            notifications = uiState.notifications,
-                            onMenuOrBackClick = { navController.popBackStack() },
-                            onTurnOnNotifications = {
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                    postNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                } else {
-                                    viewModel.onNotificationPermissionResult(true)
-                                }
-                            },
-                            onDismissPermissionCard = { viewModel.dismissNotificationPermissionCard() },
-                            onOpenConversation = { convId ->
-                                viewModel.selectConversation(convId)
-                                navController.popBackStack("chat", inclusive = false)
                             }
                         )
                     }
@@ -438,10 +445,60 @@ fun BuildXRoot(
                     }
 
                     composable("profile") {
-                        ProfileEditScreen(
+                        ProfileScreen(
+                            currentProfile = uiState.profile,
+                            targetUsername = null,
+                            publicProfile = null,
+                            isLoading = false,
+                            errorMessage = null,
+                            activeNote = uiState.activeOwnNote,
+                            onBackClick = { navController.popBackStack() },
+                            onEditProfileClick = { navController.navigate("edit_profile") },
+                            onOpenNoteSheet = { viewModel.openNoteSheet(true) },
+                            onReviewUsernameClick = { viewModel.confirmUsernameChange(uiState.profile?.effectiveUsername ?: "user") },
+                            onFollowClick = {},
+                            onFollowingClick = {},
+                            onFollowersListClick = { userId, initialTab ->
+                                navController.navigate("follow_lists/$userId/$initialTab")
+                            },
+                            onRetry = {}
+                        )
+                    }
+
+                    composable("profile/{username}") { backStackEntry ->
+                        val usernameArg = backStackEntry.arguments?.getString("username") ?: ""
+                        LaunchedEffect(usernameArg) {
+                            viewModel.loadPublicProfile(usernameArg)
+                        }
+                        ProfileScreen(
+                            currentProfile = uiState.profile,
+                            targetUsername = usernameArg,
+                            publicProfile = uiState.viewedPublicProfile,
+                            isLoading = uiState.isPublicProfileLoading,
+                            errorMessage = uiState.publicProfileError,
+                            activeNote = uiState.viewedPublicProfile?.activeNote,
+                            onBackClick = { navController.popBackStack() },
+                            onEditProfileClick = { navController.navigate("edit_profile") },
+                            onOpenNoteSheet = {},
+                            onReviewUsernameClick = {},
+                            onFollowClick = { targetId ->
+                                viewModel.toggleFollow(targetId, usernameArg)
+                            },
+                            onFollowingClick = { targetId ->
+                                viewModel.toggleFollow(targetId, usernameArg)
+                            },
+                            onFollowersListClick = { userId, initialTab ->
+                                navController.navigate("follow_lists/$userId/$initialTab")
+                            },
+                            onRetry = { viewModel.loadPublicProfile(usernameArg) }
+                        )
+                    }
+
+                    composable("edit_profile") {
+                        EditProfileScreen(
                             profile = uiState.profile,
-                            onSaveProfile = { displayName, handle ->
-                                viewModel.updateProfile(displayName, handle)
+                            onSaveProfile = { displayName, newUsername, bio ->
+                                viewModel.updateProfile(displayName, newUsername, bio)
                                 navController.popBackStack()
                             },
                             onPickAvatarClick = {
@@ -449,7 +506,90 @@ fun BuildXRoot(
                                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                                 )
                             },
+                            onBackClick = { navController.popBackStack() },
+                            checkUsernameAvailable = { candidate ->
+                                viewModel.repository.checkUsernameAvailable(candidate).getOrDefault(false)
+                            }
+                        )
+                    }
+
+                    composable(
+                        "follow_lists/{userId}/{initialTab}",
+                        arguments = listOf(
+                            navArgument("userId") { type = NavType.StringType },
+                            navArgument("initialTab") { type = NavType.IntType }
+                        )
+                    ) { backStackEntry ->
+                        val userId = backStackEntry.arguments?.getString("userId") ?: ""
+                        val tab = backStackEntry.arguments?.getInt("initialTab") ?: 0
+                        LaunchedEffect(userId, tab) {
+                            viewModel.loadFollowLists(userId, tab)
+                        }
+                        FollowListsScreen(
+                            currentUserId = uiState.profile?.id,
+                            targetUserId = userId,
+                            initialTab = tab,
+                            followingList = uiState.followingListUsers,
+                            followersList = uiState.followersListUsers,
+                            isLoading = uiState.isFollowListsLoading,
+                            errorMessage = uiState.followListsError,
+                            onTabSelected = { selectedTab ->
+                                viewModel.loadFollowLists(userId, selectedTab)
+                            },
+                            onUserClick = { userHandle ->
+                                navController.navigate("profile/$userHandle")
+                            },
+                            onToggleFollow = { targetId ->
+                                viewModel.toggleFollow(targetId)
+                            },
                             onBackClick = { navController.popBackStack() }
+                        )
+                    }
+
+                    composable("search") {
+                        FullScreenSearchScreen(
+                            currentUserId = uiState.profile?.id,
+                            searchQuery = uiState.globalSearchQuery,
+                            onQueryChange = { q -> viewModel.onGlobalSearchQueryChange(q) },
+                            activeTab = uiState.searchActiveTab,
+                            onTabSelected = { tab -> viewModel.setSearchActiveTab(tab) },
+                            peopleResults = uiState.searchPeopleResults,
+                            chatResults = uiState.filteredConversations,
+                            recentSearches = uiState.recentSearchesList,
+                            isLoading = uiState.isSearchPeopleLoading,
+                            errorMessage = uiState.searchPeopleError,
+                            onSelectPerson = { userHandle ->
+                                viewModel.addRecentSearch(userHandle)
+                                navController.navigate("profile/$userHandle")
+                            },
+                            onSelectConversation = { convId ->
+                                viewModel.selectConversation(convId)
+                                navController.popBackStack("chat", inclusive = false)
+                            },
+                            onToggleFollow = { targetId ->
+                                viewModel.toggleFollow(targetId)
+                            },
+                            onClearRecentSearches = { viewModel.clearRecentSearches() },
+                            onRetry = { viewModel.onGlobalSearchQueryChange(uiState.globalSearchQuery) },
+                            onBackClick = { navController.popBackStack() }
+                        )
+                    }
+
+                    composable("notifications") {
+                        LaunchedEffect(Unit) {
+                            viewModel.loadInAppNotifications()
+                        }
+                        NotificationsScreen(
+                            showPermissionCard = false,
+                            notifications = uiState.inAppNotifications,
+                            onMenuOrBackClick = { navController.popBackStack() },
+                            onNotificationClick = { notif ->
+                                viewModel.markNotificationRead(notif.id)
+                                if (!notif.actorUsername.isNullOrBlank()) {
+                                    navController.navigate("profile/${notif.actorUsername}")
+                                }
+                            },
+                            onMarkAllAsRead = { viewModel.markAllNotificationsRead() }
                         )
                     }
 
@@ -525,6 +665,31 @@ fun BuildXRoot(
                     onDismiss = { viewModel.openRecentUploadsPicker(false) }
                 )
             }
+
+            // Public Note Bottom Sheet
+            PublicNoteSheet(
+                profile = uiState.profile,
+                activeNote = uiState.activeOwnNote,
+                isOpen = uiState.isNoteSheetOpen,
+                isLoading = uiState.isCreatingNote,
+                onDismiss = { viewModel.openNoteSheet(false) },
+                onCreateNote = { content -> viewModel.createNote(content) },
+                onDeleteNote = { viewModel.deleteNote() }
+            )
+
+            // One-time Username Review Bottom Sheet
+            UsernameReviewSheet(
+                currentUsername = uiState.profile?.effectiveUsername ?: "user",
+                isOpen = uiState.showUsernameReviewSheet,
+                onDismiss = { viewModel.dismissUsernameReviewSheet() },
+                onKeepCurrent = { viewModel.markUsernameReviewed() },
+                onConfirmNewUsername = { newUsername ->
+                    viewModel.confirmUsernameChange(newUsername)
+                },
+                checkUsernameAvailable = { candidate ->
+                    viewModel.repository.checkUsernameAvailable(candidate).getOrDefault(false)
+                }
+            )
 
             // Subtle pill snackbar confirmation at bottom center
             AnimatedVisibility(

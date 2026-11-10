@@ -14,8 +14,8 @@ android {
         applicationId = "app.buildx.chat"
         minSdk = 26
         targetSdk = 35
-        versionCode = 102
-        versionName = "1.2.0"
+        versionCode = 104
+        versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -28,7 +28,7 @@ android {
             "SUPABASE_ANON_KEY",
             "\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im93Z3B1b2x2ZnFmamhlenVvaHlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIzMjAwMTMsImV4cCI6MjEwNzg5NjAxM30.99gurLpTbQOPOpEds6EUd0m4Vc0GuodloO-GVbIW0DM\""
         )
-        buildConfigField("String", "BUILD_DATE", "\"2026-11-09\"")
+        buildConfigField("String", "BUILD_DATE", "\"2026-11-10\"")
     }
 
     buildTypes {
@@ -69,6 +69,12 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+}
+
+androidComponents {
+    beforeVariants(selector().withBuildType("release")) { variant ->
+        variant.enableUnitTest = false
     }
 }
 

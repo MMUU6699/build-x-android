@@ -17,7 +17,12 @@ import app.buildx.chat.data.model.ChatMessage
 import app.buildx.chat.data.model.ChatMode
 import app.buildx.chat.data.model.ChatSseEvent
 import app.buildx.chat.data.model.Conversation
+import app.buildx.chat.data.model.FollowUserItem
 import app.buildx.chat.data.model.MainSurfacePane
+import app.buildx.chat.data.model.NotificationRow
+import app.buildx.chat.data.model.PersonSearchResult
+import app.buildx.chat.data.model.PublicNote
+import app.buildx.chat.data.model.PublicProfile
 import app.buildx.chat.data.model.ReasoningStep
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
@@ -70,8 +75,35 @@ data class BuildXUiState(
     val isVoiceListening: Boolean = false,
     val voiceAmplitudes: List<Float> = List(28) { 0.15f },
     val voicePartialTranscript: String = "",
-    val showNotificationPermissionCard: Boolean = true,
-    val notifications: List<AppNotificationItem> = emptyList()
+    val showNotificationPermissionCard: Boolean = false,
+    val notifications: List<AppNotificationItem> = emptyList(),
+    // Phase E Profile, Follow, Note, Search, and Realtime Notifications additions
+    val viewedPublicProfile: PublicProfile? = null,
+    val isPublicProfileLoading: Boolean = false,
+    val publicProfileError: String? = null,
+    val activeOwnNote: PublicNote? = null,
+    val isNoteSheetOpen: Boolean = false,
+    val isCreatingNote: Boolean = false,
+    val followingListUsers: List<FollowUserItem> = emptyList(),
+    val followersListUsers: List<FollowUserItem> = emptyList(),
+    val isFollowListsLoading: Boolean = false,
+    val followListsError: String? = null,
+    val globalSearchQuery: String = "",
+    val searchActiveTab: Int = 0, // 0: People, 1: Chats
+    val searchPeopleResults: List<PersonSearchResult> = emptyList(),
+    val isSearchPeopleLoading: Boolean = false,
+    val searchPeopleError: String? = null,
+    val recentSearchesList: List<String> = listOf("mustafa", "sara", "buildx"),
+    val inAppNotifications: List<NotificationRow> = emptyList(),
+    val unreadNotificationsCount: Int = 0,
+    val isNotificationsLoading: Boolean = false,
+    val showUsernameReviewSheet: Boolean = false,
+    // Task A Message Actions additions
+    val activeUserMessageMenuId: String? = null,
+    val activeAssistantMessageMenuId: String? = null,
+    val editingMessageId: String? = null,
+    val editingMessageText: String = "",
+    val activeSelectTextMessage: String? = null
 )
 
 class BuildXViewModel(application: Application) : AndroidViewModel(application) {
@@ -102,14 +134,17 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     val profile = repository.ensureUserProfile()
                     val resolvedAppearance = AppAppearance.fromDb(profile.appearance)
                     repository.saveAppearanceLocal(resolvedAppearance)
+                    val showReview = profile.usernameReviewedAt == null
                     _uiState.update {
                         it.copy(
                             isAuthenticated = true,
                             profile = profile,
-                            appearance = resolvedAppearance
+                            appearance = resolvedAppearance,
+                            showUsernameReviewSheet = showReview
                         )
                     }
                     refreshConversationsAndAttachments()
+                    loadInAppNotifications()
                 }
             }
         }
@@ -626,6 +661,375 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // Task A: Message Actions state & handlers
+    fun toggleUserMessageMenu(messageId: String?) {
+        _uiState.update {
+            it.copy(
+                activeUserMessageMenuId = if (it.activeUserMessageMenuId == messageId) null else messageId,
+                activeAssistantMessageMenuId = null
+            )
+        }
+    }
+
+    fun toggleAssistantMessageMenu(messageId: String?) {
+        _uiState.update {
+            it.copy(
+                activeAssistantMessageMenuId = if (it.activeAssistantMessageMenuId == messageId) null else messageId,
+                activeUserMessageMenuId = null
+            )
+        }
+    }
+
+    fun dismissAllMessageMenus() {
+        if (_uiState.value.activeUserMessageMenuId != null || _uiState.value.activeAssistantMessageMenuId != null) {
+            _uiState.update {
+                it.copy(activeUserMessageMenuId = null, activeAssistantMessageMenuId = null)
+            }
+        }
+    }
+
+    fun startEditingMessage(messageId: String) {
+        val msg = _uiState.value.messages.firstOrNull { it.id == messageId } ?: return
+        _uiState.update {
+            it.copy(
+                editingMessageId = messageId,
+                editingMessageText = msg.content,
+                activeUserMessageMenuId = null,
+                activeAssistantMessageMenuId = null
+            )
+        }
+    }
+
+    fun cancelEditingMessage() {
+        _uiState.update {
+            it.copy(editingMessageId = null, editingMessageText = "")
+        }
+    }
+
+    fun sendEditedMessage(messageId: String, newContent: String) {
+        val trimmed = newContent.trim()
+        if (trimmed.isEmpty()) return
+        val state = _uiState.value
+        val msgIndex = state.messages.indexOfFirst { it.id == messageId }
+        if (msgIndex < 0) return
+
+        val originalMsg = state.messages[msgIndex]
+        if (trimmed == originalMsg.content.trim()) {
+            cancelEditingMessage()
+            return
+        }
+
+        val updatedMsg = originalMsg.copy(
+            content = trimmed,
+            editedAt = Instant.now().toString()
+        )
+
+        // Keep messages up to edited message, discard all messages after it
+        val truncatedList = state.messages.subList(0, msgIndex).toMutableList().apply {
+            add(updatedMsg)
+        }
+
+        val tempAssistantMsgId = UUID.randomUUID().toString()
+        val pendingAssistantMsg = ChatMessage(
+            id = tempAssistantMsgId,
+            conversationId = state.activeConversationId ?: "pending",
+            role = "assistant",
+            content = "",
+            reasoningSteps = emptyList(),
+            status = "streaming",
+            createdAt = Instant.now().toString()
+        )
+
+        _uiState.update {
+            it.copy(
+                editingMessageId = null,
+                editingMessageText = "",
+                activeUserMessageMenuId = null,
+                messages = truncatedList + pendingAssistantMsg,
+                isStreaming = true
+            )
+        }
+
+        activeStreamJob?.cancel()
+        activeStreamJob = viewModelScope.launch {
+            try {
+                if (!state.isIncognito && state.activeConversationId != null && messageId.isNotBlank()) {
+                    repository.editUserMessage(messageId, trimmed).onFailure { err ->
+                        showSnackbar(err.message ?: "Failed to edit message")
+                        return@launch
+                    }
+                }
+
+                var resolvedConvId: String? = state.activeConversationId
+                repository.streamChatCompletion(
+                    conversationId = state.activeConversationId,
+                    userText = trimmed,
+                    mode = state.mode,
+                    incognito = state.isIncognito,
+                    attachments = emptyList(),
+                    historyMessages = truncatedList.dropLast(1)
+                ).collect { event ->
+                    when (event) {
+                        is ChatSseEvent.ReasoningStepEvent -> {
+                            if (event.conversationId != null) resolvedConvId = event.conversationId
+                            _uiState.update { s ->
+                                val updated = s.messages.map { m ->
+                                    if (m.id == tempAssistantMsgId) {
+                                        val steps = m.reasoningSteps.toMutableList()
+                                        val idx = steps.indexOfFirst { it.step == event.step.step }
+                                        if (idx >= 0) steps[idx] = event.step else steps.add(event.step)
+                                        m.copy(conversationId = resolvedConvId ?: m.conversationId, reasoningSteps = steps)
+                                    } else m
+                                }
+                                s.copy(activeConversationId = resolvedConvId ?: s.activeConversationId, messages = updated)
+                            }
+                        }
+                        is ChatSseEvent.TextDeltaEvent -> {
+                            if (event.conversationId != null) resolvedConvId = event.conversationId
+                            _uiState.update { s ->
+                                val updated = s.messages.map { m ->
+                                    if (m.id == tempAssistantMsgId) {
+                                        m.copy(conversationId = resolvedConvId ?: m.conversationId, content = m.content + event.text)
+                                    } else m
+                                }
+                                s.copy(activeConversationId = resolvedConvId ?: s.activeConversationId, messages = updated)
+                            }
+                        }
+                        is ChatSseEvent.DoneEvent -> {
+                            val finalConvId = event.conversationId ?: resolvedConvId
+                            val finalMsgId = event.messageId ?: tempAssistantMsgId
+                            _uiState.update { s ->
+                                val updated = s.messages.map { m ->
+                                    if (m.id == tempAssistantMsgId) {
+                                        m.copy(id = finalMsgId, conversationId = finalConvId ?: m.conversationId, status = event.status)
+                                    } else m
+                                }
+                                s.copy(isStreaming = false, activeConversationId = finalConvId ?: s.activeConversationId, messages = updated)
+                            }
+                        }
+                        is ChatSseEvent.ErrorEvent -> {
+                            _uiState.update { s ->
+                                val updated = s.messages.map { m ->
+                                    if (m.id == tempAssistantMsgId) m.copy(status = "error") else m
+                                }
+                                s.copy(isStreaming = false, messages = updated, snackbarMessage = event.message)
+                            }
+                        }
+                        else -> Unit
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { s ->
+                    val updated = s.messages.map { m ->
+                        if (m.id == tempAssistantMsgId) m.copy(status = "error") else m
+                    }
+                    s.copy(isStreaming = false, messages = updated, snackbarMessage = e.message)
+                }
+            }
+        }
+    }
+
+    fun resendUserMessage(message: ChatMessage) {
+        _uiState.update { it.copy(activeUserMessageMenuId = null) }
+        val state = _uiState.value
+        val msgIndex = state.messages.indexOfFirst { it.id == message.id }
+        if (msgIndex < 0) return
+
+        val isFailureRetry = message.status == "error" || (msgIndex + 1 < state.messages.size && state.messages[msgIndex + 1].status == "error")
+
+        if (isFailureRetry) {
+            val keepList = if (msgIndex + 1 < state.messages.size && state.messages[msgIndex + 1].role == "assistant") {
+                state.messages.toMutableList().apply { removeAt(msgIndex + 1) }
+            } else {
+                state.messages.toMutableList()
+            }
+            val tempAssistantMsgId = UUID.randomUUID().toString()
+            val pendingAssistantMsg = ChatMessage(
+                id = tempAssistantMsgId,
+                conversationId = state.activeConversationId ?: "pending",
+                role = "assistant",
+                content = "",
+                reasoningSteps = emptyList(),
+                status = "streaming",
+                createdAt = Instant.now().toString()
+            )
+            _uiState.update {
+                it.copy(messages = keepList + pendingAssistantMsg, isStreaming = true)
+            }
+            streamFollowUp(message.content, tempAssistantMsgId, keepList.filter { it.content.isNotBlank() })
+        } else {
+            _uiState.update { it.copy(composerText = message.content) }
+            sendMessage()
+        }
+    }
+
+    fun regenerateLastAssistantMessage(assistantMessage: ChatMessage) {
+        _uiState.update { it.copy(activeAssistantMessageMenuId = null) }
+        val state = _uiState.value
+        val idx = state.messages.indexOfFirst { it.id == assistantMessage.id }
+        if (idx < 0) return
+
+        val userMsg = state.messages.subList(0, idx).lastOrNull { it.role == "user" } ?: return
+        val oldAnswer = assistantMessage.content
+        val oldSteps = assistantMessage.reasoningSteps
+
+        _uiState.update { s ->
+            s.copy(
+                isStreaming = true,
+                messages = s.messages.map {
+                    if (it.id == assistantMessage.id) it.copy(rating = null) else it
+                }
+            )
+        }
+
+        activeStreamJob?.cancel()
+        activeStreamJob = viewModelScope.launch {
+            var newAnswer = ""
+            val newSteps = mutableListOf<ReasoningStep>()
+            var streamFailed = false
+
+            try {
+                repository.streamChatCompletion(
+                    conversationId = state.activeConversationId,
+                    userText = userMsg.content,
+                    mode = state.mode,
+                    incognito = state.isIncognito,
+                    attachments = emptyList(),
+                    historyMessages = state.messages.subList(0, idx)
+                ).collect { event ->
+                    when (event) {
+                        is ChatSseEvent.ReasoningStepEvent -> {
+                            val stepIdx = newSteps.indexOfFirst { it.step == event.step.step }
+                            if (stepIdx >= 0) newSteps[stepIdx] = event.step else newSteps.add(event.step)
+                        }
+                        is ChatSseEvent.TextDeltaEvent -> {
+                            newAnswer += event.text
+                        }
+                        is ChatSseEvent.DoneEvent -> {
+                            _uiState.update { s ->
+                                val updated = s.messages.map { m ->
+                                    if (m.id == assistantMessage.id) {
+                                        m.copy(
+                                            content = if (newAnswer.isNotEmpty()) newAnswer else oldAnswer,
+                                            reasoningSteps = if (newSteps.isNotEmpty()) newSteps else oldSteps,
+                                            status = "done",
+                                            rating = null
+                                        )
+                                    } else m
+                                }
+                                s.copy(isStreaming = false, messages = updated)
+                            }
+                            if (!state.isIncognito && assistantMessage.id.isNotBlank()) {
+                                repository.rateMessage(assistantMessage.id, null)
+                            }
+                        }
+                        is ChatSseEvent.ErrorEvent -> {
+                            streamFailed = true
+                            _uiState.update { s ->
+                                s.copy(isStreaming = false, snackbarMessage = event.message)
+                            }
+                        }
+                        else -> Unit
+                    }
+                }
+            } catch (e: Exception) {
+                streamFailed = true
+                _uiState.update { s ->
+                    s.copy(isStreaming = false, snackbarMessage = e.message ?: "Failed to regenerate")
+                }
+            }
+            if (streamFailed) {
+                _uiState.update { s ->
+                    val updated = s.messages.map { m ->
+                        if (m.id == assistantMessage.id) {
+                            m.copy(content = oldAnswer, reasoningSteps = oldSteps, status = "done")
+                        } else m
+                    }
+                    s.copy(isStreaming = false, messages = updated)
+                }
+            }
+        }
+    }
+
+    private fun streamFollowUp(userText: String, tempAssistantId: String, history: List<ChatMessage>) {
+        val state = _uiState.value
+        activeStreamJob?.cancel()
+        activeStreamJob = viewModelScope.launch {
+            try {
+                repository.streamChatCompletion(
+                    conversationId = state.activeConversationId,
+                    userText = userText,
+                    mode = state.mode,
+                    incognito = state.isIncognito,
+                    attachments = emptyList(),
+                    historyMessages = history
+                ).collect { event ->
+                    when (event) {
+                        is ChatSseEvent.ReasoningStepEvent -> {
+                            _uiState.update { s ->
+                                val updated = s.messages.map { m ->
+                                    if (m.id == tempAssistantId) {
+                                        val steps = m.reasoningSteps.toMutableList()
+                                        val idx = steps.indexOfFirst { it.step == event.step.step }
+                                        if (idx >= 0) steps[idx] = event.step else steps.add(event.step)
+                                        m.copy(reasoningSteps = steps)
+                                    } else m
+                                }
+                                s.copy(messages = updated)
+                            }
+                        }
+                        is ChatSseEvent.TextDeltaEvent -> {
+                            _uiState.update { s ->
+                                val updated = s.messages.map { m ->
+                                    if (m.id == tempAssistantId) m.copy(content = m.content + event.text) else m
+                                }
+                                s.copy(messages = updated)
+                            }
+                        }
+                        is ChatSseEvent.DoneEvent -> {
+                            _uiState.update { s ->
+                                val updated = s.messages.map { m ->
+                                    if (m.id == tempAssistantId) m.copy(id = event.messageId ?: m.id, status = "done") else m
+                                }
+                                s.copy(isStreaming = false, messages = updated)
+                            }
+                        }
+                        is ChatSseEvent.ErrorEvent -> {
+                            _uiState.update { s ->
+                                val updated = s.messages.map { m ->
+                                    if (m.id == tempAssistantId) m.copy(status = "error") else m
+                                }
+                                s.copy(isStreaming = false, messages = updated, snackbarMessage = event.message)
+                            }
+                        }
+                        else -> Unit
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { s ->
+                    val updated = s.messages.map { m ->
+                        if (m.id == tempAssistantId) m.copy(status = "error") else m
+                    }
+                    s.copy(isStreaming = false, messages = updated, snackbarMessage = e.message)
+                }
+            }
+        }
+    }
+
+    fun openSelectText(text: String) {
+        _uiState.update {
+            it.copy(
+                activeSelectTextMessage = text,
+                activeUserMessageMenuId = null,
+                activeAssistantMessageMenuId = null
+            )
+        }
+    }
+
+    fun closeSelectText() {
+        _uiState.update { it.copy(activeSelectTextMessage = null) }
+    }
+
     fun openStepsSheet(steps: List<ReasoningStep>?) {
         _uiState.update { it.copy(activeStepsSheetMessage = steps) }
     }
@@ -825,6 +1229,25 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun updateProfile(displayName: String, username: String?, bio: String?) {
+        viewModelScope.launch {
+            val cleanUser = username?.trim()?.removePrefix("@")?.lowercase()
+            if (cleanUser != null && cleanUser != _uiState.value.profile?.effectiveUsername) {
+                confirmUsernameChange(cleanUser)
+            }
+            repository.updateProfileDetails(displayName, bio, null).onSuccess { updated ->
+                _uiState.update {
+                    it.copy(
+                        profile = updated,
+                        snackbarMessage = "Profile updated"
+                    )
+                }
+            }.onFailure { err ->
+                showSnackbar(err.message ?: "Failed to update profile")
+            }
+        }
+    }
+
     fun uploadProfileAvatar(uri: Uri) {
         viewModelScope.launch {
             repository.uploadAvatar(uri).onSuccess {
@@ -1005,5 +1428,258 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         super.onCleared()
         stopVoiceDictationInternal()
+    }
+
+    fun refreshProfile() {
+        viewModelScope.launch {
+            repository.getOwnProfile().onSuccess { p ->
+                _uiState.update { it.copy(profile = p) }
+            }
+        }
+    }
+
+    fun loadPublicProfile(username: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isPublicProfileLoading = true, publicProfileError = null) }
+            repository.getPublicProfile(username).onSuccess { pub ->
+                _uiState.update {
+                    it.copy(
+                        viewedPublicProfile = pub,
+                        isPublicProfileLoading = false,
+                        publicProfileError = null
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        viewedPublicProfile = null,
+                        isPublicProfileLoading = false,
+                        publicProfileError = err.message ?: "User not found"
+                    )
+                }
+            }
+        }
+    }
+
+    fun toggleFollow(targetUserId: String, targetUsername: String? = null) {
+        viewModelScope.launch {
+            val currentPub = _uiState.value.viewedPublicProfile
+            if (currentPub != null && currentPub.id == targetUserId) {
+                val newIsFollowing = !currentPub.isFollowing
+                val delta = if (newIsFollowing) 1 else -1
+                _uiState.update {
+                    it.copy(
+                        viewedPublicProfile = currentPub.copy(
+                            isFollowing = newIsFollowing,
+                            followersCount = (currentPub.followersCount + delta).coerceAtLeast(0)
+                        )
+                    )
+                }
+            }
+
+            _uiState.update { state ->
+                state.copy(
+                    searchPeopleResults = state.searchPeopleResults.map {
+                        if (it.id == targetUserId) it.copy(isFollowing = !it.isFollowing) else it
+                    },
+                    followingListUsers = state.followingListUsers.map {
+                        if (it.id == targetUserId) it.copy(isFollowing = !it.isFollowing) else it
+                    },
+                    followersListUsers = state.followersListUsers.map {
+                        if (it.id == targetUserId) it.copy(isFollowing = !it.isFollowing) else it
+                    }
+                )
+            }
+
+            repository.toggleFollow(targetUserId).onSuccess {
+                refreshProfile()
+                if (targetUsername != null) {
+                    loadPublicProfile(targetUsername)
+                }
+            }.onFailure {
+                refreshProfile()
+                if (targetUsername != null) {
+                    loadPublicProfile(targetUsername)
+                }
+            }
+        }
+    }
+
+    fun createNote(content: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isCreatingNote = true) }
+            repository.createNote(content).onSuccess { note ->
+                _uiState.update {
+                    it.copy(
+                        activeOwnNote = note,
+                        isCreatingNote = false,
+                        isNoteSheetOpen = false
+                    )
+                }
+                showSnackbar("Note shared")
+            }.onFailure { err ->
+                _uiState.update { it.copy(isCreatingNote = false) }
+                showSnackbar(err.message ?: "Failed to share note")
+            }
+        }
+    }
+
+    fun deleteNote() {
+        viewModelScope.launch {
+            repository.deleteNote().onSuccess {
+                _uiState.update {
+                    it.copy(
+                        activeOwnNote = null,
+                        isNoteSheetOpen = false
+                    )
+                }
+                showSnackbar("Note deleted")
+            }.onFailure { err ->
+                showSnackbar(err.message ?: "Failed to delete note")
+            }
+        }
+    }
+
+    fun openNoteSheet(open: Boolean) {
+        _uiState.update { it.copy(isNoteSheetOpen = open) }
+    }
+
+    fun loadFollowLists(targetUserId: String, tabIndex: Int) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isFollowListsLoading = true, followListsError = null) }
+            if (tabIndex == 0) {
+                repository.getUserFollowing(targetUserId).onSuccess { list ->
+                    _uiState.update { it.copy(followingListUsers = list, isFollowListsLoading = false) }
+                }.onFailure { err ->
+                    _uiState.update { it.copy(isFollowListsLoading = false, followListsError = err.message) }
+                }
+            } else {
+                repository.getUserFollowers(targetUserId).onSuccess { list ->
+                    _uiState.update { it.copy(followersListUsers = list, isFollowListsLoading = false) }
+                }.onFailure { err ->
+                    _uiState.update { it.copy(isFollowListsLoading = false, followListsError = err.message) }
+                }
+            }
+        }
+    }
+
+    fun onGlobalSearchQueryChange(query: String) {
+        _uiState.update { it.copy(globalSearchQuery = query) }
+        searchDebounceJob?.cancel()
+        if (query.isBlank()) {
+            _uiState.update { it.copy(searchPeopleResults = emptyList(), filteredConversations = it.conversations) }
+            return
+        }
+        searchDebounceJob = viewModelScope.launch {
+            delay(300L)
+            if (_uiState.value.searchActiveTab == 0) {
+                _uiState.update { it.copy(isSearchPeopleLoading = true, searchPeopleError = null) }
+                repository.searchPeople(query).onSuccess { results ->
+                    _uiState.update { it.copy(searchPeopleResults = results, isSearchPeopleLoading = false) }
+                }.onFailure { err ->
+                    _uiState.update { it.copy(searchPeopleError = err.message, isSearchPeopleLoading = false) }
+                }
+            } else {
+                repository.searchConversations(query).onSuccess { convs ->
+                    _uiState.update { it.copy(filteredConversations = convs) }
+                }
+            }
+        }
+    }
+
+    fun setSearchActiveTab(tab: Int) {
+        _uiState.update { it.copy(searchActiveTab = tab) }
+        val q = _uiState.value.globalSearchQuery
+        if (q.isNotBlank()) {
+            onGlobalSearchQueryChange(q)
+        }
+    }
+
+    fun clearRecentSearches() {
+        _uiState.update { it.copy(recentSearchesList = emptyList()) }
+    }
+
+    fun addRecentSearch(query: String) {
+        val q = query.trim()
+        if (q.isNotEmpty()) {
+            _uiState.update {
+                val updated = (listOf(q) + it.recentSearchesList.filter { item -> item != q }).take(10)
+                it.copy(recentSearchesList = updated)
+            }
+        }
+    }
+
+    fun loadInAppNotifications() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isNotificationsLoading = true) }
+            repository.fetchNotifications().onSuccess { notifs ->
+                val unread = notifs.count { !it.isRead }
+                _uiState.update {
+                    it.copy(
+                        inAppNotifications = notifs,
+                        unreadNotificationsCount = unread,
+                        isNotificationsLoading = false
+                    )
+                }
+            }.onFailure {
+                _uiState.update { it.copy(isNotificationsLoading = false) }
+            }
+        }
+    }
+
+    fun markNotificationRead(id: String) {
+        viewModelScope.launch {
+            repository.markNotificationRead(id)
+            _uiState.update { state ->
+                val updated = state.inAppNotifications.map {
+                    if (it.id == id) it.copy(isRead = true) else it
+                }
+                state.copy(
+                    inAppNotifications = updated,
+                    unreadNotificationsCount = updated.count { !it.isRead }
+                )
+            }
+        }
+    }
+
+    fun markAllNotificationsRead() {
+        viewModelScope.launch {
+            repository.markAllNotificationsRead()
+            _uiState.update { state ->
+                val updated = state.inAppNotifications.map { it.copy(isRead = true) }
+                state.copy(
+                    inAppNotifications = updated,
+                    unreadNotificationsCount = 0
+                )
+            }
+        }
+    }
+
+    fun markUsernameReviewed() {
+        viewModelScope.launch {
+            repository.markUsernameReviewed()
+            refreshProfile()
+            _uiState.update { it.copy(showUsernameReviewSheet = false) }
+        }
+    }
+
+    fun confirmUsernameChange(newUsername: String, onComplete: ((Result<String>) -> Unit)? = null) {
+        viewModelScope.launch {
+            val res = repository.changeUsername(newUsername)
+            res.onSuccess { clean ->
+                repository.markUsernameReviewed()
+                refreshProfile()
+                _uiState.update { it.copy(showUsernameReviewSheet = false) }
+                showSnackbar("Username updated to @$clean")
+                onComplete?.invoke(Result.success(clean))
+            }.onFailure { err ->
+                showSnackbar(err.message ?: "Failed to update username")
+                onComplete?.invoke(Result.failure(err))
+            }
+        }
+    }
+
+    fun dismissUsernameReviewSheet() {
+        _uiState.update { it.copy(showUsernameReviewSheet = false) }
     }
 }

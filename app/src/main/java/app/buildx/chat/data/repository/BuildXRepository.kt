@@ -14,6 +14,11 @@ import app.buildx.chat.data.model.ChatMessage
 import app.buildx.chat.data.model.ChatMode
 import app.buildx.chat.data.model.ChatSseEvent
 import app.buildx.chat.data.model.Conversation
+import app.buildx.chat.data.model.FollowUserItem
+import app.buildx.chat.data.model.NotificationRow
+import app.buildx.chat.data.model.PersonSearchResult
+import app.buildx.chat.data.model.PublicNote
+import app.buildx.chat.data.model.PublicProfile
 import app.buildx.chat.data.model.ReasoningStep
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
@@ -24,6 +29,8 @@ import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.from
+import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.rpc
 import io.github.jan.supabase.postgrest.query.Order
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.storage.Storage
@@ -167,9 +174,11 @@ class BuildXRepository(private val context: Context) {
         if (existing != null) {
             existing
         } else {
+            val cleanName = fallbackHandle.ifBlank { "user_${uid.take(6)}" }
             val created = UserProfile(
                 id = uid,
-                handle = fallbackHandle.ifBlank { "user_${uid.take(6)}" },
+                username = cleanName,
+                handle = cleanName,
                 displayName = fallbackDisplayName.ifBlank { "User" },
                 appearance = "automatic"
             )
@@ -197,6 +206,167 @@ class BuildXRepository(private val context: Context) {
                 filter { eq("id", uid) }
             }
             ensureUserProfile()
+        }
+    }
+
+    suspend fun getOwnProfile(): Result<UserProfile> = withContext(Dispatchers.IO) {
+        runCatching {
+            ensureUserProfile()
+        }
+    }
+
+    suspend fun getPublicProfile(targetUsername: String): Result<PublicProfile> = withContext(Dispatchers.IO) {
+        runCatching {
+            val clean = targetUsername.trim().removePrefix("@")
+            val params = buildJsonObject { put("target_username", clean) }
+            val response = supabase.postgrest.rpc("get_public_profile", params)
+            response.decodeAs<PublicProfile>()
+        }
+    }
+
+    suspend fun searchPeople(query: String, limit: Int = 30, offset: Int = 0): Result<List<PersonSearchResult>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val clean = query.trim()
+            val params = buildJsonObject {
+                put("query", clean)
+                put("p_limit", limit)
+                put("p_offset", offset)
+            }
+            val response = supabase.postgrest.rpc("search_people", params)
+            response.decodeList<PersonSearchResult>()
+        }
+    }
+
+    suspend fun toggleFollow(targetUserId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject { put("target_user_id", targetUserId) }
+            val response = supabase.postgrest.rpc("toggle_follow", params)
+            val jsonObject = response.decodeAs<JsonObject>()
+            jsonObject["following"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+        }
+    }
+
+    suspend fun checkUsernameAvailable(candidate: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val clean = candidate.trim().removePrefix("@")
+            val params = buildJsonObject { put("candidate", clean) }
+            val response = supabase.postgrest.rpc("check_username_available", params)
+            response.decodeAs<Boolean>()
+        }
+    }
+
+    suspend fun changeUsername(newUsername: String): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val clean = newUsername.trim().removePrefix("@")
+            val params = buildJsonObject { put("new_username", clean) }
+            val response = supabase.postgrest.rpc("change_username", params)
+            val obj = response.decodeAs<JsonObject>()
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            if (!success) {
+                val errorMsg = obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to change username"
+                error(errorMsg)
+            }
+            obj["new_username"]?.jsonPrimitive?.contentOrNull ?: clean
+        }
+    }
+
+    suspend fun markUsernameReviewed(): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            supabase.postgrest.rpc("mark_username_reviewed")
+            Unit
+        }
+    }
+
+    suspend fun updateProfileDetails(
+        displayName: String,
+        bio: String?,
+        avatarUrl: String? = null
+    ): Result<UserProfile> = withContext(Dispatchers.IO) {
+        runCatching {
+            val uid = currentUserId() ?: error("Not authenticated")
+            val payload = buildJsonObject {
+                put("display_name", displayName.trim())
+                if (bio != null) {
+                    put("bio", bio.trim())
+                } else {
+                    put("bio", JsonNull)
+                }
+                if (avatarUrl != null) {
+                    put("avatar_url", avatarUrl)
+                }
+            }
+            supabase.from("profiles").update(payload) {
+                filter { eq("id", uid) }
+            }
+            ensureUserProfile()
+        }
+    }
+
+    suspend fun createNote(content: String): Result<PublicNote> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject { put("note_content", content.trim()) }
+            val response = supabase.postgrest.rpc("create_note", params)
+            response.decodeAs<PublicNote>()
+        }
+    }
+
+    suspend fun deleteNote(): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            supabase.postgrest.rpc("delete_note")
+            Unit
+        }
+    }
+
+    suspend fun getUserFollowers(targetUserId: String): Result<List<FollowUserItem>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject { put("target_user_id", targetUserId) }
+            val response = supabase.postgrest.rpc("get_user_followers", params)
+            response.decodeList<FollowUserItem>()
+        }
+    }
+
+    suspend fun getUserFollowing(targetUserId: String): Result<List<FollowUserItem>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject { put("target_user_id", targetUserId) }
+            val response = supabase.postgrest.rpc("get_user_following", params)
+            response.decodeList<FollowUserItem>()
+        }
+    }
+
+    suspend fun fetchNotifications(limit: Int = 50, offset: Int = 0): Result<List<NotificationRow>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_limit", limit)
+                put("p_offset", offset)
+            }
+            val response = supabase.postgrest.rpc("get_user_notifications", params)
+            response.decodeList<NotificationRow>()
+        }
+    }
+
+    suspend fun markNotificationRead(notificationId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val uid = currentUserId() ?: return@runCatching
+            supabase.from("notifications").update(buildJsonObject { put("is_read", true) }) {
+                filter {
+                    eq("id", notificationId)
+                    eq("user_id", uid)
+                }
+            }
+            Unit
+        }
+    }
+
+    suspend fun markAllNotificationsRead(): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val uid = currentUserId() ?: return@runCatching
+            supabase.from("notifications").update(buildJsonObject { put("is_read", true) }) {
+                filter {
+                    eq("user_id", uid)
+                    eq("is_read", false)
+                }
+            }
+            Unit
         }
     }
 
@@ -384,6 +554,22 @@ class BuildXRepository(private val context: Context) {
                 supabase.from("messages").update(payload) {
                     filter { eq("id", messageId) }
                 }
+                Unit
+            }
+        }
+
+    /**
+     * Atomically edits a user message, updates edited_at timestamp,
+     * and deletes subsequent messages in the same conversation.
+     */
+    suspend fun editUserMessage(messageId: String, newContent: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val params = buildJsonObject {
+                    put("p_message_id", messageId)
+                    put("p_new_content", newContent)
+                }
+                supabase.postgrest.rpc("edit_user_message", params)
                 Unit
             }
         }

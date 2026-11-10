@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -39,15 +40,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.PopupPositionProvider
 import app.buildx.chat.R
 import app.buildx.chat.data.model.ReasoningStep
 import app.buildx.chat.data.model.StagedAttachment
+import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.isRtlText
 import app.buildx.chat.ui.theme.softShadow
@@ -198,21 +206,31 @@ fun StepsSheetContent(
  * Rows: Share a link, Pin / Unpin, Rename, Delete chat (crimson red #C3192E).
  * Label left, trailing icon right.
  */
+/**
+ * Reusable menu item model for popup menus (Header, User Bubble, Assistant Actions).
+ */
+data class ActionMenuItem(
+    val label: String,
+    @DrawableRes val iconRes: Int,
+    val isDestructive: Boolean = false,
+    val onClick: () -> Unit
+)
+
+/**
+ * Reusable anchored action popup matching the app's design system:
+ * - White card, ~16dp radius, soft shadow, subtle border
+ * - Label at start, trailing icon at end
+ * - Destructive red for destructive actions
+ */
 @Composable
-fun HeaderOverflowPopup(
-    isPinned: Boolean,
-    onShareLink: () -> Unit,
-    onTogglePin: () -> Unit,
-    onRename: () -> Unit,
-    onDelete: () -> Unit,
+fun ActionMenuPopup(
+    items: List<ActionMenuItem>,
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
-    val strings = BuildXTheme.strings
-
     Column(
         modifier = modifier
-            .width(196.dp)
+            .width(188.dp)
             .softShadow(
                 color = colors.composerShadowColor,
                 cornerRadius = 16.dp,
@@ -224,32 +242,69 @@ fun HeaderOverflowPopup(
             .border(1.dp, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
             .padding(vertical = 4.dp)
     ) {
-        OverflowMenuRow(
-            label = strings.shareLink,
-            iconRes = R.drawable.ic_link,
-            onClick = onShareLink,
-            showDivider = true
-        )
-        OverflowMenuRow(
-            label = if (isPinned) strings.unpinChat else strings.pinChat,
-            iconRes = R.drawable.ic_pin,
-            onClick = onTogglePin,
-            showDivider = true
-        )
-        OverflowMenuRow(
-            label = strings.renameChat,
-            iconRes = R.drawable.ic_pencil,
-            onClick = onRename,
-            showDivider = true
-        )
-        OverflowMenuRow(
-            label = strings.deleteChat,
-            iconRes = R.drawable.ic_trash,
-            isDestructive = true,
-            onClick = onDelete,
-            showDivider = false
-        )
+        items.forEachIndexed { index, item ->
+            OverflowMenuRow(
+                label = item.label,
+                iconRes = item.iconRes,
+                onClick = item.onClick,
+                isDestructive = item.isDestructive,
+                showDivider = index < items.lastIndex
+            )
+        }
     }
+}
+
+/**
+ * Calculates above vs below anchor position with safety margins so the popup never clips
+ * at screen edges in RTL/LTR, with keyboards open, or under high font scaling.
+ */
+class BubblePopupPositionProvider(
+    private val isRtl: Boolean
+) : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize
+    ): IntOffset {
+        val marginPx = 24
+        val x = if (isRtl) {
+            anchorBounds.left.coerceIn(marginPx, (windowSize.width - popupContentSize.width - marginPx).coerceAtLeast(marginPx))
+        } else {
+            (anchorBounds.right - popupContentSize.width).coerceIn(marginPx, (windowSize.width - popupContentSize.width - marginPx).coerceAtLeast(marginPx))
+        }
+
+        val spaceBelow = windowSize.height - anchorBounds.bottom
+        val y = if (spaceBelow >= popupContentSize.height + marginPx || spaceBelow >= anchorBounds.top) {
+            anchorBounds.bottom + 8
+        } else {
+            anchorBounds.top - popupContentSize.height - 8
+        }
+
+        return IntOffset(x, y.coerceIn(marginPx, (windowSize.height - popupContentSize.height - marginPx).coerceAtLeast(marginPx)))
+    }
+}
+
+/**
+ * Header overflow popup (delegates to ActionMenuPopup).
+ */
+@Composable
+fun HeaderOverflowPopup(
+    isPinned: Boolean,
+    onShareLink: () -> Unit,
+    onTogglePin: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val strings = BuildXTheme.strings
+    val items = listOf(
+        ActionMenuItem(label = strings.shareLink, iconRes = R.drawable.ic_link, onClick = onShareLink),
+        ActionMenuItem(label = if (isPinned) strings.unpinChat else strings.pinChat, iconRes = R.drawable.ic_pin, onClick = onTogglePin),
+        ActionMenuItem(label = strings.renameChat, iconRes = R.drawable.ic_pencil, onClick = onRename),
+        ActionMenuItem(label = strings.deleteChat, iconRes = R.drawable.ic_trash, isDestructive = true, onClick = onDelete)
+    )
+    ActionMenuPopup(items = items, modifier = modifier.width(196.dp))
 }
 
 @Composable
@@ -276,6 +331,7 @@ private fun OverflowMenuRow(
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Start,
+                style = TextStyle(textDirection = TextDirection.Content),
                 modifier = Modifier.weight(1f)
             )
             Icon(
@@ -289,6 +345,97 @@ private fun OverflowMenuRow(
             HorizontalDivider(
                 thickness = 1.dp,
                 color = colors.subtleSurfaceBorder
+            )
+        }
+    }
+}
+
+/**
+ * App-style bottom sheet for Select text (same style as the Steps sheet):
+ * - 30% scrim
+ * - Rounded top corners 28dp
+ * - Centered grab handle
+ * - Full text wrapped in a SelectionContainer for selectable text copying
+ */
+@Composable
+fun SelectTextSheetContent(
+    text: String,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+            .background(colors.cardBackground)
+            .padding(bottom = 24.dp)
+    ) {
+        // Grab handle (~32x4dp)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp, bottom = 12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 32.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(colors.grabHandle)
+            )
+        }
+
+        // Header bar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = strings.selectTextTitle,
+                color = colors.primaryText,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Start
+            )
+            HeaderCircleButton(
+                iconRes = R.drawable.ic_close,
+                contentDescription = strings.closeButton,
+                onClick = onClose
+            )
+        }
+
+        HorizontalDivider(
+            thickness = 1.dp,
+            color = colors.subtleSurfaceBorder,
+            modifier = Modifier.padding(vertical = 8.dp)
+        )
+
+        // Selectable text container
+        SelectionContainer(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+        ) {
+            Text(
+                text = text,
+                color = colors.primaryText,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Normal,
+                lineHeight = 24.sp,
+                textAlign = TextAlign.Start,
+                style = TextStyle(
+                    fontFamily = BuildXFontFamily,
+                    textDirection = TextDirection.Content
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
             )
         }
     }

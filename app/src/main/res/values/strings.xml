@@ -47,4 +47,16 @@
     <string name="log_out">Log out</string>
     <string name="app_version_label">App version</string>
     <string name="app_language_label">App language</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_resend">Resend</string>
+    <string name="action_select_text">Select text</string>
+    <string name="action_regenerate">Regenerate</string>
+    <string name="action_share">Share</string>
+    <string name="label_edited">Edited</string>
+    <string name="hint_edit_replaces_later">Later replies will be replaced</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="btn_send">Send</string>
+    <string name="copied_to_clipboard">Copied to clipboard</string>
+    <string name="select_text_title">Select text</string>
 </resources>
