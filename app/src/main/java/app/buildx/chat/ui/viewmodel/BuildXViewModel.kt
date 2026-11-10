@@ -28,7 +28,14 @@ import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
 import app.buildx.chat.data.model.VerificationStatusInfo
 import app.buildx.chat.data.repository.BuildXRepository
+import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.handleDeeplinks
+import io.github.jan.supabase.auth.status.SessionStatus
+import io.github.jan.supabase.postgrest.query.filter.FilterOperator
+import io.github.jan.supabase.realtime.RealtimeChannel
+import io.github.jan.supabase.realtime.channel
+import io.github.jan.supabase.realtime.postgresChangeFlow
+import io.github.jan.supabase.realtime.PostgresAction
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -46,6 +53,7 @@ data class BuildXUiState(
     val isAuthLoading: Boolean = false,
     val authError: String? = null,
     val profile: UserProfile? = null,
+    val isUploadingAvatar: Boolean = false,
     val appearance: AppAppearance = AppAppearance.AUTOMATIC,
     val language: AppLanguage = AppLanguage.SYSTEM,
     val activeSurfacePane: MainSurfacePane = MainSurfacePane.CHAT,
@@ -128,8 +136,23 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     private var activeStreamJob: Job? = null
     private var searchDebounceJob: Job? = null
     private var speechRecognizer: SpeechRecognizer? = null
+    private var realtimeNotificationChannel: RealtimeChannel? = null
 
     init {
+        viewModelScope.launch {
+            repository.supabase.auth.sessionStatus.collect { status ->
+                when (status) {
+                    is SessionStatus.Authenticated -> {
+                        _uiState.update { it.copy(isAuthenticated = true, isAuthLoading = false, authError = null) }
+                        checkExistingSession()
+                    }
+                    is SessionStatus.NotAuthenticated -> {
+                        _uiState.update { it.copy(isAuthLoading = false) }
+                    }
+                    else -> {}
+                }
+            }
+        }
         checkExistingSession()
     }
 
@@ -146,14 +169,46 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     _uiState.update {
                         it.copy(
                             isAuthenticated = true,
+                            isAuthLoading = false,
+                            authError = null,
                             profile = profile,
                             appearance = resolvedAppearance,
                             showUsernameReviewSheet = showReview
                         )
                     }
+                    loadActiveOwnNote()
                     refreshConversationsAndAttachments()
                     loadInAppNotifications()
+                    subscribeToRealtimeNotifications(uid)
                 }
+            } else {
+                _uiState.update { it.copy(isAuthLoading = false) }
+            }
+        }
+    }
+
+    private fun subscribeToRealtimeNotifications(uid: String) {
+        viewModelScope.launch {
+            try {
+                realtimeNotificationChannel?.unsubscribe()
+                val channel = repository.supabase.channel("user-notifications-$uid")
+                val changeFlow = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                    table = "notifications"
+                    filter("user_id", FilterOperator.EQ, uid)
+                }
+                realtimeNotificationChannel = channel
+                channel.subscribe()
+                changeFlow.collect {
+                    loadInAppNotifications()
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun loadActiveOwnNote() {
+        viewModelScope.launch {
+            repository.getMyActiveNote().onSuccess { note ->
+                _uiState.update { it.copy(activeOwnNote = note) }
             }
         }
     }
@@ -284,19 +339,34 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     fun handleAuthDeeplink(intent: Intent) {
         viewModelScope.launch {
+            val uri = intent.data
+            val errorDesc = uri?.getQueryParameter("error_description")
+                ?: uri?.getQueryParameter("error")
+                ?: uri?.fragment?.let { frag ->
+                    frag.split("&").firstOrNull { it.startsWith("error_description=") }?.substringAfter("error_description=")
+                        ?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+                }
+            if (errorDesc != null) {
+                _uiState.update { it.copy(isAuthLoading = false, authError = errorDesc) }
+                return@launch
+            }
             runCatching {
                 repository.supabase.handleDeeplinks(intent) {
                     checkExistingSession()
                 }
+            }.onFailure { err ->
+                _uiState.update { it.copy(isAuthLoading = false, authError = err.message ?: "Authentication callback failed") }
             }
         }
     }
 
-
-
     fun signOut() {
         activeStreamJob?.cancel()
         viewModelScope.launch {
+            try {
+                realtimeNotificationChannel?.unsubscribe()
+            } catch (_: Exception) {}
+            realtimeNotificationChannel = null
             repository.signOut()
             _uiState.value = BuildXUiState(
                 isAuthenticated = false,
@@ -1304,33 +1374,35 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun updateProfile(displayName: String, handle: String) {
-        viewModelScope.launch {
-            repository.updateProfile(displayName, handle).onSuccess { updated ->
-                _uiState.update {
-                    it.copy(
-                        profile = updated,
-                        snackbarMessage = "Profile updated"
-                    )
-                }
-            }.onFailure { err ->
-                showSnackbar(err.message ?: "Could not update profile")
-            }
-        }
+        updateProfile(displayName, handle, null, null)
     }
 
-    fun updateProfile(displayName: String, username: String?, bio: String?) {
+    fun updateProfile(
+        displayName: String,
+        username: String?,
+        bio: String?,
+        onSuccess: (() -> Unit)? = null
+    ) {
         viewModelScope.launch {
             val cleanUser = username?.trim()?.removePrefix("@")?.lowercase()
-            if (cleanUser != null && cleanUser != _uiState.value.profile?.effectiveUsername) {
-                confirmUsernameChange(cleanUser)
+            val currentUsername = _uiState.value.profile?.effectiveUsername?.lowercase()
+
+            if (!cleanUser.isNullOrBlank() && cleanUser != currentUsername) {
+                val usernameResult = repository.changeUsername(cleanUser)
+                if (usernameResult.isFailure) {
+                    showSnackbar(usernameResult.exceptionOrNull()?.message ?: "Failed to change username")
+                    return@launch
+                }
             }
-            repository.updateProfileDetails(displayName, bio, null).onSuccess { updated ->
+
+            repository.updateProfileDetails(displayName.trim(), bio?.trim()?.ifEmpty { null }, null).onSuccess { updated ->
                 _uiState.update {
                     it.copy(
                         profile = updated,
                         snackbarMessage = "Profile updated"
                     )
                 }
+                onSuccess?.invoke()
             }.onFailure { err ->
                 showSnackbar(err.message ?: "Failed to update profile")
             }
@@ -1339,15 +1411,18 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     fun uploadProfileAvatar(uri: Uri) {
         viewModelScope.launch {
+            _uiState.update { it.copy(isUploadingAvatar = true) }
             repository.uploadAvatar(uri).onSuccess {
                 val updated = repository.ensureUserProfile()
                 _uiState.update {
                     it.copy(
                         profile = updated,
+                        isUploadingAvatar = false,
                         snackbarMessage = "Profile photo updated"
                     )
                 }
             }.onFailure { err ->
+                _uiState.update { it.copy(isUploadingAvatar = false) }
                 showSnackbar(err.message ?: "Could not upload photo")
             }
         }
@@ -1364,13 +1439,19 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     fun deleteAccount() {
         viewModelScope.launch {
-            repository.deleteAllConversations()
-            repository.signOut()
-            _uiState.value = BuildXUiState(
-                isAuthenticated = false,
-                appearance = repository.getSavedAppearance(),
-                language = repository.getSavedLanguage()
-            )
+            try {
+                realtimeNotificationChannel?.unsubscribe()
+            } catch (_: Exception) {}
+            realtimeNotificationChannel = null
+            repository.deleteAccount().onSuccess {
+                _uiState.value = BuildXUiState(
+                    isAuthenticated = false,
+                    appearance = repository.getSavedAppearance(),
+                    language = repository.getSavedLanguage()
+                )
+            }.onFailure { err ->
+                showSnackbar(err.message ?: "Failed to delete account")
+            }
         }
     }
 
@@ -1766,6 +1847,10 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 onComplete?.invoke(Result.failure(err))
             }
         }
+    }
+
+    fun openUsernameReviewSheet() {
+        _uiState.update { it.copy(showUsernameReviewSheet = true) }
     }
 
     fun dismissUsernameReviewSheet() {

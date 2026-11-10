@@ -7,6 +7,11 @@ import android.content.SharedPreferences
 import android.net.Uri
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
+import java.io.ByteArrayOutputStream
 import app.buildx.chat.BuildConfig
 import app.buildx.chat.data.model.AppAppearance
 import app.buildx.chat.data.model.AppLanguage
@@ -136,6 +141,9 @@ class BuildXRepository(private val context: Context) {
         supabaseKey = BuildConfig.SUPABASE_ANON_KEY
     ) {
         install(Auth) {
+            scheme = "app.buildx.chat"
+            host = "login-callback"
+            defaultRedirectUrl = "app.buildx.chat://login-callback"
             sessionManager = SharedPreferencesSessionManager(prefs, json)
             autoLoadFromStorage = true
             autoSaveToStorage = true
@@ -208,7 +216,10 @@ class BuildXRepository(private val context: Context) {
 
     suspend fun signInWithGoogle(): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            supabase.auth.signInWith(Google)
+            supabase.auth.signInWith(
+                provider = Google,
+                redirectUrl = "app.buildx.chat://login-callback"
+            )
         }
     }
 
@@ -294,17 +305,14 @@ class BuildXRepository(private val context: Context) {
 
     suspend fun withdrawVerificationRequest(requestId: String? = null): Result<Boolean> = withContext(Dispatchers.IO) {
         runCatching {
-            val uid = currentUserId() ?: error("Not authenticated")
-            supabase.from("verification_requests").delete {
-                filter {
-                    eq("user_id", uid)
-                    eq("status", "pending")
-                    if (!requestId.isNullOrBlank()) {
-                        eq("id", requestId)
-                    }
-                }
+            val params = if (!requestId.isNullOrBlank()) {
+                buildJsonObject { put("p_request_id", requestId) }
+            } else {
+                buildJsonObject {}
             }
-            true
+            val res = supabase.postgrest.rpc("withdraw_verification_request", params)
+            val obj = res.decodeAs<JsonObject>()
+            obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
         }
     }
 
@@ -347,21 +355,7 @@ class BuildXRepository(private val context: Context) {
         handle: String,
         avatarUrl: String? = null
     ): Result<UserProfile> = withContext(Dispatchers.IO) {
-        runCatching {
-            val uid = currentUserId() ?: error("Not authenticated")
-            val cleanHandle = handle.trim().removePrefix("@")
-            val updatePayload = buildJsonObject {
-                put("display_name", displayName.trim())
-                put("handle", cleanHandle)
-                if (avatarUrl != null) {
-                    put("avatar_url", avatarUrl)
-                }
-            }
-            supabase.from("profiles").update(updatePayload) {
-                filter { eq("id", uid) }
-            }
-            ensureUserProfile()
-        }
+        updateProfileDetails(displayName, null, avatarUrl)
     }
 
     suspend fun getOwnProfile(): Result<UserProfile> = withContext(Dispatchers.IO) {
@@ -397,7 +391,9 @@ class BuildXRepository(private val context: Context) {
             val params = buildJsonObject { put("target_user_id", targetUserId) }
             val response = supabase.postgrest.rpc("toggle_follow", params)
             val jsonObject = response.decodeAs<JsonObject>()
-            jsonObject["following"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            jsonObject["is_following"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
+                ?: jsonObject["following"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
+                ?: false
         }
     }
 
@@ -421,7 +417,9 @@ class BuildXRepository(private val context: Context) {
                 val errorMsg = obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to change username"
                 error(errorMsg)
             }
-            obj["new_username"]?.jsonPrimitive?.contentOrNull ?: clean
+            obj["username"]?.jsonPrimitive?.contentOrNull
+                ?: obj["new_username"]?.jsonPrimitive?.contentOrNull
+                ?: clean
         }
     }
 
@@ -449,11 +447,29 @@ class BuildXRepository(private val context: Context) {
                 if (avatarUrl != null) {
                     put("avatar_url", avatarUrl)
                 }
+                put("updated_at", Instant.now().toString())
             }
             supabase.from("profiles").update(payload) {
                 filter { eq("id", uid) }
             }
             ensureUserProfile()
+        }
+    }
+
+    suspend fun getMyActiveNote(): Result<PublicNote?> = withContext(Dispatchers.IO) {
+        runCatching {
+            val response = supabase.postgrest.rpc("get_my_active_note")
+            val raw = runCatching { response.decodeAs<JsonObject>() }.getOrNull() ?: return@runCatching null
+            if (raw.isEmpty()) return@runCatching null
+            json.decodeFromJsonElement(PublicNote.serializer(), raw)
+        }
+    }
+
+    suspend fun deleteAccount(): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            supabase.postgrest.rpc("delete_my_account")
+            supabase.auth.signOut()
+            Unit
         }
     }
 
@@ -791,19 +807,56 @@ class BuildXRepository(private val context: Context) {
     suspend fun uploadAvatar(uri: Uri): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val uid = currentUserId() ?: error("Not authenticated")
-            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            val orientation = runCatching {
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    val exif = ExifInterface(stream)
+                    exif.getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION,
+                        ExifInterface.ORIENTATION_NORMAL
+                    )
+                }
+            }.getOrNull() ?: ExifInterface.ORIENTATION_NORMAL
+
+            val rawBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 ?: error("Cannot read avatar image")
+            val decoded = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size)
+                ?: error("Failed to decode avatar bitmap")
+
+            val matrix = Matrix()
+            when (orientation) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+                ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+                ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+            }
+            val rotated = if (!matrix.isIdentity) {
+                Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+            } else decoded
+
+            val minDim = minOf(rotated.width, rotated.height)
+            val cropped = Bitmap.createBitmap(rotated, (rotated.width - minDim) / 2, (rotated.height - minDim) / 2, minDim, minDim)
+            val scaled = if (minDim > 512) {
+                Bitmap.createScaledBitmap(cropped, 512, 512, true)
+            } else cropped
+
+            val stream = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+            val jpegBytes = stream.toByteArray()
+
             val objectPath = "$uid/avatar_${System.currentTimeMillis()}.jpg"
-            val bucket = supabase.storage.from("attachments")
-            bucket.upload(objectPath, bytes) {
+            val bucket = supabase.storage.from("avatars")
+            bucket.upload(objectPath, jpegBytes) {
                 upsert = true
             }
-            val url = bucket.publicUrl(objectPath)
-            updateProfile(
-                displayName = ensureUserProfile().displayName,
-                handle = ensureUserProfile().handle,
-                avatarUrl = url
-            )
+            val url = bucket.publicUrl(objectPath) + "?v=${System.currentTimeMillis()}"
+
+            val payload = buildJsonObject {
+                put("avatar_url", url)
+                put("updated_at", Instant.now().toString())
+            }
+            supabase.from("profiles").update(payload) {
+                filter { eq("id", uid) }
+            }
+            ensureUserProfile()
             url
         }
     }

@@ -48,9 +48,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
@@ -514,14 +520,66 @@ fun ProfileScreen(
                     }
 
                     // Bio Text Block
-                    if (!bioText.isNullOrBlank()) {
+                    if (bioText.isNullOrBlank()) {
+                        if (isOwnProfile) {
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { onEditProfileClick() }
+                                    .padding(vertical = 4.dp, horizontal = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_pencil_edit),
+                                    contentDescription = null,
+                                    tint = colors.primaryBlue,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (strings.isRtl) "إضافة نبذة تعريفية" else "Add bio",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = colors.primaryBlue
+                                )
+                            }
+                        }
+                    } else {
                         Spacer(modifier = Modifier.height(16.dp))
                         val isBioRtl = isRtlText(bioText, defaultRtl = strings.isRtl)
+                        val annotatedBio = remember(bioText, colors.primaryBlue) {
+                            buildAnnotatedString {
+                                var lastIndex = 0
+                                val urlRegex = Regex("(https?://[\\w\\d:#@%/;$()~_?\\+-=\\\\.&]+)")
+                                val matches = urlRegex.findAll(bioText)
+                                for (match in matches) {
+                                    append(bioText.substring(lastIndex, match.range.first))
+                                    val url = match.value
+                                    val link = LinkAnnotation.Url(
+                                        url = url,
+                                        styles = TextLinkStyles(
+                                            style = SpanStyle(
+                                                color = colors.primaryBlue,
+                                                textDecoration = TextDecoration.Underline
+                                            )
+                                        )
+                                    )
+                                    pushLink(link)
+                                    append(url)
+                                    pop()
+                                    lastIndex = match.range.last + 1
+                                }
+                                if (lastIndex < bioText.length) {
+                                    append(bioText.substring(lastIndex))
+                                }
+                            }
+                        }
                         CompositionLocalProvider(
                             LocalLayoutDirection provides if (isBioRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
                         ) {
                             Text(
-                                text = bioText,
+                                text = annotatedBio,
                                 fontSize = 14.5.sp,
                                 color = colors.primaryText,
                                 lineHeight = 21.sp,
@@ -705,10 +763,8 @@ private fun NotePromptBubble(
     }
 }
 
-private fun formatNumber(count: Int): String {
-    return when {
-        count >= 1_000_000 -> String.format(java.util.Locale.US, "%.1fM", count / 1_000_000.0).removeSuffix(".0M") + "M"
-        count >= 1_000 -> String.format(java.util.Locale.US, "%.1fK", count / 1_000.0).removeSuffix(".0K") + "K"
-        else -> count.toString()
-    }
+private fun formatNumber(count: Int): String = when {
+    count >= 1_000_000 -> String.format(java.util.Locale.US, "%.1f", count / 1_000_000.0).removeSuffix(".0") + "M"
+    count >= 1_000 -> String.format(java.util.Locale.US, "%.1f", count / 1_000.0).removeSuffix(".0") + "K"
+    else -> count.toString()
 }

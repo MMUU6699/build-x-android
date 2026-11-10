@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -48,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -69,7 +71,6 @@ import app.buildx.chat.ui.screens.HelpSupportScreen
 import app.buildx.chat.ui.screens.LegalSafetyScreen
 import app.buildx.chat.ui.screens.MediaScreen
 import app.buildx.chat.ui.screens.NotificationsScreen
-import app.buildx.chat.ui.screens.ProfileEditScreen
 import app.buildx.chat.ui.screens.ProfileScreen
 import app.buildx.chat.ui.screens.PublicNoteSheet
 import app.buildx.chat.ui.screens.RecentUploadsDialog
@@ -84,6 +85,7 @@ import java.io.File
 
 class MainActivity : ComponentActivity() {
     private var vm: BuildXViewModel? = null
+    private var onDeepLink: ((Intent) -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -91,27 +93,55 @@ class MainActivity : ComponentActivity() {
         setContent {
             val viewModel: BuildXViewModel = viewModel()
             vm = viewModel
-            LaunchedEffect(intent) {
-                intent?.let { viewModel.handleAuthDeeplink(it) }
+            val navController = rememberNavController()
+
+            DisposableEffect(Unit) {
+                onDeepLink = { incomingIntent ->
+                    handleIntent(incomingIntent, viewModel, navController)
+                }
+                onDispose { onDeepLink = null }
             }
-            BuildXRoot(viewModel)
+
+            LaunchedEffect(intent) {
+                intent?.let { handleIntent(it, viewModel, navController) }
+            }
+
+            BuildXRoot(viewModel, navController)
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        vm?.handleAuthDeeplink(intent)
+        onDeepLink?.invoke(intent) ?: run {
+            vm?.handleAuthDeeplink(intent)
+        }
+    }
+
+    private fun handleIntent(incomingIntent: Intent, viewModel: BuildXViewModel, navController: NavHostController) {
+        val uri = incomingIntent.data
+        if (uri != null && uri.scheme == "buildx") {
+            val u = if (uri.host == "u") {
+                uri.pathSegments.firstOrNull()
+            } else if (uri.pathSegments.firstOrNull() == "u") {
+                uri.pathSegments.getOrNull(1)
+            } else null
+            if (!u.isNullOrBlank()) {
+                navController.navigate("profile/$u")
+                return
+            }
+        }
+        viewModel.handleAuthDeeplink(incomingIntent)
     }
 }
 
 @Composable
 fun BuildXRoot(
-    viewModel: BuildXViewModel = viewModel()
+    viewModel: BuildXViewModel = viewModel(),
+    navController: NavHostController = rememberNavController()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
-    val navController = rememberNavController()
 
     var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
 
@@ -492,7 +522,7 @@ fun BuildXRoot(
                             onBackClick = { navController.popBackStack() },
                             onEditProfileClick = { navController.navigate("edit_profile") },
                             onOpenNoteSheet = { viewModel.openNoteSheet(true) },
-                            onReviewUsernameClick = { viewModel.confirmUsernameChange(uiState.profile?.effectiveUsername ?: "user") },
+                            onReviewUsernameClick = { viewModel.openUsernameReviewSheet() },
                             onFollowClick = {},
                             onFollowingClick = {},
                             onFollowersListClick = { userId, initialTab ->
@@ -534,9 +564,11 @@ fun BuildXRoot(
                     composable("edit_profile") {
                         EditProfileScreen(
                             profile = uiState.profile,
+                            isUploadingAvatar = uiState.isUploadingAvatar,
                             onSaveProfile = { displayName, newUsername, bio ->
-                                viewModel.updateProfile(displayName, newUsername, bio)
-                                navController.popBackStack()
+                                viewModel.updateProfile(displayName, newUsername, bio) {
+                                    navController.popBackStack()
+                                }
                             },
                             onPickAvatarClick = {
                                 avatarPickerLauncher.launch(

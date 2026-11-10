@@ -73,6 +73,7 @@ import java.time.temporal.ChronoUnit
 @Composable
 fun EditProfileScreen(
     profile: UserProfile?,
+    isUploadingAvatar: Boolean = false,
     onSaveProfile: (displayName: String, username: String?, bio: String?) -> Unit,
     onPickAvatarClick: () -> Unit,
     onBackClick: () -> Unit,
@@ -81,10 +82,10 @@ fun EditProfileScreen(
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
 
-    var displayName by remember(profile) { mutableStateOf(profile?.displayName ?: "") }
-    var currentUsername by remember(profile) { mutableStateOf(profile?.effectiveUsername ?: "") }
-    var newUsernameInput by remember(profile) { mutableStateOf(profile?.effectiveUsername ?: "") }
-    var bioText by remember(profile) { mutableStateOf(profile?.bio ?: "") }
+    var displayName by remember(profile?.id) { mutableStateOf(profile?.displayName ?: "") }
+    var currentUsername by remember(profile?.id) { mutableStateOf(profile?.effectiveUsername ?: "") }
+    var newUsernameInput by remember(profile?.id) { mutableStateOf(profile?.effectiveUsername ?: "") }
+    var bioText by remember(profile?.id) { mutableStateOf(profile?.bio ?: "") }
 
     var showDiscardDialog by remember { mutableStateOf(false) }
     var isCheckingUsername by remember { mutableStateOf(false) }
@@ -234,7 +235,7 @@ fun EditProfileScreen(
                 Box(
                     modifier = Modifier
                         .size(92.dp)
-                        .clickable { onPickAvatarClick() },
+                        .clickable(enabled = !isUploadingAvatar) { onPickAvatarClick() },
                     contentAlignment = Alignment.BottomEnd
                 ) {
                     if (!profile?.avatarUrl.isNullOrBlank()) {
@@ -264,6 +265,23 @@ fun EditProfileScreen(
                         }
                     }
 
+                    // Uploading overlay indicator
+                    if (isUploadingAvatar) {
+                        Box(
+                            modifier = Modifier
+                                .size(92.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.45f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(28.dp),
+                                color = Color.White,
+                                strokeWidth = 2.5.dp
+                            )
+                        }
+                    }
+
                     // Camera badge
                     Box(
                         modifier = Modifier
@@ -289,7 +307,7 @@ fun EditProfileScreen(
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = colors.primaryBlue,
-                    modifier = Modifier.clickable { onPickAvatarClick() }
+                    modifier = Modifier.clickable(enabled = !isUploadingAvatar) { onPickAvatarClick() }
                 )
             }
 

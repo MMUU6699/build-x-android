@@ -74,7 +74,7 @@ fun VerificationRequestScreen(
     }
 
     var fullName by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf(strings.categoryTech) }
+    var selectedCategory by remember { mutableStateOf("tech") }
     var links by remember { mutableStateOf("") }
     var reason by remember { mutableStateOf("") }
     var validationError by remember { mutableStateOf<String?>(null) }
@@ -111,6 +111,12 @@ fun VerificationRequestScreen(
                 TextButton(
                     onClick = {
                         showWithdrawConfirm = false
+                        fullName = ""
+                        selectedCategory = "tech"
+                        links = ""
+                        reason = ""
+                        validationError = null
+                        forceNewForm = true
                         onWithdrawRequest(verificationStatus?.requestId)
                     }
                 ) {
@@ -338,7 +344,14 @@ fun VerificationRequestScreen(
                                 .height(46.dp)
                                 .clip(RoundedCornerShape(999.dp))
                                 .background(colors.primaryBlue)
-                                .clickable { forceNewForm = true },
+                                .clickable {
+                                    fullName = ""
+                                    selectedCategory = "tech"
+                                    links = ""
+                                    reason = ""
+                                    validationError = null
+                                    forceNewForm = true
+                                },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(

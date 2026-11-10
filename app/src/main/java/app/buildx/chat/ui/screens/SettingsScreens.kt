@@ -119,7 +119,7 @@ fun SettingsScreen(
 ) {
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
-    val rawHandle = profile?.handle?.let { if (it.startsWith("@")) it else "@$it" } ?: "@user"
+    val rawHandle = profile?.effectiveUsername?.let { if (it.startsWith("@")) it else "@$it" } ?: "@user"
     val handleText = "\u200E$rawHandle"
     val (versionName, versionCode) = rememberAppVersionText()
 
@@ -192,12 +192,23 @@ fun SettingsScreen(
                 }
                 Spacer(modifier = Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = strings.viewProfile,
-                        color = colors.primaryText,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = strings.viewProfile,
+                            color = colors.primaryText,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (profile?.isVerified == true) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_verified_badge),
+                                contentDescription = "Verified",
+                                tint = colors.primaryBlue,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = handleText,
@@ -575,185 +586,6 @@ fun AppInfoScreen(
                         .scale(scaleX = if (strings.isRtl) -1f else 1f, scaleY = 1f)
                 )
             }
-        }
-    }
-}
-
-/**
- * S10 Sub-page: Profile Edit Screen ("View profile").
- * Allows editing display_name, @handle, and picking a new avatar uploaded to Supabase Storage.
- */
-@Composable
-fun ProfileEditScreen(
-    profile: UserProfile?,
-    onSaveProfile: (displayName: String, handle: String) -> Unit,
-    onPickAvatarClick: () -> Unit,
-    onBackClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val colors = BuildXTheme.colors
-    val strings = BuildXTheme.strings
-    var displayName by remember(profile?.displayName) {
-        mutableStateOf(profile?.displayName ?: "")
-    }
-    var handle by remember(profile?.handle) {
-        mutableStateOf(profile?.handle ?: "")
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(colors.surfaceMuted)
-            .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            HeaderCircleButton(
-                iconRes = R.drawable.ic_back,
-                contentDescription = "Back",
-                onClick = onBackClick
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                text = strings.profileTitle,
-                color = colors.primaryText,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Avatar circle
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(84.dp)
-                    .clip(CircleShape)
-                    .background(colors.cardBackground)
-                    .clickable(onClick = onPickAvatarClick),
-                contentAlignment = Alignment.Center
-            ) {
-                if (!profile?.avatarUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = profile?.avatarUrl,
-                        contentDescription = strings.profileTitle,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_user),
-                        contentDescription = null,
-                        tint = colors.secondaryText,
-                        modifier = Modifier.size(36.dp)
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = strings.changePhoto,
-                color = colors.primaryBlue,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.clickable(onClick = onPickAvatarClick)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        GroupedCard(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = 14.dp)
-            ) {
-                Text(
-                    text = strings.displayNameLabel,
-                    color = colors.secondaryText,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                BasicTextField(
-                    value = displayName,
-                    onValueChange = { displayName = it },
-                    singleLine = true,
-                    textStyle = TextStyle(
-                        color = colors.primaryText,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium
-                    ),
-                    cursorBrush = SolidColor(colors.primaryBlue),
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-            HorizontalDivider(
-                modifier = Modifier.padding(horizontal = 18.dp),
-                thickness = 1.dp,
-                color = colors.hairlineBorder
-            )
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = 14.dp)
-            ) {
-                Text(
-                    text = strings.handleLabel,
-                    color = colors.secondaryText,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                BasicTextField(
-                    value = handle,
-                    onValueChange = { handle = it.removePrefix("@") },
-                    singleLine = true,
-                    textStyle = TextStyle(
-                        color = colors.primaryText,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium
-                    ),
-                    cursorBrush = SolidColor(colors.primaryBlue),
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .height(48.dp)
-                .clip(RoundedCornerShape(999.dp))
-                .background(colors.primaryBlue)
-                .clickable {
-                    if (displayName.isNotBlank() && handle.isNotBlank()) {
-                        onSaveProfile(displayName.trim(), handle.trim())
-                    }
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = strings.saveChanges,
-                color = colors.onPrimaryBlue,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold
-            )
         }
     }
 }
