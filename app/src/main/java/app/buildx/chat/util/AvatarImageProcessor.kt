@@ -6,21 +6,23 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 
 /**
  * Avatar image processing:
- * - Decodes with subsampling to prevent OOM on 12MP+ photos
- * - Honors EXIF orientation (rotation & flips)
+ * - Single-read raw bytes to prevent exhausted stream / double read bugs
+ * - Decodes software ARGB_8888 bitmap with subsampling (longest edge <= 1440)
+ * - Honors EXIF orientation (rotation & flips) via ByteArrayInputStream
  * - Crops square and scales to 512x512
- * - Compresses to JPEG (~85 quality, stripped metadata, <300 KB)
+ * - Compresses to JPEG (88% quality, <300 KB)
  */
 object AvatarImageProcessor {
 
     private const val DEFAULT_TARGET_SIZE = 512
-    private const val DEFAULT_JPEG_QUALITY = 85
+    private const val DEFAULT_JPEG_QUALITY = 88
     private const val MAX_FILE_SIZE_BYTES = 300 * 1024 // 300 KB
 
     /**
@@ -39,12 +41,12 @@ object AvatarImageProcessor {
     }
 
     /**
-     * Read EXIF orientation matrix from Uri stream.
+     * Read EXIF orientation matrix from raw bytes.
      */
-    fun getExifOrientationMatrix(context: Context, uri: Uri): Matrix {
+    fun getExifOrientationMatrix(bytes: ByteArray): Matrix {
         val matrix = Matrix()
         try {
-            context.contentResolver.openInputStream(uri)?.use { stream ->
+            ByteArrayInputStream(bytes).use { stream ->
                 val exif = ExifInterface(stream)
                 when (exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) {
                     ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
@@ -69,41 +71,59 @@ object AvatarImageProcessor {
     }
 
     /**
-     * Decode photo with subsampling and orientation applied.
-     * Prevents OOM by keeping max dimension <= maxDimension (default 1920).
+     * Read EXIF orientation matrix from Uri stream (reads stream once into bytes).
+     */
+    fun getExifOrientationMatrix(context: Context, uri: Uri): Matrix {
+        val bytes = try {
+            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        } catch (_: Throwable) {
+            null
+        } ?: return Matrix()
+        return getExifOrientationMatrix(bytes)
+    }
+
+    /**
+     * Decode photo safely from in-memory ByteArray into software ARGB_8888 Bitmap:
+     * 1. Measures bounds using inJustDecodeBounds = true
+     * 2. Computes inSampleSize so longest edge <= maxDimension (default 1440)
+     * 3. Decodes into software ARGB_8888 bitmap with inMutable = true
+     * 4. Applies EXIF orientation Matrix so the bitmap is upright
      */
     fun decodeSubsampledBitmap(
-        context: Context,
-        uri: Uri,
-        maxDimension: Int = 1920
+        rawBytes: ByteArray,
+        maxDimension: Int = 1440
     ): Bitmap? {
         try {
+            if (rawBytes.isEmpty()) return null
+
             // 1. Measure dimensions
-            val options = BitmapFactory.Options().apply {
+            val boundsOptions = BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
             }
-            context.contentResolver.openInputStream(uri)?.use { stream ->
-                BitmapFactory.decodeStream(stream, null, options)
-            } ?: return null
+            BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, boundsOptions)
 
-            val origWidth = options.outWidth
-            val origHeight = options.outHeight
+            val origWidth = boundsOptions.outWidth
+            val origHeight = boundsOptions.outHeight
             if (origWidth <= 0 || origHeight <= 0) return null
 
-            // 2. Compute sample size
-            val sampleSize = calculateInSampleSize(origWidth, origHeight, maxDimension, maxDimension)
+            // 2. Compute sample size so longest edge <= maxDimension
+            val maxEdge = maxOf(origWidth, origHeight)
+            var sampleSize = 1
+            while (maxEdge / (sampleSize * 2) >= maxDimension) {
+                sampleSize *= 2
+            }
 
-            // 3. Decode bitmap
+            // 3. Decode software ARGB_8888 bitmap
             val decodeOptions = BitmapFactory.Options().apply {
                 inSampleSize = sampleSize
                 inPreferredConfig = Bitmap.Config.ARGB_8888
+                inMutable = true
             }
-            val decoded = context.contentResolver.openInputStream(uri)?.use { stream ->
-                BitmapFactory.decodeStream(stream, null, decodeOptions)
-            } ?: return null
+            val decoded = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, decodeOptions)
+                ?: return null
 
             // 4. Apply EXIF orientation
-            val matrix = getExifOrientationMatrix(context, uri)
+            val matrix = getExifOrientationMatrix(rawBytes)
             return if (!matrix.isIdentity) {
                 val oriented = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
                 if (oriented != decoded) {
@@ -119,7 +139,24 @@ object AvatarImageProcessor {
     }
 
     /**
-     * Crop given square region and scale to 512x512 JPEG (~85 quality, stripped metadata, <300 KB).
+     * Decode photo from Uri: reads stream once into ByteArray, then decodes safely.
+     */
+    fun decodeSubsampledBitmap(
+        context: Context,
+        uri: Uri,
+        maxDimension: Int = 1440
+    ): Bitmap? {
+        val rawBytes = try {
+            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        } catch (_: Throwable) {
+            null
+        } ?: return null
+        return decodeSubsampledBitmap(rawBytes, maxDimension)
+    }
+
+    /**
+     * Crop given square region and scale to 512x512 JPEG (88% quality, <300 KB).
+     * Strictly coerces bounds to prevent IllegalArgumentException: x + width must be <= bitmap.width().
      */
     fun cropAndCompressAvatar(
         source: Bitmap,
@@ -151,7 +188,7 @@ object AvatarImageProcessor {
 
         if (bytes.size > MAX_FILE_SIZE_BYTES) {
             val fallbackStream = ByteArrayOutputStream()
-            scaled.compress(Bitmap.CompressFormat.JPEG, 75, fallbackStream)
+            scaled.compress(Bitmap.CompressFormat.JPEG, 78, fallbackStream)
             bytes = fallbackStream.toByteArray()
         }
 
@@ -163,7 +200,7 @@ object AvatarImageProcessor {
     }
 
     /**
-     * Center crop and compress from URI directly.
+     * Center crop and compress from URI directly (reads stream once into bytes).
      */
     fun centerCropAndCompress(
         context: Context,

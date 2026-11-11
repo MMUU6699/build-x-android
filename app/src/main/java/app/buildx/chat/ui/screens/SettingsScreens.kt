@@ -118,6 +118,7 @@ fun SettingsScreen(
     language: AppLanguage = AppLanguage.SYSTEM,
     onAppLanguageClick: () -> Unit = {},
     onRequestVerificationClick: () -> Unit = {},
+    onBlockedAccountsClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
@@ -277,6 +278,12 @@ fun SettingsScreen(
                 iconRes = R.drawable.ic_shield,
                 title = strings.dataAndPrivacy,
                 onClick = onDataPrivacyClick,
+                showDivider = true
+            )
+            SettingsRow(
+                iconRes = R.drawable.ic_user_x,
+                title = stringResource(R.string.pv2_blocked_accounts),
+                onClick = onBlockedAccountsClick,
                 showDivider = true
             )
             SettingsRow(

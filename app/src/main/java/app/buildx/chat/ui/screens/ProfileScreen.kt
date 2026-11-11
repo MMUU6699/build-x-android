@@ -4,6 +4,10 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -24,71 +28,90 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.buildx.chat.R
+import app.buildx.chat.data.model.AccountInfo
 import app.buildx.chat.data.model.PublicNote
 import app.buildx.chat.data.model.PublicProfile
+import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.data.model.UserProfile
-import app.buildx.chat.ui.components.ActionCapsule
 import app.buildx.chat.ui.components.HeaderCircleButton
-import app.buildx.chat.ui.components.NameWithBadge
 import app.buildx.chat.ui.components.VerifiedBadge
 import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.theme.BuildXTheme
-import app.buildx.chat.ui.theme.isRtlText
 import app.buildx.chat.ui.theme.softShadow
 import coil.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.Locale
+import java.util.regex.Pattern
 
 /**
- * P1 (Own Profile) & P2 (Other User Profile) Screen.
- * Layout adheres strictly to reference screenshots:
- * - Top header: Back arrow, pencil edit icon (own) or bell icon (other), share button
- * - Main row: Display name, @username with blue verified badge (16dp), Following and Followers stats
- * - Top right: 84dp Avatar with floating Public Note speech bubble and optional "+" badge
- * - Multiline bio with auto-linked URLs
- * - Action button (Follow / Follow back / Following with Unfollow popup)
- * - Review username banner (for own profile if username_reviewed_at is null)
- * - Media / Content section placeholder
+ * Format numbers cleanly:
+ * 7_600_000 -> "7.6M" (never "7.6MM")
+ * 10_500 -> "10.5K"
+ * 450 -> "450"
+ */
+fun formatNumber(count: Int): String {
+    if (count < 1000) return count.toString()
+    if (count < 1_000_000) {
+        val thousands = count / 1000.0
+        val formatted = String.format(Locale.US, "%.1f", thousands)
+        return if (formatted.endsWith(".0")) "${thousands.toInt()}K" else "${formatted}K"
+    }
+    val millions = count / 1_000_000.0
+    val formatted = String.format(Locale.US, "%.1f", millions)
+    return if (formatted.endsWith(".0")) "${millions.toInt()}M" else "${formatted}M"
+}
+
+/**
+ * Redesigned ProfileScreen matching Build X design philosophy:
+ * - Clean top header bar with handle and VerifiedBadge (only in top bar)
+ * - Profile identity row: Avatar (86dp) + floating note thought-bubble with 2 tail dots + bottom-end + badge
+ * - Name + 3 side-by-side stats (posts, followers, following)
+ * - Bio with highlighted clickable links (no "Joined ..." row)
+ * - Two equal-width action buttons: Edit profile | Share profile (Own) or Follow | Message (Other)
+ * - Content tab bar with 3x3 grid icon and active underline
+ * - Matching empty states for Own and Other profiles
  */
 @Composable
 fun ProfileScreen(
@@ -107,74 +130,98 @@ fun ProfileScreen(
     onFollowersListClick: (String, Int) -> Unit,
     onRetry: () -> Unit,
     isSubscribedToNotes: Boolean = publicProfile?.noteSubscribed == true,
-    onToggleNotification: (String) -> Unit = {}
+    onToggleNotification: (String) -> Unit = {},
+    isFollowPending: Boolean = false,
+    isProfileUnavailable: Boolean = false,
+    accountInfo: AccountInfo? = null,
+    isAccountInfoLoading: Boolean = false,
+    accountInfoError: String? = null,
+    isSubmittingReport: Boolean = false,
+    reportError: String? = null,
+    isBlocking: Boolean = false,
+    onLoadAccountInfo: (String) -> Unit = {},
+    onSubmitReport: (String, ReportReason, String?) -> Unit = { _, _, _ -> },
+    onBlockUser: (String) -> Unit = {},
+    onUnblockUser: (String) -> Unit = {},
+    onShareProfile: (String) -> Unit = {},
+    onCopyLink: (String) -> Unit = {},
+    onOpenSettings: () -> Unit = {},
+    onOpenVerification: () -> Unit = {},
+    onOpenBlockedAccounts: () -> Unit = {},
+    onMessageClick: () -> Unit = {},
+    onAvatarPicked: ((ByteArray, Uri?) -> Unit)? = null,
+    postsCount: Int = 0
 ) {
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     val isOwnProfile = remember(currentProfile, targetUsername) {
-        targetUsername == null || 
-        targetUsername.equals(currentProfile?.username, ignoreCase = true) ||
-        targetUsername.equals(currentProfile?.handle, ignoreCase = true)
+        targetUsername == null ||
+            targetUsername.equals(currentProfile?.username, ignoreCase = true) ||
+            targetUsername.equals(currentProfile?.handle, ignoreCase = true)
     }
 
-    var showUnfollowDialog by remember { mutableStateOf(false) }
-
-    // Resolve profile details
     val displayName = if (isOwnProfile) {
         currentProfile?.displayName ?: "User"
     } else {
         publicProfile?.displayName ?: targetUsername ?: "User"
     }
-
     val username = if (isOwnProfile) {
         currentProfile?.effectiveUsername ?: "user"
     } else {
         publicProfile?.username ?: targetUsername ?: "user"
     }
+    val cleanHandle = username.removePrefix("@")
 
-    val bioText = if (isOwnProfile) {
-        currentProfile?.bio
-    } else {
-        publicProfile?.bio
-    }
-
-    val avatarUrl = if (isOwnProfile) {
-        currentProfile?.avatarUrl
-    } else {
-        publicProfile?.avatarUrl
-    }
-
+    val bioText = if (isOwnProfile) currentProfile?.bio else publicProfile?.bio
+    val avatarUrl = if (isOwnProfile) currentProfile?.avatarUrl else publicProfile?.avatarUrl
     val isVerified = if (isOwnProfile) {
         currentProfile?.isVerified == true
     } else {
         publicProfile?.isVerified == true
     }
-
     val followingCount = if (isOwnProfile) {
         currentProfile?.followingCount ?: 0
     } else {
         publicProfile?.followingCount ?: 0
     }
-
     val followersCount = if (isOwnProfile) {
         currentProfile?.followersCount ?: 0
     } else {
         publicProfile?.followersCount ?: 0
     }
-
-    val currentNote = if (isOwnProfile) {
-        activeNote
-    } else {
-        publicProfile?.activeNote
-    }
+    val currentNote = if (isOwnProfile) activeNote else publicProfile?.activeNote
 
     val isFollowing = publicProfile?.isFollowing == true
     val followsYou = publicProfile?.followsYou == true
+    val blockedByMe = !isOwnProfile && publicProfile?.blockedByMe == true
+    val targetId = if (isOwnProfile) currentProfile?.id else publicProfile?.id
 
-    val isNameRtl = remember(displayName, strings.isRtl) {
-        isRtlText(displayName, defaultRtl = strings.isRtl)
+    var showMenu by remember { mutableStateOf(false) }
+    var showUnfollowPopup by remember { mutableStateOf(false) }
+    var showBlockDialog by remember { mutableStateOf(false) }
+    var showReportSheet by remember { mutableStateOf(false) }
+    var showAboutSheet by remember { mutableStateOf(false) }
+
+    // In-app Avatar picker for Own Profile
+    var profileCropBytes by remember { mutableStateOf<ByteArray?>(null) }
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch(Dispatchers.IO) {
+                val bytes = runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                }.getOrNull()
+                withContext(Dispatchers.Main) {
+                    if (bytes != null && bytes.isNotEmpty()) {
+                        profileCropBytes = bytes
+                    }
+                }
+            }
+        }
     }
 
     Box(
@@ -184,617 +231,942 @@ fun ProfileScreen(
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = 24.dp)
-        ) {
-            // Header Bar: Back, Action Capsule (Edit/Bell + Share)
+        Column(modifier = Modifier.fillMaxSize()) {
+            // ---------------- Top Header Bar ----------------
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .padding(horizontal = 18.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                HeaderCircleButton(
-                    iconRes = R.drawable.ic_back,
-                    contentDescription = strings.cancelButton,
-                    onClick = onBackClick
-                )
-
-                // Unified Action Capsule token (using shared ActionCapsule from BuildXComponents.kt)
-                ActionCapsule(
-                    primaryIconRes = if (isOwnProfile) {
-                        R.drawable.ic_pencil_edit
-                    } else if (isSubscribedToNotes) {
-                        R.drawable.ic_bell_filled
-                    } else {
-                        R.drawable.ic_bell
-                    },
-                    primaryContentDescription = if (isOwnProfile) {
-                        strings.editProfileTitle
-                    } else if (isSubscribedToNotes) {
-                        if (strings.isRtl) "كتم الإشعارات" else "Mute notifications"
-                    } else {
-                        strings.notificationsTitle
-                    },
-                    onPrimaryClick = {
-                        if (isOwnProfile) {
-                            onEditProfileClick()
-                        } else {
-                            val targetId = publicProfile?.id
-                            if (!targetId.isNullOrBlank()) {
-                                onToggleNotification(targetId)
-                            }
-                        }
-                    },
-                    secondaryIconRes = R.drawable.ic_share,
-                    secondaryContentDescription = strings.shareButton,
-                    onSecondaryClick = {
-                        val shareText = String.format(strings.shareProfileText, username, username)
-                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, shareText)
-                        }
-                        context.startActivity(Intent.createChooser(shareIntent, strings.shareButton))
-                    }
-                )
-            }
-
-            if (isLoading) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(280.dp),
-                    contentAlignment = Alignment.Center
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    CircularProgressIndicator(
-                        color = colors.primaryBlue,
-                        strokeWidth = 3.dp,
-                        modifier = Modifier.size(36.dp)
+                    HeaderCircleButton(
+                        iconRes = R.drawable.ic_back,
+                        contentDescription = stringResource(R.string.pv2_back),
+                        onClick = onBackClick
                     )
-                }
-            } else if (errorMessage != null && !isOwnProfile && publicProfile == null) {
-                // User not found / error state
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 32.dp, vertical = 64.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_user),
-                        contentDescription = strings.userNotFoundTitle,
-                        tint = colors.secondaryText,
-                        modifier = Modifier.size(64.dp)
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = strings.userNotFoundTitle,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.primaryText,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = strings.userNotFoundSubtitle,
-                        fontSize = 14.sp,
-                        color = colors.secondaryText,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(20.dp))
-                    TextButton(onClick = onRetry) {
-                        Text(
-                            text = strings.retryButton,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = colors.primaryBlue
-                        )
-                    }
-                }
-            } else {
-                // Main Profile Info Block
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        // Left block (Right in RTL): Name, @username + verified, Following & Followers
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 12.dp)
-                        ) {
-                            // Display Name with inline VerifiedBadge (never ellipsized, wraps with last word)
-                            CompositionLocalProvider(
-                                LocalLayoutDirection provides if (isNameRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
-                            ) {
-                                NameWithBadge(
-                                    name = displayName,
-                                    isVerified = isVerified,
-                                    badgeSize = 20.dp,
-                                    badgeSpacing = 6.dp,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = colors.primaryText,
-                                    badgeContentDescription = strings.verifiedAccountDescription
-                                )
-                            }
 
-                            Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.width(12.dp))
 
-                            // @username row (verified badge removed per Deliverable 1)
-                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                                Text(
-                                    text = "@$username",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = colors.secondaryText,
-                                    style = TextStyle(
-                                        textDirection = TextDirection.Ltr
-                                    )
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(14.dp))
-
-                            // Stats: Following and Followers
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(20.dp)
-                            ) {
-                                Column(
-                                    modifier = Modifier.clickable {
-                                        val targetId = if (isOwnProfile) currentProfile?.id else publicProfile?.id
-                                        if (targetId != null) onFollowersListClick(targetId, 0)
-                                    }
-                                ) {
-                                    Text(
-                                        text = formatNumber(followingCount),
-                                        fontSize = 17.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = colors.primaryText
-                                    )
-                                    Text(
-                                        text = strings.followingLabel,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = colors.secondaryText
-                                    )
-                                }
-
-                                Column(
-                                    modifier = Modifier.clickable {
-                                        val targetId = if (isOwnProfile) currentProfile?.id else publicProfile?.id
-                                        if (targetId != null) onFollowersListClick(targetId, 1)
-                                    }
-                                ) {
-                                    Text(
-                                        text = formatNumber(followersCount),
-                                        fontSize = 17.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = colors.primaryText
-                                    )
-                                    Text(
-                                        text = strings.followersLabel,
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = colors.secondaryText
-                                    )
-                                }
-                            }
-                        }
-
-                        // Right block (Left in RTL): 84dp Avatar with Public Note bubble
-                        Box(
-                            contentAlignment = Alignment.TopCenter,
-                            modifier = Modifier.padding(top = 8.dp)
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                // Floating Public Note speech bubble (if active) or prompt (if own profile)
-                                if (currentNote != null && currentNote.content.isNotBlank()) {
-                                    NoteBubble(
-                                        content = currentNote.content,
-                                        onClick = {
-                                            if (isOwnProfile) onOpenNoteSheet()
-                                        }
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                } else if (isOwnProfile) {
-                                    NotePromptBubble(
-                                        prompt = strings.spillTheTeaPrompt,
-                                        onClick = onOpenNoteSheet
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                }
-
-                                // 84dp Circular Avatar
-                                Box(
-                                    contentAlignment = Alignment.BottomEnd,
-                                    modifier = Modifier.size(84.dp)
-                                ) {
-                                    if (!avatarUrl.isNullOrBlank()) {
-                                        AsyncImage(
-                                            model = avatarUrl,
-                                            contentDescription = displayName,
-                                            modifier = Modifier
-                                                .size(84.dp)
-                                                .clip(CircleShape)
-                                                .border(2.dp, colors.pageBackground, CircleShape),
-                                            contentScale = ContentScale.Crop
-                                        )
-                                    } else {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(84.dp)
-                                                .clip(CircleShape)
-                                                .background(colors.surfaceMuted),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                painter = painterResource(id = R.drawable.ic_user),
-                                                contentDescription = displayName,
-                                                tint = colors.secondaryText,
-                                                modifier = Modifier.size(44.dp)
-                                            )
-                                        }
-                                    }
-
-                                    // Plus button for own profile if no note exists
-                                    if (isOwnProfile && currentNote == null) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(26.dp)
-                                                .clip(CircleShape)
-                                                .background(colors.primaryBlue)
-                                                .border(2.dp, colors.pageBackground, CircleShape)
-                                                .pressScaleClickable { onOpenNoteSheet() },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                painter = painterResource(id = R.drawable.ic_plus),
-                                                contentDescription = strings.leaveANote,
-                                                tint = colors.onPrimaryBlue,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Action Button (Follow / Follow Back / Following) for Other Profile
-                    if (!isOwnProfile) {
-                        Spacer(modifier = Modifier.height(18.dp))
-                        val targetId = publicProfile?.id ?: ""
-                        if (isFollowing) {
-                            // "Following" button with dropdown caret
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(44.dp)
-                                    .clip(RoundedCornerShape(22.dp))
-                                    .background(colors.surfaceMuted)
-                                    .pressScaleClickable { showUnfollowDialog = true },
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = strings.followingStatus,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = colors.primaryText
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_caret_down),
-                                    contentDescription = null,
-                                    tint = colors.primaryText,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        } else {
-                            // "Follow" or "Follow back" CTA button
-                            val buttonText = if (followsYou) strings.followBackAction else strings.followAction
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(44.dp)
-                                    .clip(RoundedCornerShape(22.dp))
-                                    .background(colors.primaryBlue)
-                                    .pressScaleClickable { onFollowClick(targetId) },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = buttonText,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = colors.onPrimaryBlue
-                                )
-                            }
-                        }
-                    }
-
-                    // Bio Text Block
-                    if (bioText.isNullOrBlank()) {
-                        if (isOwnProfile) {
-                            Spacer(modifier = Modifier.height(14.dp))
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .pressScaleClickable { onEditProfileClick() }
-                                    .padding(vertical = 4.dp, horizontal = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_pencil_edit),
-                                    contentDescription = null,
-                                    tint = colors.primaryBlue,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = stringResource(id = R.string.profile_add_bio),
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = colors.primaryBlue
-                                )
-                            }
-                        }
-                    } else {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        val isBioRtl = isRtlText(bioText, defaultRtl = strings.isRtl)
-                        val annotatedBio = remember(bioText, colors.primaryBlue) {
-                            buildAnnotatedString {
-                                var lastIndex = 0
-                                val urlRegex = Regex("(https?://[\\w\\d:#@%/;$()~_?\\+-=\\\\.&]+)")
-                                val matches = urlRegex.findAll(bioText)
-                                for (match in matches) {
-                                    append(bioText.substring(lastIndex, match.range.first))
-                                    val url = match.value
-                                    val link = LinkAnnotation.Url(
-                                        url = url,
-                                        styles = TextLinkStyles(
-                                            style = SpanStyle(
-                                                color = colors.primaryBlue,
-                                                textDecoration = TextDecoration.Underline
-                                            )
-                                        )
-                                    )
-                                    pushLink(link)
-                                    append(url)
-                                    pop()
-                                    lastIndex = match.range.last + 1
-                                }
-                                if (lastIndex < bioText.length) {
-                                    append(bioText.substring(lastIndex))
-                                }
-                            }
-                        }
-                        CompositionLocalProvider(
-                            LocalLayoutDirection provides if (isBioRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = annotatedBio,
-                                fontSize = 14.5.sp,
+                                text = if (isOwnProfile) "@$cleanHandle" else cleanHandle,
                                 color = colors.primaryText,
-                                lineHeight = 21.sp,
-                                style = androidx.compose.ui.text.TextStyle(
-                                    textDirection = if (isBioRtl) TextDirection.Rtl else TextDirection.Ltr
+                                fontSize = 19.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (isVerified) {
+                                Spacer(modifier = Modifier.width(5.dp))
+                                VerifiedBadge(
+                                    size = 16.dp,
+                                    contentDescription = stringResource(R.string.profile_verified_account)
                                 )
+                            }
+                        }
+                    }
+                }
+
+                Box {
+                    if (isOwnProfile) {
+                        HeaderCircleButton(
+                            iconRes = R.drawable.ic_menu,
+                            contentDescription = stringResource(R.string.settings_title),
+                            onClick = onOpenSettings
+                        )
+                    } else {
+                        HeaderCircleButton(
+                            iconRes = R.drawable.ic_more_horizontal,
+                            contentDescription = stringResource(R.string.pv2_more_options),
+                            onClick = { showMenu = true }
+                        )
+                    }
+
+                    // Anchored dropdown menu for Other Profile
+                    if (!isOwnProfile && showMenu) {
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false },
+                            modifier = Modifier
+                                .background(colors.cardBackground)
+                                .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(12.dp))
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = stringResource(R.string.profile_share_profile),
+                                        fontSize = 14.sp,
+                                        color = colors.primaryText
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    onShareProfile(username)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = stringResource(R.string.profile_copy_username),
+                                        fontSize = 14.sp,
+                                        color = colors.primaryText
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("username", "@$cleanHandle"))
+                                    onCopyLink(cleanHandle)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = stringResource(R.string.pv2_report),
+                                        fontSize = 14.sp,
+                                        color = colors.primaryText
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    showReportSheet = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = stringResource(R.string.pv2_block),
+                                        fontSize = 14.sp,
+                                        color = Color(0xFFE53935)
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    showBlockDialog = true
+                                }
                             )
                         }
                     }
+                }
+            }
 
-                    // Review Username Card (For own profile when username_reviewed_at is null)
-                    if (isOwnProfile && currentProfile?.usernameReviewedAt == null) {
+            val showUnavailable = !isOwnProfile && isProfileUnavailable
+            val showError = !isOwnProfile && !isProfileUnavailable && publicProfile == null && errorMessage != null
+
+            when {
+                isLoading -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(280.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = colors.primaryBlue,
+                            strokeWidth = 3.dp,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    }
+                }
+
+                showUnavailable || showError -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 32.dp, vertical = 64.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_user),
+                            contentDescription = stringResource(R.string.profile_user_not_found_title),
+                            tint = colors.secondaryText,
+                            modifier = Modifier.size(64.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = stringResource(R.string.profile_user_not_found_title),
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.primaryText,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = errorMessage ?: stringResource(R.string.profile_user_not_found_subtitle),
+                            fontSize = 14.sp,
+                            color = colors.secondaryText,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+
+                blockedByMe -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 32.dp, vertical = 64.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_block),
+                            contentDescription = stringResource(R.string.pv2_blocked_by_me_title),
+                            tint = colors.secondaryText,
+                            modifier = Modifier.size(56.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = stringResource(R.string.pv2_blocked_by_me_title),
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.primaryText,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = stringResource(R.string.pv2_blocked_by_me_subtitle),
+                            fontSize = 14.sp,
+                            color = colors.secondaryText,
+                            textAlign = TextAlign.Center
+                        )
                         Spacer(modifier = Modifier.height(20.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(colors.surfaceMuted)
+                                .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(12.dp))
+                                .clickable { targetId?.let(onUnblockUser) }
+                                .padding(horizontal = 20.dp, vertical = 10.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.pv2_unblock),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = colors.primaryText
+                            )
+                        }
+                    }
+                }
+
+                else -> Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(bottom = 32.dp)
+                ) {
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // ---------------- Profile Identity Row ----------------
+                    // Avatar + Floating Note Thought-Bubble on Start | Name + Stats on End
+                    val hasNoteBubble = (currentNote != null && currentNote.content.isNotBlank()) || isOwnProfile
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Start: Avatar Box + Floating Thought-Bubble + + Badge
+                        Box(
+                            modifier = Modifier.width(100.dp),
+                            contentAlignment = Alignment.TopCenter
+                        ) {
+                            // Avatar Circle (86.dp) with + badge anchor
+                            Box(
+                                modifier = Modifier
+                                    .padding(top = if (hasNoteBubble) 18.dp else 0.dp)
+                                    .size(86.dp)
+                            ) {
+                                ProfileAvatar(
+                                    avatarUrl = avatarUrl,
+                                    displayName = displayName,
+                                    size = 86.dp,
+                                    onClick = {
+                                        if (isOwnProfile) {
+                                            photoPickerLauncher.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                            )
+                                        }
+                                    }
+                                )
+
+                                // Bottom-End + Badge on Own Profile
+                                if (isOwnProfile) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .offset(x = (-2).dp, y = (-2).dp)
+                                            .size(26.dp)
+                                            .clip(CircleShape)
+                                            .background(colors.pageBackground)
+                                            .padding(2.5.dp)
+                                            .clip(CircleShape)
+                                            .background(colors.primaryText)
+                                            .clickable(onClick = onOpenNoteSheet),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.ic_plus),
+                                            contentDescription = stringResource(R.string.profile_leave_a_note),
+                                            tint = colors.pageBackground,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Floating Note Thought-Bubble (Overlapping top of avatar)
+                            if (hasNoteBubble) {
+                                ThoughtBubbleWithTail(
+                                    noteContent = currentNote?.content,
+                                    isOwnProfile = isOwnProfile,
+                                    onClick = { if (isOwnProfile) onOpenNoteSheet() },
+                                    modifier = Modifier.align(Alignment.TopCenter)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(20.dp))
+
+                        // End Column — Display Name & Stats Row
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.Start
+                        ) {
+                            Text(
+                                text = displayName,
+                                color = colors.primaryText,
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(28.dp)
+                            ) {
+                                ProfileStat(
+                                    count = postsCount,
+                                    label = stringResource(R.string.profile_posts),
+                                    onClick = {}
+                                )
+                                ProfileStat(
+                                    count = followersCount,
+                                    label = stringResource(R.string.profile_followers),
+                                    onClick = { targetId?.let { onFollowersListClick(it, 1) } }
+                                )
+                                ProfileStat(
+                                    count = followingCount,
+                                    label = stringResource(R.string.profile_following),
+                                    onClick = { targetId?.let { onFollowersListClick(it, 0) } }
+                                )
+                            }
+                        }
+                    }
+
+                    // ---------------- Bio & Clickable Links ----------------
+                    if (!bioText.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        ClickableBioText(
+                            bio = bioText,
+                            modifier = Modifier.padding(horizontal = 20.dp)
+                        )
+                    }
+
+                    // ---------------- Action Buttons Row (Two Equal-Width Buttons) ----------------
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (isOwnProfile) {
+                            // Button 1: Edit profile
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(42.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(colors.surfaceMuted)
+                                    .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(14.dp))
+                                    .pressScaleClickable(onClick = onEditProfileClick),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.profile_edit),
+                                    fontSize = 14.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = colors.primaryText
+                                )
+                            }
+
+                            // Button 2: Share profile
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(42.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(colors.surfaceMuted)
+                                    .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(14.dp))
+                                    .pressScaleClickable(onClick = { onShareProfile(username) }),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.profile_share_profile),
+                                    fontSize = 14.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = colors.primaryText
+                                )
+                            }
+                        } else {
+                            // Button 1: Follow / Follow back / Following ▾
+                            if (!isFollowing) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(42.dp)
+                                        .softShadow(
+                                            color = colors.primaryBlue.copy(alpha = 0.22f),
+                                            cornerRadius = 14.dp,
+                                            blurRadius = 8.dp,
+                                            offsetY = 2.dp
+                                        )
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(colors.primaryBlue)
+                                        .pressScaleClickable(onClick = { targetId?.let(onFollowClick) }),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = if (followsYou) stringResource(R.string.profile_follow_back) else stringResource(R.string.profile_follow),
+                                        fontSize = 14.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colors.onPrimaryBlue
+                                    )
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(42.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(colors.surfaceMuted)
+                                        .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(14.dp))
+                                        .pressScaleClickable(onClick = { showUnfollowPopup = true }),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.profile_following_status),
+                                            fontSize = 14.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = colors.primaryText
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.ic_caret_down),
+                                            contentDescription = null,
+                                            tint = colors.primaryText,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Button 2: Message
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(42.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(colors.surfaceMuted)
+                                    .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(14.dp))
+                                    .pressScaleClickable(onClick = onMessageClick),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.profile_message),
+                                    fontSize = 14.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = colors.primaryText
+                                )
+                            }
+                        }
+                    }
+
+                    // ---------------- Review Username Banner (Own Profile) ----------------
+                    if (isOwnProfile && currentProfile?.usernameReviewedAt == null) {
+                        Spacer(modifier = Modifier.height(16.dp))
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .padding(horizontal = 20.dp)
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(colors.surfaceMuted)
+                                .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
                                 .padding(16.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = strings.usernameReviewBannerTitle,
+                                    text = stringResource(R.string.profile_username_review_title),
+                                    color = colors.primaryText,
                                     fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = colors.primaryText
+                                    fontWeight = FontWeight.Bold
                                 )
                                 Spacer(modifier = Modifier.height(3.dp))
                                 Text(
-                                    text = strings.usernameReviewBannerSubtitle,
-                                    fontSize = 13.sp,
-                                    color = colors.secondaryText
+                                    text = stringResource(R.string.profile_username_review_subtitle),
+                                    color = colors.secondaryText,
+                                    fontSize = 13.sp
                                 )
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Box(
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(16.dp))
+                                    .clip(RoundedCornerShape(12.dp))
                                     .background(colors.primaryBlue)
-                                    .pressScaleClickable { onReviewUsernameClick() }
+                                    .pressScaleClickable(onClick = onReviewUsernameClick)
                                     .padding(horizontal = 14.dp, vertical = 8.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = strings.reviewButton,
+                                    text = stringResource(R.string.profile_review),
+                                    color = colors.onPrimaryBlue,
                                     fontSize = 13.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = colors.onPrimaryBlue
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(28.dp))
-                    HorizontalDivider(color = colors.hairlineBorder)
-                    Spacer(modifier = Modifier.height(36.dp))
+                    // ---------------- Content Tab Bar (3x3 Grid Tab + Active Indicator) ----------------
+                    Spacer(modifier = Modifier.height(16.dp))
 
-                    // Media Grid Section Placeholder
                     Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp)
                     ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_image),
-                            contentDescription = strings.noMediaTitle,
-                            tint = colors.secondaryText.copy(alpha = 0.5f),
-                            modifier = Modifier.size(54.dp)
+                        // 3x3 Grid Tab (120dp wide on start side)
+                        Box(
+                            modifier = Modifier
+                                .width(120.dp)
+                                .height(40.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_apps_grid),
+                                    contentDescription = stringResource(R.string.profile_posts),
+                                    tint = colors.primaryText,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .width(64.dp)
+                                        .height(2.dp)
+                                        .background(colors.primaryText)
+                                )
+                            }
+                        }
+
+                        // Full-width hairline divider
+                        HorizontalDivider(
+                            modifier = Modifier.fillMaxWidth(),
+                            thickness = 1.dp,
+                            color = colors.hairlineBorder
                         )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = strings.noMediaTitle,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = colors.secondaryText
-                        )
+                    }
+
+                    // ---------------- Content Area Below Divider ----------------
+                    if (postsCount > 0) {
+                        // Placeholder for 3-column media grid
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(200.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = stringResource(R.string.profile_no_media),
+                                color = colors.secondaryText,
+                                fontSize = 14.sp
+                            )
+                        }
+                    } else {
+                        // Clean Empty States matching Target UI
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 56.dp, horizontal = 32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isOwnProfile) {
+                                // Own Profile Empty State
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.profile_create_first_post_title),
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colors.primaryText,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = stringResource(R.string.profile_create_first_post_subtitle),
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = colors.secondaryText,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Spacer(modifier = Modifier.height(20.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(colors.primaryBlue)
+                                            .pressScaleClickable(onClick = onOpenNoteSheet)
+                                            .padding(horizontal = 24.dp, vertical = 11.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.profile_create_action),
+                                            fontSize = 14.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = colors.onPrimaryBlue
+                                        )
+                                    }
+                                }
+                            } else {
+                                // Other Profile Empty State
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(68.dp)
+                                            .border(1.5.dp, colors.primaryText.copy(alpha = 0.75f), CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.ic_camera),
+                                            contentDescription = null,
+                                            tint = colors.primaryText.copy(alpha = 0.85f),
+                                            modifier = Modifier.size(30.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = stringResource(R.string.profile_no_posts_yet),
+                                        fontSize = 19.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colors.primaryText,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+
+        // Image Crop Screen Overlay (when avatar is picked from ProfileScreen)
+        AnimatedVisibility(
+            visible = profileCropBytes != null,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            val cropBytes = profileCropBytes
+            if (cropBytes != null) {
+                ImageCropScreen(
+                    imageBytes = cropBytes,
+                    onCropDone = { jpegBytes, cacheUri ->
+                        profileCropBytes = null
+                        onAvatarPicked?.invoke(jpegBytes, cacheUri)
+                    },
+                    onCancel = {
+                        profileCropBytes = null
+                    }
+                )
+            }
+        }
     }
 
-    // Unfollow Confirmation Dialog
-    if (showUnfollowDialog) {
-        AlertDialog(
-            onDismissRequest = { showUnfollowDialog = false },
-            title = {
-                Text(
-                    text = String.format(strings.unfollowConfirmation, username),
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = colors.primaryText
-                )
+    // Unfollow Confirmation Popup
+    if (showUnfollowPopup && targetId != null) {
+        UnfollowPopup(
+            username = username,
+            onUnfollow = { onFollowingClick(targetId) },
+            onDismiss = { showUnfollowPopup = false }
+        )
+    }
+
+    // Block Confirmation Dialog
+    if (showBlockDialog && targetId != null) {
+        BlockAccountDialog(
+            username = username,
+            isBlocking = isBlocking,
+            onConfirm = { onBlockUser(targetId) },
+            onDismiss = { showBlockDialog = false }
+        )
+    }
+
+    // Report Sheet
+    if (showReportSheet && targetId != null) {
+        ReportAccountSheet(
+            username = username,
+            isSubmitting = isSubmittingReport,
+            errorMessage = reportError,
+            onSubmit = { reason, details ->
+                onSubmitReport(targetId, reason, details)
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showUnfollowDialog = false
-                        val targetId = publicProfile?.id ?: ""
-                        onFollowingClick(targetId)
-                    }
-                ) {
-                    Text(
-                        text = strings.unfollowAction,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.destructiveRed
-                    )
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showUnfollowDialog = false }) {
-                    Text(
-                        text = strings.cancelButton,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = colors.secondaryText
-                    )
-                }
-            },
-            containerColor = colors.cardBackground,
-            shape = RoundedCornerShape(20.dp)
+            onBlock = { onBlockUser(targetId) },
+            onDismiss = { showReportSheet = false }
+        )
+    }
+
+    // About Account Sheet
+    if (showAboutSheet && targetId != null) {
+        AboutAccountSheet(
+            accountInfo = accountInfo,
+            isLoading = isAccountInfoLoading,
+            errorMessage = accountInfoError,
+            onRetry = { onLoadAccountInfo(targetId) },
+            onDismiss = { showAboutSheet = false }
         )
     }
 }
 
 /**
- * Speech bubble displaying an active public note over the avatar.
- * Uses softShadow and whisper-soft contour border matching Rule 2.
+ * Thought-bubble card overlapping the top-start of the avatar with two tail dots.
  */
 @Composable
-private fun NoteBubble(
-    content: String,
-    onClick: () -> Unit
+private fun ThoughtBubbleWithTail(
+    noteContent: String?,
+    isOwnProfile: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
-    val strings = BuildXTheme.strings
-    val isContentRtl = isRtlText(content, defaultRtl = strings.isRtl)
-    Box(
-        modifier = Modifier
-            .softShadow(
-                color = colors.headerHaloShadowColor,
-                cornerRadius = 16.dp,
-                blurRadius = 10.dp,
-                offsetY = 2.dp
-            )
-            .clip(RoundedCornerShape(16.dp))
-            .background(colors.cardBackground)
-            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
-            .pressScaleClickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        contentAlignment = Alignment.Center
+    val hasActiveNote = !noteContent.isNullOrBlank()
+
+    Column(
+        modifier = modifier
+            .offset(y = (-18).dp)
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.Start
     ) {
-        CompositionLocalProvider(
-            LocalLayoutDirection provides if (isContentRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
-        ) {
-            Text(
-                text = content,
-                fontSize = 12.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = colors.primaryText,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                style = TextStyle(
-                    textDirection = if (isContentRtl) TextDirection.Rtl else TextDirection.Ltr
+        // Thought Bubble Card Surface
+        Box(
+            modifier = Modifier
+                .widthIn(min = 82.dp, max = 116.dp)
+                .softShadow(
+                    color = colors.headerHaloShadowColor,
+                    cornerRadius = 18.dp,
+                    blurRadius = 14.dp,
+                    offsetY = 3.dp
                 )
+                .clip(RoundedCornerShape(18.dp))
+                .background(colors.cardBackground)
+                .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(18.dp))
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            if (hasActiveNote) {
+                Text(
+                    text = noteContent!!,
+                    color = colors.primaryText,
+                    fontSize = 12.5.sp,
+                    lineHeight = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            } else {
+                Text(
+                    text = stringResource(R.string.profile_just_curious_prompt),
+                    color = colors.secondaryText,
+                    fontSize = 12.5.sp,
+                    lineHeight = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2
+                )
+            }
+        }
+
+        // Thought-Bubble Tail Dots (resting on top edge of avatar)
+        Row(
+            modifier = Modifier
+                .padding(start = 18.dp)
+                .offset(y = (-2).dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(colors.cardBackground)
+                    .border(0.6.dp, colors.subtleSurfaceBorder, CircleShape)
+            )
+            Spacer(modifier = Modifier.width(2.dp))
+            Box(
+                modifier = Modifier
+                    .offset(y = 2.dp)
+                    .size(4.5.dp)
+                    .clip(CircleShape)
+                    .background(colors.cardBackground)
+                    .border(0.6.dp, colors.subtleSurfaceBorder, CircleShape)
             )
         }
     }
 }
 
 /**
- * Prompt bubble ("Spill the tea") above avatar when no note exists.
- * Uses softShadow and whisper-soft contour border matching Rule 2.
+ * Clickable Bio Text highlighting URLs in primaryBlue with Intent.ACTION_VIEW clickability.
  */
 @Composable
-private fun NotePromptBubble(
-    prompt: String,
-    onClick: () -> Unit
+private fun ClickableBioText(
+    bio: String,
+    modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
-    Box(
-        modifier = Modifier
-            .softShadow(
-                color = colors.headerHaloShadowColor,
-                cornerRadius = 14.dp,
-                blurRadius = 8.dp,
-                offsetY = 2.dp
-            )
-            .clip(RoundedCornerShape(14.dp))
-            .background(colors.cardBackground)
-            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(14.dp))
-            .pressScaleClickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = prompt,
-            fontSize = 11.5.sp,
-            fontWeight = FontWeight.Medium,
-            color = colors.secondaryText
+    val context = LocalContext.current
+    val urlPattern = remember { Pattern.compile("https?://\\S+") }
+    val matcher = urlPattern.matcher(bio)
+
+    val annotated = buildAnnotatedString {
+        var lastIdx = 0
+        while (matcher.find()) {
+            val start = matcher.start()
+            val end = matcher.end()
+            val url = matcher.group()
+
+            if (start > lastIdx) {
+                append(bio.substring(lastIdx, start))
+            }
+
+            pushLink(LinkAnnotation.Url(url))
+            withStyle(
+                SpanStyle(
+                    color = colors.primaryBlue,
+                    fontWeight = FontWeight.SemiBold,
+                    textDecoration = TextDecoration.None
+                )
+            ) {
+                append(url)
+            }
+            pop()
+            lastIdx = end
+        }
+        if (lastIdx < bio.length) {
+            append(bio.substring(lastIdx))
+        }
+    }
+
+    Text(
+        text = annotated,
+        color = colors.primaryText,
+        fontSize = 14.5.sp,
+        lineHeight = 20.sp,
+        fontWeight = FontWeight.Normal,
+        modifier = modifier
+    )
+}
+
+/**
+ * Avatar with fallback and optional onClick.
+ */
+@Composable
+private fun ProfileAvatar(
+    avatarUrl: String?,
+    displayName: String,
+    size: androidx.compose.ui.unit.Dp,
+    onClick: (() -> Unit)? = null
+) {
+    val colors = BuildXTheme.colors
+    val mod = Modifier
+        .size(size)
+        .clip(CircleShape)
+        .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+
+    if (!avatarUrl.isNullOrBlank()) {
+        AsyncImage(
+            model = avatarUrl,
+            contentDescription = displayName,
+            contentScale = ContentScale.Crop,
+            modifier = mod.border(1.dp, colors.subtleSurfaceBorder, CircleShape)
         )
+    } else {
+        Box(
+            modifier = mod
+                .background(colors.surfaceMuted)
+                .border(1.dp, colors.subtleSurfaceBorder, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_user),
+                contentDescription = displayName,
+                tint = colors.secondaryText,
+                modifier = Modifier.size(40.dp)
+            )
+        }
     }
 }
 
-private fun formatNumber(count: Int): String = when {
-    count >= 1_000_000 -> String.format(java.util.Locale.US, "%.1f", count / 1_000_000.0).removeSuffix(".0") + "M"
-    count >= 1_000 -> String.format(java.util.Locale.US, "%.1f", count / 1_000.0).removeSuffix(".0") + "K"
-    else -> count.toString()
+/**
+ * Single Stat Column (count on top, label below).
+ */
+@Composable
+private fun ProfileStat(
+    count: Int,
+    label: String,
+    onClick: () -> Unit
+) {
+    val colors = BuildXTheme.colors
+    Column(
+        horizontalAlignment = Alignment.Start,
+        modifier = Modifier.clickable(onClick = onClick)
+    ) {
+        Text(
+            text = formatNumber(count),
+            color = colors.primaryText,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false
+        )
+        Text(
+            text = label,
+            color = colors.primaryText,
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.Normal,
+            maxLines = 1,
+            softWrap = false
+        )
+    }
 }

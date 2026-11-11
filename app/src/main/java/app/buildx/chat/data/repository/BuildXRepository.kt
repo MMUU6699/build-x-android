@@ -13,9 +13,11 @@ import android.graphics.Matrix
 import android.media.ExifInterface
 import java.io.ByteArrayOutputStream
 import app.buildx.chat.BuildConfig
+import app.buildx.chat.data.model.AccountInfo
 import app.buildx.chat.data.model.AppAppearance
 import app.buildx.chat.data.model.AppLanguage
 import app.buildx.chat.data.model.AttachmentRow
+import app.buildx.chat.data.model.BlockedUser
 import app.buildx.chat.data.model.ChatMessage
 import app.buildx.chat.data.model.ChatMode
 import app.buildx.chat.data.model.ChatSseEvent
@@ -26,6 +28,7 @@ import app.buildx.chat.data.model.PersonSearchResult
 import app.buildx.chat.data.model.PublicNote
 import app.buildx.chat.data.model.PublicProfile
 import app.buildx.chat.data.model.ReasoningStep
+import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
 import app.buildx.chat.data.model.VerificationStatusInfo
@@ -65,6 +68,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -367,12 +371,101 @@ class BuildXRepository(val context: Context) {
         }
     }
 
-    suspend fun getPublicProfile(targetUsername: String): Result<PublicProfile> = withContext(Dispatchers.IO) {
+    /**
+     * Returns the public profile, or `null` when the account does not exist or has
+     * blocked the caller. Both cases intentionally resolve to the same result so the
+     * UI never reveals that a block exists.
+     */
+    suspend fun getPublicProfile(targetUsername: String): Result<PublicProfile?> = withContext(Dispatchers.IO) {
         runCatching {
             val clean = targetUsername.trim().removePrefix("@")
             val params = buildJsonObject { put("target_username", clean) }
             val response = supabase.postgrest.rpc("get_public_profile", params)
-            response.decodeAs<PublicProfile>()
+            val element = response.decodeAs<JsonElement>()
+            if (element is JsonNull) {
+                null
+            } else {
+                json.decodeFromJsonElement(PublicProfile.serializer(), element)
+            }
+        }
+    }
+
+    suspend fun getAccountInfo(targetUserId: String): Result<AccountInfo> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject { put("target_user_id", targetUserId) }
+            val response = supabase.postgrest.rpc("get_account_info", params)
+            response.decodeAs<AccountInfo>()
+        }
+    }
+
+    suspend fun blockUser(targetUserId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject { put("target_user_id", targetUserId) }
+            val response = supabase.postgrest.rpc("block_user", params)
+            val obj = response.decodeAs<JsonObject>()
+            val error = obj["error"]?.jsonPrimitive?.contentOrNull
+            if (!error.isNullOrBlank()) throw IllegalStateException(error)
+            Unit
+        }
+    }
+
+    suspend fun unblockUser(targetUserId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject { put("target_user_id", targetUserId) }
+            val response = supabase.postgrest.rpc("unblock_user", params)
+            val obj = response.decodeAs<JsonObject>()
+            val error = obj["error"]?.jsonPrimitive?.contentOrNull
+            if (!error.isNullOrBlank()) throw IllegalStateException(error)
+            Unit
+        }
+    }
+
+    suspend fun getBlockedUsers(limit: Int = 30, offset: Int = 0): Result<List<BlockedUser>> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val params = buildJsonObject {
+                    put("p_limit", limit)
+                    put("p_offset", offset)
+                }
+                val response = supabase.postgrest.rpc("get_blocked_users", params)
+                response.decodeList<BlockedUser>()
+            }
+        }
+
+    suspend fun submitReport(
+        targetUserId: String,
+        reason: ReportReason,
+        details: String?
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_target", targetUserId)
+                put("p_reason", reason.dbValue)
+                if (details.isNullOrBlank()) put("p_details", JsonNull) else put("p_details", details.trim())
+            }
+            val response = supabase.postgrest.rpc("submit_report", params)
+            val obj = response.decodeAs<JsonObject>()
+            val error = obj["error"]?.jsonPrimitive?.contentOrNull
+            if (!error.isNullOrBlank()) throw IllegalStateException(error)
+            Unit
+        }
+    }
+
+    suspend fun updateCountry(countryCode: String?): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val uid = currentUserId() ?: error("Not authenticated")
+            val payload = buildJsonObject {
+                if (countryCode.isNullOrBlank()) {
+                    put("country_code", JsonNull)
+                } else {
+                    put("country_code", countryCode.trim().uppercase())
+                }
+                put("updated_at", Instant.now().toString())
+            }
+            supabase.from("profiles").update(payload) {
+                filter { eq("id", uid) }
+            }
+            Unit
         }
     }
 
@@ -496,6 +589,20 @@ class BuildXRepository(val context: Context) {
 
     suspend fun deleteAccount(): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
+            val uid = currentUserId() ?: error("Not authenticated")
+            // Remove real storage objects first: the SQL RPC only deletes metadata rows,
+            // and the bucket policies require the owner session that still exists here.
+            for (bucketName in listOf("avatars", "attachments")) {
+                runCatching {
+                    val bucket = supabase.storage.from(bucketName)
+                    val files = bucket.list(prefix = uid)
+                    val paths = files.mapNotNull { file ->
+                        val name = file.name ?: return@mapNotNull null
+                        if (name.contains('/')) name else "$uid/$name"
+                    }
+                    if (paths.isNotEmpty()) bucket.delete(paths)
+                }
+            }
             supabase.postgrest.rpc("delete_my_account")
             supabase.auth.signOut()
             Unit

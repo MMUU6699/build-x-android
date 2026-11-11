@@ -10,10 +10,12 @@ import android.speech.SpeechRecognizer
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.buildx.chat.R
+import app.buildx.chat.data.model.AccountInfo
 import app.buildx.chat.data.model.AppAppearance
 import app.buildx.chat.data.model.AppLanguage
 import app.buildx.chat.data.model.AppNotificationItem
 import app.buildx.chat.data.model.AttachmentRow
+import app.buildx.chat.data.model.BlockedUser
 import app.buildx.chat.data.model.ChatMessage
 import app.buildx.chat.data.model.ChatMode
 import app.buildx.chat.data.model.ChatSseEvent
@@ -25,6 +27,7 @@ import app.buildx.chat.data.model.PersonSearchResult
 import app.buildx.chat.data.model.PublicNote
 import app.buildx.chat.data.model.PublicProfile
 import app.buildx.chat.data.model.ReasoningStep
+import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
 import app.buildx.chat.data.model.VerificationStatusInfo
@@ -131,7 +134,20 @@ data class BuildXUiState(
     val verificationStatus: VerificationStatusInfo? = null,
     val isVerificationLoading: Boolean = false,
     val verificationError: String? = null,
-    val isVerificationSubmitting: Boolean = false
+    val isVerificationSubmitting: Boolean = false,
+    // Profile v2: block/report/about/blocked-accounts
+    val isProfileUnavailable: Boolean = false,
+    val isFollowPending: Boolean = false,
+    val accountInfo: AccountInfo? = null,
+    val isAccountInfoLoading: Boolean = false,
+    val accountInfoError: String? = null,
+    val blockedUsers: List<BlockedUser> = emptyList(),
+    val isBlockedUsersLoading: Boolean = false,
+    val blockedUsersError: String? = null,
+    val hasMoreBlockedUsers: Boolean = false,
+    val isSubmittingReport: Boolean = false,
+    val reportError: String? = null,
+    val isBlocking: Boolean = false
 )
 
 class BuildXViewModel(application: Application) : AndroidViewModel(application) {
@@ -1637,6 +1653,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             }
             repository.uploadAvatar(bytes).onSuccess {
                 val updated = repository.ensureUserProfile()
+                cacheUserProfile(updated)
                 _uiState.update {
                     it.copy(
                         profile = updated,
@@ -1667,6 +1684,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             }
             repository.uploadAvatar(uri).onSuccess {
                 val updated = repository.ensureUserProfile()
+                cacheUserProfile(updated)
                 _uiState.update {
                     it.copy(
                         profile = updated,
@@ -1697,6 +1715,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             }
             repository.removeAvatar().onSuccess {
                 val updated = repository.ensureUserProfile()
+                cacheUserProfile(updated)
                 _uiState.update {
                     it.copy(
                         profile = updated,
@@ -1919,14 +1938,21 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     fun loadPublicProfile(username: String) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isPublicProfileLoading = true, publicProfileError = null) }
+            _uiState.update {
+                it.copy(
+                    isPublicProfileLoading = true,
+                    publicProfileError = null,
+                    isProfileUnavailable = false
+                )
+            }
             repository.getPublicProfile(username).onSuccess { pub ->
                 _uiState.update {
                     it.copy(
                         viewedPublicProfile = pub,
-                        isSubscribedToNotes = pub.noteSubscribed,
+                        isSubscribedToNotes = pub?.noteSubscribed == true,
                         isPublicProfileLoading = false,
-                        publicProfileError = null
+                        publicProfileError = null,
+                        isProfileUnavailable = pub == null
                     )
                 }
             }.onFailure { err ->
@@ -1935,53 +1961,233 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                         viewedPublicProfile = null,
                         isSubscribedToNotes = false,
                         isPublicProfileLoading = false,
-                        publicProfileError = mapError(err)
+                        publicProfileError = mapError(err),
+                        isProfileUnavailable = false
                     )
                 }
             }
         }
     }
 
+    fun clearPublicProfile() {
+        _uiState.update {
+            it.copy(
+                viewedPublicProfile = null,
+                isSubscribedToNotes = false,
+                isPublicProfileLoading = false,
+                publicProfileError = null,
+                isProfileUnavailable = false,
+                isFollowPending = false
+            )
+        }
+    }
+
+    /**
+     * Optimistic follow/unfollow. The label and counters flip immediately, a single
+     * in-flight request is enforced, and every piece of state is rolled back on failure.
+     */
     fun toggleFollow(targetUserId: String, targetUsername: String? = null) {
+        if (_uiState.value.isFollowPending) return
+        if (targetUserId.isBlank()) return
+
+        val snapshot = _uiState.value
+        val currentPub = snapshot.viewedPublicProfile
+        val newIsFollowing = currentPub?.takeIf { it.id == targetUserId }?.isFollowing?.not()
+
+        if (currentPub != null && currentPub.id == targetUserId && newIsFollowing != null) {
+            val delta = if (newIsFollowing) 1 else -1
+            _uiState.update {
+                it.copy(
+                    isFollowPending = true,
+                    viewedPublicProfile = currentPub.copy(
+                        isFollowing = newIsFollowing,
+                        followersCount = (currentPub.followersCount + delta).coerceAtLeast(0),
+                        noteSubscribed = if (newIsFollowing) currentPub.noteSubscribed else false
+                    ),
+                    isSubscribedToNotes = if (newIsFollowing) {
+                        it.isSubscribedToNotes
+                    } else false
+                )
+            }
+        } else {
+            _uiState.update { it.copy(isFollowPending = true) }
+        }
+
         viewModelScope.launch {
-            val currentPub = _uiState.value.viewedPublicProfile
-            if (currentPub != null && currentPub.id == targetUserId) {
-                val newIsFollowing = !currentPub.isFollowing
-                val delta = if (newIsFollowing) 1 else -1
+            repository.toggleFollow(targetUserId).onSuccess { following ->
+                _uiState.update { state ->
+                    val pub = state.viewedPublicProfile
+                    state.copy(
+                        isFollowPending = false,
+                        viewedPublicProfile = if (pub != null && pub.id == targetUserId) {
+                            pub.copy(isFollowing = following)
+                        } else pub,
+                        searchPeopleResults = state.searchPeopleResults.map {
+                            if (it.id == targetUserId) it.copy(isFollowing = following) else it
+                        },
+                        followingListUsers = state.followingListUsers.map {
+                            if (it.id == targetUserId) it.copy(isFollowing = following) else it
+                        },
+                        followersListUsers = state.followersListUsers.map {
+                            if (it.id == targetUserId) it.copy(isFollowing = following) else it
+                        }
+                    )
+                }
+                refreshProfile()
+                if (targetUsername != null) loadPublicProfile(targetUsername)
+            }.onFailure { err ->
+                // Roll back to the pre-optimistic snapshot, then re-sync from the server.
                 _uiState.update {
                     it.copy(
-                        viewedPublicProfile = currentPub.copy(
-                            isFollowing = newIsFollowing,
-                            followersCount = (currentPub.followersCount + delta).coerceAtLeast(0)
-                        )
+                        isFollowPending = false,
+                        viewedPublicProfile = snapshot.viewedPublicProfile,
+                        isSubscribedToNotes = snapshot.isSubscribedToNotes,
+                        searchPeopleResults = snapshot.searchPeopleResults,
+                        followingListUsers = snapshot.followingListUsers,
+                        followersListUsers = snapshot.followersListUsers
+                    )
+                }
+                showSnackbar(mapError(err))
+                refreshProfile()
+                if (targetUsername != null) loadPublicProfile(targetUsername)
+            }
+        }
+    }
+
+    fun blockUser(
+        targetUserId: String,
+        targetUsername: String? = null,
+        onBlocked: () -> Unit = {}
+    ) {
+        if (targetUserId.isBlank() || _uiState.value.isBlocking) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isBlocking = true) }
+            repository.blockUser(targetUserId).onSuccess {
+                _uiState.update {
+                    it.copy(
+                        isBlocking = false,
+                        viewedPublicProfile = null,
+                        isProfileUnavailable = true,
+                        blockedUsers = it.blockedUsers.filterNot { u -> u.id == targetUserId }
+                    )
+                }
+                refreshProfile()
+                if (!targetUsername.isNullOrBlank()) {
+                    showSnackbar(getLocalizedText(R.string.pv2_blocked_snackbar, targetUsername))
+                }
+                onBlocked()
+            }.onFailure { err ->
+                _uiState.update { it.copy(isBlocking = false) }
+                showSnackbar(mapError(err))
+            }
+        }
+    }
+
+    fun unblockUser(targetUserId: String) {
+        if (targetUserId.isBlank()) return
+        viewModelScope.launch {
+            repository.unblockUser(targetUserId).onSuccess {
+                _uiState.update { state ->
+                    state.copy(
+                        blockedUsers = state.blockedUsers.filterNot { it.id == targetUserId },
+                        viewedPublicProfile = state.viewedPublicProfile?.let { pub ->
+                            if (pub.id == targetUserId) pub.copy(blockedByMe = false) else pub
+                        }
+                    )
+                }
+                showSnackbar(getLocalizedText(R.string.pv2_blocked_unblocked_snackbar))
+            }.onFailure { err ->
+                showSnackbar(mapError(err))
+            }
+        }
+    }
+
+    fun loadBlockedUsers(reset: Boolean = false) {
+        if (_uiState.value.isBlockedUsersLoading) return
+        val offset = if (reset) 0 else _uiState.value.blockedUsers.size
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isBlockedUsersLoading = true,
+                    blockedUsersError = null,
+                    blockedUsers = if (reset) emptyList() else it.blockedUsers
+                )
+            }
+            repository.getBlockedUsers(limit = 30, offset = offset).onSuccess { page ->
+                _uiState.update { state ->
+                    val merged = if (reset) page else state.blockedUsers + page
+                    state.copy(
+                        blockedUsers = merged,
+                        isBlockedUsersLoading = false,
+                        hasMoreBlockedUsers = page.size >= 30
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        isBlockedUsersLoading = false,
+                        blockedUsersError = mapError(err)
                     )
                 }
             }
+        }
+    }
 
-            _uiState.update { state ->
-                state.copy(
-                    searchPeopleResults = state.searchPeopleResults.map {
-                        if (it.id == targetUserId) it.copy(isFollowing = !it.isFollowing) else it
-                    },
-                    followingListUsers = state.followingListUsers.map {
-                        if (it.id == targetUserId) it.copy(isFollowing = !it.isFollowing) else it
-                    },
-                    followersListUsers = state.followersListUsers.map {
-                        if (it.id == targetUserId) it.copy(isFollowing = !it.isFollowing) else it
-                    }
-                )
+    fun loadAccountInfo(targetUserId: String) {
+        if (targetUserId.isBlank()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isAccountInfoLoading = true, accountInfoError = null) }
+            repository.getAccountInfo(targetUserId).onSuccess { info ->
+                _uiState.update {
+                    it.copy(accountInfo = info, isAccountInfoLoading = false)
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        isAccountInfoLoading = false,
+                        accountInfoError = mapError(err)
+                    )
+                }
             }
+        }
+    }
 
-            repository.toggleFollow(targetUserId).onSuccess {
-                refreshProfile()
-                if (targetUsername != null) {
-                    loadPublicProfile(targetUsername)
+    fun submitReport(
+        targetUserId: String,
+        reason: ReportReason,
+        details: String?,
+        onSubmitted: () -> Unit = {}
+    ) {
+        if (targetUserId.isBlank() || _uiState.value.isSubmittingReport) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSubmittingReport = true, reportError = null) }
+            repository.submitReport(targetUserId, reason, details).onSuccess {
+                _uiState.update { it.copy(isSubmittingReport = false, reportError = null) }
+                onSubmitted()
+            }.onFailure { err ->
+                val raw = err.message.orEmpty()
+                _uiState.update {
+                    it.copy(
+                        isSubmittingReport = false,
+                        reportError = if (raw.contains("ALREADY_REPORTED", true)) {
+                            getLocalizedText(R.string.pv2_report_already_submitted)
+                        } else {
+                            mapError(err)
+                        }
+                    )
                 }
-            }.onFailure {
-                refreshProfile()
-                if (targetUsername != null) {
-                    loadPublicProfile(targetUsername)
+            }
+        }
+    }
+
+    fun updateCountry(countryCode: String?) {
+        viewModelScope.launch {
+            repository.updateCountry(countryCode).onSuccess {
+                _uiState.update { state ->
+                    state.copy(profile = state.profile?.copy(countryCode = countryCode))
                 }
+            }.onFailure { err ->
+                showSnackbar(mapError(err))
             }
         }
     }

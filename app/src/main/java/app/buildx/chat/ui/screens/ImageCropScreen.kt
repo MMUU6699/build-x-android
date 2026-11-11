@@ -55,11 +55,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.buildx.chat.R
-import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.util.AvatarImageProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -67,7 +65,8 @@ import kotlinx.coroutines.withContext
 
 /**
  * In-app Image Crop Screen:
- * - Square output (512x512 JPEG)
+ * - Square output (512x512 JPEG at 88% quality)
+ * - Decodes safely from raw bytes (preventing exhausted stream and hardware bitmap crashes)
  * - Circular preview mask with dimmed surround and thin white aperture outline
  * - Pan and pinch-to-zoom gestures
  * - Minimum zoom clamped to ensure crop area is always filled
@@ -77,7 +76,8 @@ import kotlinx.coroutines.withContext
  */
 @Composable
 fun ImageCropScreen(
-    imageUri: Uri,
+    imageBytes: ByteArray? = null,
+    imageUri: Uri? = null,
     onCropDone: (jpegBytes: ByteArray, cacheUri: Uri?) -> Unit,
     onCancel: () -> Unit
 ) {
@@ -92,15 +92,23 @@ fun ImageCropScreen(
 
     var userScale by remember { mutableFloatStateOf(1f) }
     var panOffset by remember { mutableStateOf(Offset.Zero) }
+    var activeCropBoxPx by remember { mutableFloatStateOf(0f) }
 
     BackHandler(enabled = !isProcessingCrop) {
         onCancel()
     }
 
-    // Decode image with subsampling to prevent OOM
-    LaunchedEffect(imageUri) {
+    // Decode image from rawBytes (preferred) or Uri stream safely with subsampling (<= 1440px)
+    LaunchedEffect(imageBytes, imageUri) {
         withContext(Dispatchers.IO) {
-            val decoded = AvatarImageProcessor.decodeSubsampledBitmap(context, imageUri)
+            val decoded = if (imageBytes != null && imageBytes.isNotEmpty()) {
+                AvatarImageProcessor.decodeSubsampledBitmap(imageBytes, maxDimension = 1440)
+            } else if (imageUri != null) {
+                AvatarImageProcessor.decodeSubsampledBitmap(context, imageUri, maxDimension = 1440)
+            } else {
+                null
+            }
+
             withContext(Dispatchers.Main) {
                 if (decoded != null) {
                     sourceBitmap = decoded
@@ -150,6 +158,7 @@ fun ImageCropScreen(
                 val availableWidth = constraints.maxWidth.toFloat()
                 val availableHeight = constraints.maxHeight.toFloat()
                 val cropBoxSizePx = minOf(availableWidth * 0.85f, availableHeight * 0.85f, 900f)
+                activeCropBoxPx = cropBoxSizePx
                 val cropBoxSizeDp = with(density) { cropBoxSizePx.toDp() }
 
                 val bmp = sourceBitmap
@@ -179,30 +188,30 @@ fun ImageCropScreen(
                         modifier = Modifier
                             .size(cropBoxSizeDp)
                             .clipToBounds()
-                            .pointerInput(bmp) {
+                            .pointerInput(Unit) {
                                 detectTransformGestures { _, pan, zoom, _ ->
-                                    val nextScale = (userScale * zoom).coerceIn(1f, 5f)
-                                    val nextTotalScale = baseScale * nextScale
-                                    val nextDispW = bmpW * nextTotalScale
-                                    val nextDispH = bmpH * nextTotalScale
-                                    val nextMaxPanX = maxOf(0f, (nextDispW - cropBoxSizePx) / 2f)
-                                    val nextMaxPanY = maxOf(0f, (nextDispH - cropBoxSizePx) / 2f)
+                                    val newScale = (userScale * zoom).coerceIn(1f, 4f)
+                                    userScale = newScale
 
-                                    userScale = nextScale
-                                    panOffset = Offset(
-                                        x = (panOffset.x + pan.x).coerceIn(-nextMaxPanX, nextMaxPanX),
-                                        y = (panOffset.y + pan.y).coerceIn(-nextMaxPanY, nextMaxPanY)
-                                    )
+                                    val curTotalScale = baseScale * newScale
+                                    val curDispW = bmpW * curTotalScale
+                                    val curDispH = bmpH * curTotalScale
+
+                                    val curMaxPanX = maxOf(0f, (curDispW - cropBoxSizePx) / 2f)
+                                    val curMaxPanY = maxOf(0f, (curDispH - cropBoxSizePx) / 2f)
+
+                                    val newPanX = (panOffset.x + pan.x).coerceIn(-curMaxPanX, curMaxPanX)
+                                    val newPanY = (panOffset.y + pan.y).coerceIn(-curMaxPanY, curMaxPanY)
+                                    panOffset = Offset(newPanX, newPanY)
                                 }
-                            },
-                        contentAlignment = Alignment.Center
+                            }
                     ) {
-                        // Render Bitmap
+                        // Image layer with transform
                         Image(
                             bitmap = bmp.asImageBitmap(),
                             contentDescription = null,
                             modifier = Modifier
-                                .size(with(density) { bmpW.toDp() }, with(density) { bmpH.toDp() })
+                                .fillMaxSize()
                                 .graphicsLayer {
                                     scaleX = totalScale
                                     scaleY = totalScale
@@ -211,25 +220,44 @@ fun ImageCropScreen(
                                 }
                         )
 
-                        // Circular preview mask: draws dimmed corners outside circle and circular outline
+                        // Circular aperture preview mask
                         Canvas(modifier = Modifier.fillMaxSize()) {
-                            val radius = size.minDimension / 2f
-                            val center = Offset(size.width / 2f, size.height / 2f)
+                            val w = size.width
+                            val h = size.height
+                            val radius = minOf(w, h) / 2f
+                            val center = Offset(w / 2f, h / 2f)
 
-                            val fullRect = Path().apply {
-                                addRect(Rect(0f, 0f, size.width, size.height))
+                            val fullRectPath = Path().apply {
+                                addRect(Rect(0f, 0f, w, h))
                             }
-                            val circlePath = Path().apply {
-                                addOval(Rect(center, radius))
+                            val circleHolePath = Path().apply {
+                                addOval(
+                                    Rect(
+                                        left = center.x - radius,
+                                        top = center.y - radius,
+                                        right = center.x + radius,
+                                        bottom = center.y + radius
+                                    )
+                                )
                             }
-                            val difference = Path.combine(PathOperation.Difference, fullRect, circlePath)
-                            drawPath(difference, color = Color(0xCC000000))
+                            val dimmedMaskPath = Path.combine(
+                                operation = PathOperation.Difference,
+                                path1 = fullRectPath,
+                                path2 = circleHolePath
+                            )
 
+                            // Dimmed surround
+                            drawPath(
+                                path = dimmedMaskPath,
+                                color = Color.Black.copy(alpha = 0.65f)
+                            )
+
+                            // Crisp aperture outline ring
                             drawCircle(
-                                color = Color.White.copy(alpha = 0.55f),
-                                radius = radius,
+                                color = Color.White.copy(alpha = 0.9f),
+                                radius = radius - 1f,
                                 center = center,
-                                style = Stroke(width = 1.75.dp.toPx())
+                                style = Stroke(width = 1.8f)
                             )
                         }
                     }
@@ -238,11 +266,11 @@ fun ImageCropScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Action Pills: Cancel and Done
+            // Action Buttons: Cancel and Done pills
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 32.dp, vertical = 20.dp),
+                    .padding(horizontal = 24.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -251,10 +279,9 @@ fun ImageCropScreen(
                     modifier = Modifier
                         .height(48.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF1E2227))
-                        .border(1.2.dp, Color(0xFF2E3338), CircleShape)
+                        .background(Color(0xFF22262B))
                         .clickable(enabled = !isProcessingCrop) { onCancel() }
-                        .padding(horizontal = 24.dp),
+                        .padding(horizontal = 28.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -273,11 +300,10 @@ fun ImageCropScreen(
                         .background(Color(0xFF0063D3))
                         .clickable(enabled = !isProcessingCrop && sourceBitmap != null) {
                             val bmp = sourceBitmap ?: return@clickable
+                            val cropBoxPx = if (activeCropBoxPx > 0f) activeCropBoxPx else 800f
                             isProcessingCrop = true
                             coroutineScope.launch(Dispatchers.Default) {
                                 try {
-                                    val densityPx = density.density
-                                    val cropBoxPx = 900f.coerceAtMost(densityPx * 280f)
                                     val baseScale = maxOf(cropBoxPx / bmp.width.toFloat(), cropBoxPx / bmp.height.toFloat())
                                     val totalScale = baseScale * userScale
                                     val dispW = bmp.width * totalScale
@@ -288,7 +314,8 @@ fun ImageCropScreen(
 
                                     val bmpCropLeft = (cropLeftDisp / totalScale).toInt().coerceIn(0, maxOf(0, bmp.width - 1))
                                     val bmpCropTop = (cropTopDisp / totalScale).toInt().coerceIn(0, maxOf(0, bmp.height - 1))
-                                    val bmpCropSize = (cropBoxPx / totalScale).toInt().coerceIn(1, minOf(bmp.width - bmpCropLeft, bmp.height - bmpCropTop))
+                                    val maxAvailable = minOf(bmp.width - bmpCropLeft, bmp.height - bmpCropTop)
+                                    val bmpCropSize = (cropBoxPx / totalScale).toInt().coerceIn(1, maxAvailable)
 
                                     val jpegBytes = AvatarImageProcessor.cropAndCompressAvatar(
                                         source = bmp,
@@ -296,7 +323,7 @@ fun ImageCropScreen(
                                         cropTop = bmpCropTop,
                                         cropSize = bmpCropSize,
                                         targetSize = 512,
-                                        quality = 85
+                                        quality = 88
                                     )
                                     val cacheUri = AvatarImageProcessor.saveToTempCache(context, jpegBytes)
 

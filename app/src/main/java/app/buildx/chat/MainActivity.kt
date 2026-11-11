@@ -66,6 +66,7 @@ import app.buildx.chat.ui.screens.AppAppearanceScreen
 import app.buildx.chat.ui.screens.AppInfoScreen
 import app.buildx.chat.ui.screens.AppLanguageScreen
 import app.buildx.chat.ui.screens.AuthScreen
+import app.buildx.chat.ui.screens.BlockedAccountsScreen
 import app.buildx.chat.ui.screens.ChatAndDrawerScreen
 import app.buildx.chat.ui.screens.DataPrivacyScreen
 import app.buildx.chat.ui.screens.DeleteChatDialog
@@ -494,6 +495,7 @@ fun BuildXRoot(
                             onAppLanguageClick = { navController.navigate("language") },
                             onHelpSupportClick = { navController.navigate("help_support") },
                             onDataPrivacyClick = { navController.navigate("data_privacy") },
+                            onBlockedAccountsClick = { navController.navigate("blocked_accounts") },
                             onAppInfoClick = { navController.navigate("app_info") },
                             onLegalSafetyClick = { navController.navigate("legal_safety") },
                             onRequestVerificationClick = { navController.navigate("verification") },
@@ -563,7 +565,38 @@ fun BuildXRoot(
                             onFollowersListClick = { userId, initialTab ->
                                 navController.navigate("follow_lists/$userId/$initialTab")
                             },
-                            onRetry = {}
+                            onRetry = {},
+                            onShareProfile = { uname ->
+                                val text = String.format(strings.shareProfileText, uname, uname)
+                                val send = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, text)
+                                }
+                                context.startActivity(
+                                    Intent.createChooser(send, context.getString(R.string.pv2_share_profile))
+                                )
+                            },
+                            onCopyLink = { uname ->
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(
+                                    ClipData.newPlainText("profile", "https://buildx.chat/$uname")
+                                )
+                                viewModel.showSnackbar(strings.linkCopiedToClipboard)
+                            },
+                            onOpenSettings = { navController.navigate("settings") },
+                            onOpenVerification = { navController.navigate("verification") },
+                            onOpenBlockedAccounts = { navController.navigate("blocked_accounts") },
+                            onMessageClick = {
+                                viewModel.startNewChat()
+                                navController.popBackStack("chat", inclusive = false)
+                            },
+                            onAvatarPicked = { bytes, uri ->
+                                viewModel.uploadProfileAvatar(bytes, uri)
+                            },
+                            accountInfo = uiState.accountInfo,
+                            isAccountInfoLoading = uiState.isAccountInfoLoading,
+                            accountInfoError = uiState.accountInfoError,
+                            onLoadAccountInfo = { viewModel.loadAccountInfo(it) }
                         )
                     }
 
@@ -596,7 +629,68 @@ fun BuildXRoot(
                             isSubscribedToNotes = uiState.viewedPublicProfile?.noteSubscribed == true,
                             onToggleNotification = { targetId ->
                                 viewModel.toggleNoteSubscription(targetId, usernameArg)
+                            },
+                            isFollowPending = uiState.isFollowPending,
+                            isProfileUnavailable = uiState.isProfileUnavailable,
+                            accountInfo = uiState.accountInfo,
+                            isAccountInfoLoading = uiState.isAccountInfoLoading,
+                            accountInfoError = uiState.accountInfoError,
+                            isSubmittingReport = uiState.isSubmittingReport,
+                            reportError = uiState.reportError,
+                            isBlocking = uiState.isBlocking,
+                            onLoadAccountInfo = { viewModel.loadAccountInfo(it) },
+                            onSubmitReport = { targetId, reason, details ->
+                                viewModel.submitReport(targetId, reason, details)
+                            },
+                            onBlockUser = { targetId ->
+                                viewModel.blockUser(targetId, usernameArg) {
+                                    navController.popBackStack()
+                                }
+                            },
+                            onUnblockUser = { targetId ->
+                                viewModel.unblockUser(targetId)
+                            },
+                            onShareProfile = { uname ->
+                                val text = String.format(strings.shareProfileText, uname, uname)
+                                val send = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, text)
+                                }
+                                context.startActivity(
+                                    Intent.createChooser(send, context.getString(R.string.pv2_share_profile))
+                                )
+                            },
+                            onCopyLink = { uname ->
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(
+                                    ClipData.newPlainText("profile", "https://buildx.chat/$uname")
+                                )
+                                viewModel.showSnackbar(strings.linkCopiedToClipboard)
+                            },
+                            onOpenSettings = { navController.navigate("settings") },
+                            onOpenVerification = { navController.navigate("verification") },
+                            onOpenBlockedAccounts = { navController.navigate("blocked_accounts") },
+                            onMessageClick = {
+                                viewModel.startNewChat()
+                                viewModel.onComposerTextChange("@$usernameArg ")
+                                navController.popBackStack("chat", inclusive = false)
                             }
+                        )
+                    }
+
+                    composable("blocked_accounts") {
+                        LaunchedEffect(Unit) {
+                            viewModel.loadBlockedUsers(reset = true)
+                        }
+                        BlockedAccountsScreen(
+                            blockedUsers = uiState.blockedUsers,
+                            isLoading = uiState.isBlockedUsersLoading,
+                            errorMessage = uiState.blockedUsersError,
+                            hasMore = uiState.hasMoreBlockedUsers,
+                            onBackClick = { navController.popBackStack() },
+                            onUnblock = { targetId -> viewModel.unblockUser(targetId) },
+                            onLoadMore = { viewModel.loadBlockedUsers(reset = false) },
+                            onRetry = { viewModel.loadBlockedUsers(reset = true) }
                         )
                     }
 
@@ -617,7 +711,8 @@ fun BuildXRoot(
                             onBackClick = { navController.popBackStack() },
                             checkUsernameAvailable = { candidate ->
                                 viewModel.repository.checkUsernameAvailable(candidate).getOrDefault(false)
-                            }
+                            },
+                            onCountrySelected = { code -> viewModel.updateCountry(code) }
                         )
                     }
 

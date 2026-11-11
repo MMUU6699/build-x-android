@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Profile v2: top bar, actions, menus, about, report, block, blocked accounts, country -->
+    <string name="pv2_share_profile">Share profile</string>
+    <string name="pv2_copy_link">Copy link</string>
+    <string name="pv2_message">Message</string>
+    <string name="pv2_messaging_coming_soon">Messaging is coming soon</string>
+    <string name="pv2_about_this_account">About this account</string>
+    <string name="pv2_note_notifications">Note notifications</string>
+    <string name="pv2_report">Report</string>
+    <string name="pv2_block">Block</string>
+    <string name="pv2_unblock">Unblock</string>
+    <string name="pv2_unfollow_username">Unfollow @%1$s</string>
+    <string name="pv2_settings">Settings</string>
+    <string name="pv2_verification">Verification</string>
+    <string name="pv2_blocked_accounts">Blocked accounts</string>
+    <string name="pv2_profile_unavailable_title">Account unavailable</string>
+    <string name="pv2_profile_unavailable_subtitle">This account isn\'t available right now.</string>
+    <string name="pv2_blocked_by_me_title">You blocked this account</string>
+    <string name="pv2_blocked_by_me_subtitle">Unblock to see their profile again.</string>
+    <string name="pv2_joined">Joined %1$s</string>
+    <string name="pv2_followers_stat">Followers</string>
+    <string name="pv2_following_stat">Following</string>
+    <string name="pv2_show_more">Show more</string>
+    <string name="pv2_show_less">Show less</string>
+
+    <!-- About this account -->
+    <string name="pv2_about_joined">Joined</string>
+    <string name="pv2_about_based_in">Account based in</string>
+    <string name="pv2_about_verified_since">Verified since</string>
+    <string name="pv2_about_username_changes">Username changes</string>
+    <string name="pv2_about_follows_you">Follows you</string>
+    <string name="pv2_about_you_follow_since">You follow since %1$s</string>
+    <string name="pv2_about_yes">Yes</string>
+    <string name="pv2_about_footnote">This information is shown only when the account has shared it.</string>
+    <string name="pv2_more_options">More options</string>
+    <string name="pv2_back">Back</string>
+
+    <!-- Report flow -->
+    <string name="pv2_report_title">Report @%1$s</string>
+    <string name="pv2_report_step_reason">Why are you reporting this account?</string>
+    <string name="pv2_report_reason_spam">Spam</string>
+    <string name="pv2_report_reason_impersonation">Impersonation</string>
+    <string name="pv2_report_reason_fake">Fake account</string>
+    <string name="pv2_report_reason_inappropriate">Inappropriate content</string>
+    <string name="pv2_report_reason_harassment">Harassment</string>
+    <string name="pv2_report_reason_other">Something else</string>
+    <string name="pv2_report_step_details">Add details (optional)</string>
+    <string name="pv2_report_details_hint">Tell us what happened</string>
+    <string name="pv2_report_submit">Submit</string>
+    <string name="pv2_report_next">Continue</string>
+    <string name="pv2_report_submitting">Submitting…</string>
+    <string name="pv2_report_received_title">Report received</string>
+    <string name="pv2_report_received_body">Thanks for letting us know. We review reports privately, and the reported account is never told who reported it.</string>
+    <string name="pv2_report_done">Done</string>
+    <string name="pv2_report_block_title">Block @%1$s too?</string>
+    <string name="pv2_report_block_body">They won\'t be able to find your profile or contact you.</string>
+    <string name="pv2_report_block_cta">Block account</string>
+    <string name="pv2_report_already_submitted">You already reported this account recently.</string>
+    <string name="pv2_report_counter">%1$d/%2$d</string>
+    <string name="pv2_report_select_reason">Choose a reason to continue.</string>
+
+    <!-- Block / unblock -->
+    <string name="pv2_block_title">Block @%1$s?</string>
+    <string name="pv2_block_body">They won\'t be able to find your profile, see your posts, or contact you. They won\'t be notified.</string>
+    <string name="pv2_block_confirm">Block</string>
+    <string name="pv2_block_cancel">Cancel</string>
+    <string name="pv2_blocked_snackbar">@%1$s has been blocked</string>
+    <string name="pv2_blocking">Blocking…</string>
+    <string name="pv2_blocked_unblocked_snackbar">Account unblocked</string>
+
+    <!-- Blocked accounts screen -->
+    <string name="pv2_blocked_accounts_title">Blocked accounts</string>
+    <string name="pv2_blocked_accounts_subtitle">People you\'ve blocked</string>
+    <string name="pv2_blocked_accounts_empty_title">No blocked accounts</string>
+    <string name="pv2_blocked_accounts_empty_body">Accounts you block will appear here.</string>
+
+    <!-- Country/region picker -->
+    <string name="pv2_country_label">Country/region</string>
+    <string name="pv2_country_not_shown">Not shown</string>
+    <string name="pv2_country_search_hint">Search countries</string>
+    <string name="pv2_country_title">Country/region</string>
+    <string name="pv2_country_empty">No countries match your search.</string>
+</resources>

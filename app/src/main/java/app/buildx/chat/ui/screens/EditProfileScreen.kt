@@ -55,6 +55,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -75,8 +76,10 @@ import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.viewmodel.BuildXViewModel
 import app.buildx.chat.util.AuthValidation
 import coil.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 
@@ -103,10 +106,12 @@ fun EditProfileScreen(
     onUploadAvatarBytes: ((ByteArray, Uri?) -> Unit)? = null,
     onBackClick: () -> Unit,
     checkUsernameAvailable: suspend (String) -> Boolean,
+    onCountrySelected: ((String?) -> Unit)? = null,
     viewModel: BuildXViewModel? = null
 ) {
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
+    val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
 
@@ -116,11 +121,13 @@ fun EditProfileScreen(
     val currentUsername by remember(profile?.id) { mutableStateOf(profile?.effectiveUsername ?: "") }
     var newUsernameInput by remember(profile?.id) { mutableStateOf(profile?.effectiveUsername ?: "") }
     var bioText by remember(profile?.id) { mutableStateOf(profile?.bio ?: "") }
+    var countryCode by remember(profile?.id) { mutableStateOf(profile?.countryCode) }
+    var showCountryPicker by remember { mutableStateOf(false) }
 
     var showDiscardDialog by remember { mutableStateOf(false) }
     var showAvatarOptionsSheet by remember { mutableStateOf(false) }
     var showRemovePhotoConfirm by remember { mutableStateOf(false) }
-    var selectedCropUri by remember { mutableStateOf<Uri?>(null) }
+    var selectedCropBytes by remember { mutableStateOf<ByteArray?>(null) }
 
     var isCheckingUsername by remember { mutableStateOf(false) }
     var isUsernameAvailable by remember { mutableStateOf<Boolean?>(null) }
@@ -131,12 +138,21 @@ fun EditProfileScreen(
     val usernameBringIntoView = remember { BringIntoViewRequester() }
     val bioBringIntoView = remember { BringIntoViewRequester() }
 
-    // Photo picker launcher for avatar selection -> triggers image crop
+    // Photo picker launcher for avatar selection -> reads raw bytes once on Dispatchers.IO to prevent exhausted stream bugs
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            selectedCropUri = uri
+            coroutineScope.launch(Dispatchers.IO) {
+                val bytes = runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                }.getOrNull()
+                withContext(Dispatchers.Main) {
+                    if (bytes != null && bytes.isNotEmpty()) {
+                        selectedCropBytes = bytes
+                    }
+                }
+            }
         }
     }
 
@@ -169,7 +185,7 @@ fun EditProfileScreen(
             bioText.trim() != origBio.trim()
     }
 
-    BackHandler(enabled = hasChanges && selectedCropUri == null) {
+    BackHandler(enabled = hasChanges && selectedCropBytes == null) {
         showDiscardDialog = true
     }
 
@@ -630,6 +646,50 @@ fun EditProfileScreen(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Country/region Card (optional, explicit choice only)
+                GroupedCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showCountryPicker = true }
+                            .padding(16.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.pv2_country_label),
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.secondaryText
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = countryDisplayName(countryCode)
+                                    ?: stringResource(R.string.pv2_country_not_shown),
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = if (countryCode == null) colors.secondaryText else colors.primaryText,
+                                modifier = Modifier.weight(1f),
+                                textAlign = TextAlign.Start
+                            )
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_chevron_right),
+                                contentDescription = null,
+                                tint = colors.secondaryText,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
                 // Generous bottom space to easily scroll past the fields above soft keyboard
                 Spacer(modifier = Modifier.height(72.dp))
             }
@@ -637,16 +697,16 @@ fun EditProfileScreen(
 
         // Image Crop Screen (in-app square crop with circular preview mask, pan & zoom)
         AnimatedVisibility(
-            visible = selectedCropUri != null,
+            visible = selectedCropBytes != null,
             enter = fadeIn(),
             exit = fadeOut()
         ) {
-            val cropUri = selectedCropUri
-            if (cropUri != null) {
+            val cropBytes = selectedCropBytes
+            if (cropBytes != null) {
                 ImageCropScreen(
-                    imageUri = cropUri,
+                    imageBytes = cropBytes,
                     onCropDone = { jpegBytes, cacheUri ->
-                        selectedCropUri = null
+                        selectedCropBytes = null
                         if (onUploadAvatarBytes != null) {
                             onUploadAvatarBytes(jpegBytes, cacheUri)
                         } else {
@@ -654,7 +714,7 @@ fun EditProfileScreen(
                         }
                     },
                     onCancel = {
-                        selectedCropUri = null
+                        selectedCropBytes = null
                     }
                 )
             }
@@ -742,6 +802,19 @@ fun EditProfileScreen(
                 }
             }
         }
+    }
+
+    // Country/region picker
+    if (showCountryPicker) {
+        CountryPickerSheet(
+            isOpen = showCountryPicker,
+            selectedCode = countryCode,
+            onSelect = { code ->
+                countryCode = code
+                onCountrySelected?.invoke(code)
+            },
+            onDismiss = { showCountryPicker = false }
+        )
     }
 
     // Remove Photo Confirmation Dialog

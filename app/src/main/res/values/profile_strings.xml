@@ -25,4 +25,15 @@
     <string name="profile_notifications_enabled">Notifications turned on for @%1$s</string>
     <string name="profile_notifications_disabled">Notifications turned off for @%1$s</string>
     <string name="profile_notifications_not_following">Follow @%1$s first to receive notifications</string>
+    <string name="profile_posts">posts</string>
+    <string name="profile_message">Message</string>
+    <string name="profile_share_profile">Share profile</string>
+    <string name="profile_create_first_post_title">Create your first post</string>
+    <string name="profile_create_first_post_subtitle">Share your point of view.</string>
+    <string name="profile_create_action">Create</string>
+    <string name="profile_no_posts_yet">No posts yet</string>
+    <string name="profile_leave_a_note_prompt">Leave a\nnote…</string>
+    <string name="profile_just_curious_prompt">Just\ncurious…</string>
+    <string name="profile_copy_username">Copy @username</string>
+    <string name="profile_copied_username">Copied @%1$s</string>
 </resources>

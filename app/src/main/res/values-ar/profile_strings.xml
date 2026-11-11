@@ -25,4 +25,15 @@
     <string name="profile_notifications_enabled">تم تفعيل الإشعارات لـ @%1$s</string>
     <string name="profile_notifications_disabled">تم إيقاف الإشعارات لـ @%1$s</string>
     <string name="profile_notifications_not_following">تابع @%1$s أولاً لتفعيل الإشعارات</string>
+    <string name="profile_posts">منشورات</string>
+    <string name="profile_message">مراسلة</string>
+    <string name="profile_share_profile">مشاركة الملف</string>
+    <string name="profile_create_first_post_title">أنشئ أول منشور لك</string>
+    <string name="profile_create_first_post_subtitle">شارك وجهة نظرك وملاحظاتك.</string>
+    <string name="profile_create_action">إنشاء</string>
+    <string name="profile_no_posts_yet">لا توجد منشورات بعد</string>
+    <string name="profile_leave_a_note_prompt">اترك\nملاحظة…</string>
+    <string name="profile_just_curious_prompt">مجرد\nفضول…</string>
+    <string name="profile_copy_username">نسخ اسم المستخدم</string>
+    <string name="profile_copied_username">تم نسخ @%1$s</string>
 </resources>

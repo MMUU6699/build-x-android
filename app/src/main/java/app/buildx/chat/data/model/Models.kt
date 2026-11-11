@@ -19,6 +19,8 @@ data class UserProfile(
     @SerialName("username_changed_at") val usernameChangedAt: String? = null,
     @SerialName("username_reviewed_at") val usernameReviewedAt: String? = null,
     @SerialName("theme_mode") val appearance: String = "automatic",
+    @SerialName("country_code") val countryCode: String? = null,
+    @SerialName("locale") val locale: String? = null,
     @SerialName("created_at") val createdAt: String? = null
 ) {
     val effectiveUsername: String
@@ -43,13 +45,54 @@ data class PublicProfile(
     @SerialName("avatar_url") val avatarUrl: String? = null,
     val bio: String? = null,
     @SerialName("is_verified") val isVerified: Boolean = false,
+    @SerialName("verified_at") val verifiedAt: String? = null,
     @SerialName("following_count") val followingCount: Int = 0,
     @SerialName("followers_count") val followersCount: Int = 0,
     @SerialName("is_following") val isFollowing: Boolean = false,
     @SerialName("follows_you") val followsYou: Boolean = false,
     @SerialName("active_note") val activeNote: PublicNote? = null,
-    @SerialName("note_subscribed") val noteSubscribed: Boolean = false
+    @SerialName("note_subscribed") val noteSubscribed: Boolean = false,
+    @SerialName("country_code") val countryCode: String? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("blocked_by_me") val blockedByMe: Boolean = false
 )
+
+/**
+ * Real account metadata returned by the `get_account_info` RPC.
+ * Rows that are null/absent are hidden by the About-this-account sheet.
+ */
+@Serializable
+data class AccountInfo(
+    @SerialName("joined_at") val joinedAt: String? = null,
+    @SerialName("country_code") val countryCode: String? = null,
+    @SerialName("verified_at") val verifiedAt: String? = null,
+    @SerialName("username_change_count") val usernameChangeCount: Int = 0,
+    @SerialName("follows_you") val followsYou: Boolean = false,
+    @SerialName("following_since") val followingSince: String? = null,
+    @SerialName("is_self") val isSelf: Boolean = false
+)
+
+/**
+ * Row shown on the Blocked accounts screen (`get_blocked_users` RPC).
+ */
+@Serializable
+data class BlockedUser(
+    val id: String,
+    val username: String,
+    @SerialName("display_name") val displayName: String,
+    @SerialName("avatar_url") val avatarUrl: String? = null,
+    @SerialName("is_verified") val isVerified: Boolean = false,
+    @SerialName("blocked_at") val blockedAt: String? = null
+)
+
+enum class ReportReason(val dbValue: String) {
+    SPAM("spam"),
+    IMPERSONATION("impersonation"),
+    FAKE_ACCOUNT("fake_account"),
+    INAPPROPRIATE_CONTENT("inappropriate_content"),
+    HARASSMENT("harassment"),
+    OTHER("other")
+}
 
 @Serializable
 data class FollowUserItem(

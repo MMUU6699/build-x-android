@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- الملف الشخصي v2 -->
+    <string name="pv2_share_profile">مشاركة الملف الشخصي</string>
+    <string name="pv2_copy_link">نسخ الرابط</string>
+    <string name="pv2_message">رسالة</string>
+    <string name="pv2_messaging_coming_soon">المراسلة ستتوفر قريبًا</string>
+    <string name="pv2_about_this_account">حول هذا الحساب</string>
+    <string name="pv2_note_notifications">إشعارات الملاحظات</string>
+    <string name="pv2_report">إبلاغ</string>
+    <string name="pv2_block">حظر</string>
+    <string name="pv2_unblock">إلغاء الحظر</string>
+    <string name="pv2_unfollow_username">إلغاء متابعة @%1$s</string>
+    <string name="pv2_settings">الإعدادات</string>
+    <string name="pv2_verification">التوثيق</string>
+    <string name="pv2_blocked_accounts">الحسابات المحظورة</string>
+    <string name="pv2_profile_unavailable_title">الحساب غير متاح</string>
+    <string name="pv2_profile_unavailable_subtitle">هذا الحساب غير متاح حاليًا.</string>
+    <string name="pv2_blocked_by_me_title">لقد حظرت هذا الحساب</string>
+    <string name="pv2_blocked_by_me_subtitle">ألغِ الحظر لعرض الملف الشخصي مرة أخرى.</string>
+    <string name="pv2_joined">انضم في %1$s</string>
+    <string name="pv2_followers_stat">المتابعون</string>
+    <string name="pv2_following_stat">يتابع</string>
+    <string name="pv2_show_more">عرض المزيد</string>
+    <string name="pv2_show_less">عرض أقل</string>
+
+    <!-- حول هذا الحساب -->
+    <string name="pv2_about_joined">تاريخ الانضمام</string>
+    <string name="pv2_about_based_in">الحساب مقرّه في</string>
+    <string name="pv2_about_verified_since">موثّق منذ</string>
+    <string name="pv2_about_username_changes">تغييرات اسم المستخدم</string>
+    <string name="pv2_about_follows_you">يتابعك</string>
+    <string name="pv2_about_you_follow_since">تتابعه منذ %1$s</string>
+    <string name="pv2_about_yes">نعم</string>
+    <string name="pv2_about_footnote">تظهر هذه المعلومات فقط عندما يشاركها الحساب.</string>
+    <string name="pv2_more_options">خيارات إضافية</string>
+    <string name="pv2_back">رجوع</string>
+
+    <!-- الإبلاغ -->
+    <string name="pv2_report_title">الإبلاغ عن @%1$s</string>
+    <string name="pv2_report_step_reason">ما سبب الإبلاغ عن هذا الحساب؟</string>
+    <string name="pv2_report_reason_spam">محتوى مزعج</string>
+    <string name="pv2_report_reason_impersonation">انتحال شخصية</string>
+    <string name="pv2_report_reason_fake">حساب وهمي</string>
+    <string name="pv2_report_reason_inappropriate">محتوى غير لائق</string>
+    <string name="pv2_report_reason_harassment">تحرّش</string>
+    <string name="pv2_report_reason_other">سبب آخر</string>
+    <string name="pv2_report_step_details">أضف تفاصيل (اختياري)</string>
+    <string name="pv2_report_details_hint">أخبرنا بما حدث</string>
+    <string name="pv2_report_submit">إرسال</string>
+    <string name="pv2_report_next">متابعة</string>
+    <string name="pv2_report_submitting">جارٍ الإرسال…</string>
+    <string name="pv2_report_received_title">تم استلام البلاغ</string>
+    <string name="pv2_report_received_body">شكرًا لإخبارنا. نراجع البلاغات بخصوصية، ولا يُبلَّغ الحساب المُبلَّغ عنه بهوية المُبلِّغ أبدًا.</string>
+    <string name="pv2_report_done">تم</string>
+    <string name="pv2_report_block_title">هل تريد حظر @%1$s أيضًا؟</string>
+    <string name="pv2_report_block_body">لن يتمكنوا من العثور على ملفك الشخصي أو التواصل معك.</string>
+    <string name="pv2_report_block_cta">حظر الحساب</string>
+    <string name="pv2_report_already_submitted">لقد أبلغت عن هذا الحساب مؤخرًا.</string>
+    <string name="pv2_report_counter">%1$d/%2$d</string>
+    <string name="pv2_report_select_reason">اختر سببًا للمتابعة.</string>
+
+    <!-- الحظر -->
+    <string name="pv2_block_title">حظر @%1$s؟</string>
+    <string name="pv2_block_body">لن يتمكنوا من العثور على ملفك الشخصي أو رؤية منشوراتك أو التواصل معك. لن يُبلَّغوا بذلك.</string>
+    <string name="pv2_block_confirm">حظر</string>
+    <string name="pv2_block_cancel">إلغاء</string>
+    <string name="pv2_blocked_snackbar">تم حظر @%1$s</string>
+    <string name="pv2_blocking">جارٍ الحظر…</string>
+    <string name="pv2_blocked_unblocked_snackbar">تم إلغاء حظر الحساب</string>
+
+    <!-- الحسابات المحظورة -->
+    <string name="pv2_blocked_accounts_title">الحسابات المحظورة</string>
+    <string name="pv2_blocked_accounts_subtitle">الأشخاص الذين حظرتهم</string>
+    <string name="pv2_blocked_accounts_empty_title">لا توجد حسابات محظورة</string>
+    <string name="pv2_blocked_accounts_empty_body">ستظهر الحسابات التي تحظرها هنا.</string>
+
+    <!-- اختيار الدولة -->
+    <string name="pv2_country_label">الدولة/المنطقة</string>
+    <string name="pv2_country_not_shown">غير معروضة</string>
+    <string name="pv2_country_search_hint">ابحث عن دولة</string>
+    <string name="pv2_country_title">الدولة/المنطقة</string>
+    <string name="pv2_country_empty">لا توجد دول تطابق بحثك.</string>
+</resources>

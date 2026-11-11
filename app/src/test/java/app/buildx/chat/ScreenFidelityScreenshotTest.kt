@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import app.buildx.chat.data.model.AppAppearance
@@ -61,7 +62,16 @@ class ScreenFidelityScreenshotTest {
     private fun captureScreen(fileName: String) {
         composeRule.mainClock.advanceTimeBy(600L)
         composeRule.waitForIdle()
-        composeRule.onRoot().captureRoboImage(
+        // An open Popup/Menu creates a second window root with a smaller
+        // bounding box at a negative offset. Capture the largest root, which is
+        // always the activity window.
+        val roots = composeRule.onAllNodes(isRoot())
+        val nodes = roots.fetchSemanticsNodes()
+        val largest = nodes.indices.maxBy { i ->
+            val b = nodes[i].boundsInRoot
+            b.width * b.height
+        } ?: 0
+        roots[largest].captureRoboImage(
             file = File(outputDir, fileName),
             roborazziOptions = RoborazziOptions()
         )
