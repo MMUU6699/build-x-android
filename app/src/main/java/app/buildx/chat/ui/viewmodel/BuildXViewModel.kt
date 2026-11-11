@@ -94,6 +94,10 @@ data class BuildXUiState(
     val activeStepsSheetMessage: List<ReasoningStep>? = null,
     val showRenameDialog: Boolean = false,
     val showDeleteConfirmDialog: Boolean = false,
+    val selectedConversationForActions: Conversation? = null,
+    val conversationToRename: Conversation? = null,
+    val conversationToDelete: Conversation? = null,
+    val unlockedConversationIds: Set<String> = emptySet(),
     val showRecentUploadsPicker: Boolean = false,
     val activeShareLink: String? = null,
     val snackbarMessage: String? = null,
@@ -1379,30 +1383,99 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(isOverflowMenuOpen = open, isModePopupOpen = false) }
     }
 
-    fun togglePinActiveConversation() {
-        val convId = _uiState.value.activeConversationId ?: return
-        val conv = _uiState.value.conversations.firstOrNull { it.id == convId } ?: return
-        val nextPinned = !conv.pinned
-        _uiState.update { it.copy(isOverflowMenuOpen = false) }
+    fun openConversationActions(conversation: Conversation?) {
+        _uiState.update { it.copy(selectedConversationForActions = conversation) }
+    }
+
+    fun togglePinConversation(conversation: Conversation) {
+        val nextPinned = !conversation.effectivePinned
+        _uiState.update { state ->
+            val updatedList = state.conversations.map {
+                if (it.id == conversation.id) it.copy(pinned = nextPinned, isPinned = nextPinned) else it
+            }.sortedWith(compareByDescending<Conversation> { it.effectivePinned }.thenByDescending { it.updatedAt })
+            state.copy(
+                conversations = updatedList,
+                filteredConversations = if (state.searchQuery.isBlank()) updatedList else state.filteredConversations,
+                selectedConversationForActions = null
+            )
+        }
         viewModelScope.launch {
-            repository.togglePinConversation(convId, nextPinned)
+            repository.togglePinConversation(conversation.id, nextPinned)
             refreshConversationsAndAttachments()
-            showSnackbar(if (nextPinned) "Chat pinned" else "Chat unpinned")
+            showSnackbar(if (nextPinned) getLocalizedText(R.string.chat_pinned_toast) else getLocalizedText(R.string.chat_unpinned_toast))
         }
     }
 
-    fun openRenameDialog(open: Boolean) {
-        _uiState.update { it.copy(showRenameDialog = open, isOverflowMenuOpen = false) }
+    fun toggleLockConversation(conversation: Conversation) {
+        val nextLocked = !conversation.isLocked
+        _uiState.update { state ->
+            val updatedList = state.conversations.map {
+                if (it.id == conversation.id) it.copy(isLocked = nextLocked) else it
+            }
+            val nextUnlocked = if (nextLocked) state.unlockedConversationIds - conversation.id else state.unlockedConversationIds + conversation.id
+            state.copy(
+                conversations = updatedList,
+                filteredConversations = if (state.searchQuery.isBlank()) updatedList else state.filteredConversations,
+                unlockedConversationIds = nextUnlocked,
+                selectedConversationForActions = null
+            )
+        }
+        viewModelScope.launch {
+            repository.toggleLockConversation(conversation.id, nextLocked)
+            refreshConversationsAndAttachments()
+            showSnackbar(if (nextLocked) getLocalizedText(R.string.chat_locked_toast) else getLocalizedText(R.string.chat_unlocked_toast))
+        }
+    }
+
+    fun markConversationUnlocked(conversationId: String) {
+        _uiState.update {
+            it.copy(unlockedConversationIds = it.unlockedConversationIds + conversationId)
+        }
+    }
+
+    fun togglePinActiveConversation() {
+        val convId = _uiState.value.activeConversationId ?: return
+        val conv = _uiState.value.conversations.firstOrNull { it.id == convId } ?: return
+        togglePinConversation(conv)
+    }
+
+    fun openRenameDialog(open: Boolean, conversation: Conversation? = null) {
+        _uiState.update {
+            it.copy(
+                showRenameDialog = open,
+                conversationToRename = conversation ?: if (open) it.conversations.firstOrNull { c -> c.id == it.activeConversationId } else null,
+                selectedConversationForActions = null,
+                isOverflowMenuOpen = false
+            )
+        }
+    }
+
+    fun openRenameForConversation(conversation: Conversation) {
+        openRenameDialog(true, conversation)
     }
 
     fun renameActiveConversation(newTitle: String) {
-        val convId = _uiState.value.activeConversationId ?: return
+        confirmRenameConversation(newTitle)
+    }
+
+    fun confirmRenameConversation(newTitle: String) {
+        val targetConv = _uiState.value.conversationToRename
+            ?: _uiState.value.conversations.firstOrNull { it.id == _uiState.value.activeConversationId }
+            ?: return
         val trimmed = newTitle.trim()
         if (trimmed.isEmpty()) return
-        _uiState.update {
-            it.copy(
+        val convId = targetConv.id
+        val wasActive = convId == _uiState.value.activeConversationId
+        _uiState.update { state ->
+            val updatedList = state.conversations.map {
+                if (it.id == convId) it.copy(title = trimmed) else it
+            }
+            state.copy(
                 showRenameDialog = false,
-                activeConversationTitle = trimmed
+                conversationToRename = null,
+                conversations = updatedList,
+                filteredConversations = if (state.searchQuery.isBlank()) updatedList else state.filteredConversations,
+                activeConversationTitle = if (wasActive) trimmed else state.activeConversationTitle
             )
         }
         viewModelScope.launch {
@@ -1411,18 +1484,47 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun openDeleteConfirmDialog(open: Boolean) {
-        _uiState.update { it.copy(showDeleteConfirmDialog = open, isOverflowMenuOpen = false) }
+    fun openDeleteConfirmDialog(open: Boolean, conversation: Conversation? = null) {
+        _uiState.update {
+            it.copy(
+                showDeleteConfirmDialog = open,
+                conversationToDelete = conversation ?: if (open) it.conversations.firstOrNull { c -> c.id == it.activeConversationId } else null,
+                selectedConversationForActions = null,
+                isOverflowMenuOpen = false
+            )
+        }
+    }
+
+    fun openDeleteForConversation(conversation: Conversation) {
+        openDeleteConfirmDialog(true, conversation)
     }
 
     fun deleteActiveConversation() {
-        val convId = _uiState.value.activeConversationId ?: return
-        _uiState.update { it.copy(showDeleteConfirmDialog = false) }
+        confirmDeleteConversation()
+    }
+
+    fun confirmDeleteConversation() {
+        val targetConv = _uiState.value.conversationToDelete
+            ?: _uiState.value.conversations.firstOrNull { it.id == _uiState.value.activeConversationId }
+            ?: return
+        val convId = targetConv.id
+        val wasActive = convId == _uiState.value.activeConversationId
+        _uiState.update { state ->
+            val updatedList = state.conversations.filterNot { it.id == convId }
+            state.copy(
+                showDeleteConfirmDialog = false,
+                conversationToDelete = null,
+                conversations = updatedList,
+                filteredConversations = if (state.searchQuery.isBlank()) updatedList else state.filteredConversations
+            )
+        }
         viewModelScope.launch {
             repository.deleteConversation(convId)
-            startNewChat(incognito = false)
+            if (wasActive) {
+                startNewChat(incognito = false)
+            }
             refreshConversationsAndAttachments()
-            showSnackbar("Chat deleted")
+            showSnackbar(getLocalizedText(R.string.chat_deleted_toast))
         }
     }
 

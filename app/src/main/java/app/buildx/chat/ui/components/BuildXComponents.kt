@@ -17,9 +17,11 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -1422,6 +1424,7 @@ fun DrawerNavRow(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun DrawerChatRow(
     title: String,
@@ -1429,11 +1432,23 @@ fun DrawerChatRow(
     isPinned: Boolean,
     isSelected: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isLocked: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
+    onOptionsClick: (() -> Unit)? = null
 ) {
     val colors = BuildXTheme.colors
     val cleanDisplayTitle = remember(title) {
         title.removePrefix("محادثة:").removePrefix("محادثة :").trim().ifEmpty { title }
+    }
+
+    val clickModifier = if (onLongClick != null) {
+        Modifier.combinedClickable(
+            onClick = onClick,
+            onLongClick = onLongClick
+        )
+    } else {
+        Modifier.clickable(onClick = onClick)
     }
 
     Row(
@@ -1443,8 +1458,8 @@ fun DrawerChatRow(
             .background(
                 if (isSelected) colors.surfaceMuted.copy(alpha = 0.85f) else Color.Transparent
             )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 11.dp),
+            .then(clickModifier)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (isPinned) {
@@ -1452,9 +1467,18 @@ fun DrawerChatRow(
                 painter = painterResource(id = R.drawable.ic_pin),
                 contentDescription = "Pinned",
                 tint = colors.primaryBlue,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(15.dp)
             )
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+        }
+        if (isLocked) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_lock),
+                contentDescription = "Locked",
+                tint = colors.secondaryText,
+                modifier = Modifier.size(15.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
         }
         Text(
             text = cleanDisplayTitle,
@@ -1467,13 +1491,30 @@ fun DrawerChatRow(
             modifier = Modifier.weight(1f)
         )
         if (isUnread) {
-            Spacer(modifier = Modifier.width(10.dp))
+            Spacer(modifier = Modifier.width(8.dp))
             Box(
                 modifier = Modifier
                     .size(8.dp)
                     .clip(CircleShape)
                     .background(colors.primaryBlue)
             )
+        }
+        if (onOptionsClick != null) {
+            Spacer(modifier = Modifier.width(4.dp))
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onOptionsClick),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_more_horizontal),
+                    contentDescription = "Options",
+                    tint = colors.secondaryText.copy(alpha = 0.7f),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
         }
     }
 }

@@ -138,11 +138,14 @@ data class Conversation(
     @SerialName("user_id") val userId: String,
     val title: String = "New chat",
     val pinned: Boolean = false,
+    @SerialName("is_pinned") val isPinned: Boolean = false,
+    @SerialName("is_locked") val isLocked: Boolean = false,
     @SerialName("share_token") val shareToken: String? = null,
     @SerialName("last_read_at") val lastReadAt: String = "1970-01-01T00:00:00Z",
     @SerialName("updated_at") val updatedAt: String = "1970-01-01T00:00:00Z",
     @SerialName("created_at") val createdAt: String? = null
 ) {
+    val effectivePinned: Boolean get() = pinned || isPinned
     val cleanTitle: String
         get() = title
             .removePrefix("محادثة:")

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_action_pin">تثبيت المحادثة</string>
+    <string name="chat_action_unpin">إلغاء تثبيت المحادثة</string>
+    <string name="chat_action_lock">قفل المحادثة</string>
+    <string name="chat_action_unlock">إلغاء قفل المحادثة</string>
+    <string name="chat_action_lock_subtitle">حماية بالبصمة أو رمز القفل</string>
+    <string name="chat_action_rename">إعادة تسمية</string>
+    <string name="chat_action_delete">حذف المحادثة</string>
+    <string name="chat_locked_auth_title">فتح قفل المحادثة</string>
+    <string name="chat_locked_auth_subtitle">أكد هويتك للوصول إلى هذه المحادثة المقفلة</string>
+    <string name="chat_locked_auth_error">يلزم التحقق لفتح المحادثة المقفلة</string>
+    <string name="chat_pinned_toast">تم تثبيت المحادثة</string>
+    <string name="chat_unpinned_toast">تم إلغاء تثبيت المحادثة</string>
+    <string name="chat_locked_toast">تم قفل المحادثة</string>
+    <string name="chat_unlocked_toast">تم إلغاء قفل المحادثة</string>
+    <string name="chat_deleted_toast">تم حذف المحادثة</string>
+</resources>

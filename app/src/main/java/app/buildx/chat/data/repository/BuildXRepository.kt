@@ -806,6 +806,20 @@ class BuildXRepository(val context: Context) {
             runCatching {
                 val payload = buildJsonObject {
                     put("pinned", pinned)
+                    put("is_pinned", pinned)
+                }
+                supabase.from("conversations").update(payload) {
+                    filter { eq("id", conversationId) }
+                }
+                Unit
+            }
+        }
+
+    suspend fun toggleLockConversation(conversationId: String, locked: Boolean): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val payload = buildJsonObject {
+                    put("is_locked", locked)
                 }
                 supabase.from("conversations").update(payload) {
                     filter { eq("id", conversationId) }

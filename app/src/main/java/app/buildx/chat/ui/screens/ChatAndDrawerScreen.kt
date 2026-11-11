@@ -162,7 +162,9 @@ fun ChatAndDrawerScreen(
     onSelectMode: ((ChatMode) -> Unit)? = null,
     onTurnOnNotifications: (() -> Unit)? = null,
     onDismissNotificationPermissionCard: (() -> Unit)? = null,
-    onSelectMediaAttachment: ((AttachmentRow) -> Unit)? = null
+    onSelectMediaAttachment: ((AttachmentRow) -> Unit)? = null,
+    onConversationLongClick: (Conversation) -> Unit = {},
+    onConversationOptionsClick: (Conversation) -> Unit = {}
 ) {
     val colors = BuildXTheme.colors
     val focusManager = LocalFocusManager.current
@@ -236,7 +238,9 @@ fun ChatAndDrawerScreen(
                 onOpenSettings = {
                     focusManager.clearFocus()
                     onNavigateToSettings()
-                }
+                },
+                onConversationLongClick = onConversationLongClick,
+                onConversationOptionsClick = onConversationOptionsClick
             )
         }
 
@@ -1011,7 +1015,9 @@ private fun DrawerContent(
     onOpenSearch: () -> Unit = {},
     onSelectConversation: (String) -> Unit,
     onOpenNotifications: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onConversationLongClick: (Conversation) -> Unit = {},
+    onConversationOptionsClick: (Conversation) -> Unit = {}
 ) {
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
@@ -1150,9 +1156,12 @@ private fun DrawerContent(
                             DrawerChatRow(
                                 title = conv.cleanTitle,
                                 isUnread = unreadIds.contains(conv.id),
-                                isPinned = conv.pinned,
+                                isPinned = conv.effectivePinned,
+                                isLocked = conv.isLocked,
                                 isSelected = activeSurfacePane == MainSurfacePane.CHAT && conv.id == activeConversationId,
-                                onClick = { onSelectConversation(conv.id) }
+                                onClick = { onSelectConversation(conv.id) },
+                                onLongClick = { onConversationLongClick(conv) },
+                                onOptionsClick = { onConversationOptionsClick(conv) }
                             )
                         }
                     }

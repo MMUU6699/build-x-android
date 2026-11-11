@@ -62,12 +62,14 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import app.buildx.chat.data.model.MainSurfacePane
 import app.buildx.chat.ui.components.UsernameReviewSheet
+import android.app.Activity
 import app.buildx.chat.ui.screens.AppAppearanceScreen
 import app.buildx.chat.ui.screens.AppInfoScreen
 import app.buildx.chat.ui.screens.AppLanguageScreen
 import app.buildx.chat.ui.screens.AuthScreen
 import app.buildx.chat.ui.screens.BlockedAccountsScreen
 import app.buildx.chat.ui.screens.ChatAndDrawerScreen
+import app.buildx.chat.ui.screens.ConversationActionsSheet
 import app.buildx.chat.ui.screens.DataPrivacyScreen
 import app.buildx.chat.ui.screens.DeleteChatDialog
 import app.buildx.chat.ui.screens.EditProfileScreen
@@ -177,6 +179,71 @@ fun BuildXRoot(
     val context = LocalContext.current
 
     var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+
+    fun authenticateWithDevice(
+        title: String,
+        subtitle: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val activity = context as? Activity
+        if (activity != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            try {
+                val prompt = android.hardware.biometrics.BiometricPrompt.Builder(activity)
+                    .setTitle(title)
+                    .setSubtitle(subtitle)
+                    .apply {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            setAllowedAuthenticators(
+                                android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                                android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                            )
+                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            @Suppress("DEPRECATION")
+                            setDeviceCredentialAllowed(true)
+                        } else {
+                            setNegativeButton(activity.getString(android.R.string.cancel), activity.mainExecutor) { _, _ ->
+                                onError(activity.getString(android.R.string.cancel))
+                            }
+                        }
+                    }
+                    .build()
+
+                val signal = android.os.CancellationSignal()
+                prompt.authenticate(
+                    signal,
+                    activity.mainExecutor,
+                    object : android.hardware.biometrics.BiometricPrompt.AuthenticationCallback() {
+                        override fun onAuthenticationSucceeded(result: android.hardware.biometrics.BiometricPrompt.AuthenticationResult?) {
+                            super.onAuthenticationSucceeded(result)
+                            onSuccess()
+                        }
+
+                        override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
+                            super.onAuthenticationError(errorCode, errString)
+                            if (errorCode == android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_NO_BIOMETRICS ||
+                                errorCode == android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_HW_UNAVAILABLE ||
+                                errorCode == android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_HW_NOT_PRESENT
+                            ) {
+                                onSuccess()
+                            } else {
+                                onError(errString?.toString() ?: "Authentication cancelled")
+                            }
+                        }
+
+                        override fun onAuthenticationFailed() {
+                            super.onAuthenticationFailed()
+                            onError("Authentication failed")
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                onSuccess()
+            }
+        } else {
+            onSuccess()
+        }
+    }
 
     // Audio recording permission launcher
     val recordAudioPermissionLauncher = rememberLauncherForActivityResult(
@@ -344,7 +411,30 @@ fun BuildXRoot(
                             onToggleDrawer = { open -> viewModel.setDrawerOpen(open) },
                             onNewChat = { viewModel.startNewChat(incognito = false) },
                             onStartIncognito = { viewModel.startNewChat(incognito = true) },
-                            onSelectConversation = { id -> viewModel.selectConversation(id) },
+                            onSelectConversation = { id ->
+                                val conv = uiState.conversations.firstOrNull { it.id == id }
+                                if (conv?.isLocked == true && !uiState.unlockedConversationIds.contains(id)) {
+                                    authenticateWithDevice(
+                                        title = context.getString(R.string.chat_locked_auth_title),
+                                        subtitle = context.getString(R.string.chat_locked_auth_subtitle),
+                                        onSuccess = {
+                                            viewModel.markConversationUnlocked(id)
+                                            viewModel.selectConversation(id)
+                                        },
+                                        onError = {
+                                            viewModel.showSnackbar(context.getString(R.string.chat_locked_auth_error))
+                                        }
+                                    )
+                                } else {
+                                    viewModel.selectConversation(id)
+                                }
+                            },
+                            onConversationLongClick = { conv ->
+                                viewModel.openConversationActions(conv)
+                            },
+                            onConversationOptionsClick = { conv ->
+                                viewModel.openConversationActions(conv)
+                            },
                             onSearchQueryChange = { q -> viewModel.onSearchQueryChange(q) },
                             onNavigateToNotifications = {
                                 viewModel.setDrawerOpen(false)
@@ -830,18 +920,46 @@ fun BuildXRoot(
 
             // Dialogs
             if (uiState.showRenameDialog) {
-                val activeConv = uiState.conversations.firstOrNull { it.id == uiState.activeConversationId }
+                val targetConv = uiState.conversationToRename ?: uiState.conversations.firstOrNull { it.id == uiState.activeConversationId }
                 RenameChatDialog(
-                    initialTitle = activeConv?.cleanTitle ?: "",
-                    onConfirm = { newTitle -> viewModel.renameActiveConversation(newTitle) },
+                    initialTitle = targetConv?.cleanTitle ?: "",
+                    onConfirm = { newTitle -> viewModel.confirmRenameConversation(newTitle) },
                     onDismiss = { viewModel.openRenameDialog(false) }
                 )
             }
 
             if (uiState.showDeleteConfirmDialog) {
                 DeleteChatDialog(
-                    onConfirm = { viewModel.deleteActiveConversation() },
+                    onConfirm = { viewModel.confirmDeleteConversation() },
                     onDismiss = { viewModel.openDeleteConfirmDialog(false) }
+                )
+            }
+
+            val selectedActionsConv = uiState.selectedConversationForActions
+            if (selectedActionsConv != null) {
+                ConversationActionsSheet(
+                    conversation = selectedActionsConv,
+                    onDismiss = { viewModel.openConversationActions(null) },
+                    onTogglePin = { viewModel.togglePinConversation(selectedActionsConv) },
+                    onToggleLock = {
+                        if (!selectedActionsConv.isLocked) {
+                            authenticateWithDevice(
+                                title = context.getString(R.string.chat_action_lock),
+                                subtitle = context.getString(R.string.chat_action_lock_subtitle),
+                                onSuccess = { viewModel.toggleLockConversation(selectedActionsConv) },
+                                onError = { msg -> viewModel.showSnackbar(msg) }
+                            )
+                        } else {
+                            authenticateWithDevice(
+                                title = context.getString(R.string.chat_action_unlock),
+                                subtitle = context.getString(R.string.chat_locked_auth_subtitle),
+                                onSuccess = { viewModel.toggleLockConversation(selectedActionsConv) },
+                                onError = { msg -> viewModel.showSnackbar(msg) }
+                            )
+                        }
+                    },
+                    onRename = { viewModel.openRenameForConversation(selectedActionsConv) },
+                    onDelete = { viewModel.openDeleteForConversation(selectedActionsConv) }
                 )
             }
 

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_action_pin">Pin chat</string>
+    <string name="chat_action_unpin">Unpin chat</string>
+    <string name="chat_action_lock">Lock chat</string>
+    <string name="chat_action_unlock">Unlock chat</string>
+    <string name="chat_action_lock_subtitle">Protect with biometric or passcode</string>
+    <string name="chat_action_rename">Rename</string>
+    <string name="chat_action_delete">Delete chat</string>
+    <string name="chat_locked_auth_title">Unlock Chat</string>
+    <string name="chat_locked_auth_subtitle">Authenticate to open this locked chat</string>
+    <string name="chat_locked_auth_error">Authentication required to view locked chat</string>
+    <string name="chat_pinned_toast">Chat pinned</string>
+    <string name="chat_unpinned_toast">Chat unpinned</string>
+    <string name="chat_locked_toast">Chat locked</string>
+    <string name="chat_unlocked_toast">Chat unlocked</string>
+    <string name="chat_deleted_toast">Chat deleted</string>
+</resources>
