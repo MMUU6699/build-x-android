@@ -3,7 +3,7 @@
     <string name="dm_nav_messages">Messages</string>
     <string name="dm_search_placeholder">Search conversations...</string>
     <string name="dm_notes_tray_title">Notes</string>
-    <string name="dm_leave_a_note">Leave a note</string>
+    <string name="dm_leave_a_note">Note...</string>
     <string name="dm_reply_to_note">Reply to %1$s\'s note…</string>
     <string name="dm_reply_to_note_title">Reply to note</string>
     <string name="dm_replied_to_note">Replied to note</string>
@@ -48,4 +48,21 @@
     <string name="dm_members_count">%1$d members</string>
     <string name="dm_you">You</string>
     <string name="dm_send">Send</string>
+    <string name="dm_filter_all">All</string>
+    <string name="dm_filter_unread">Unread</string>
+    <string name="dm_filter_groups">Groups</string>
+    <string name="dm_filter_requests">Requests</string>
+    <string name="dm_mark_read">Mark as read</string>
+    <string name="dm_mark_unread">Mark as unread</string>
+    <string name="dm_tap_to_chat">Tap to start chatting</string>
+    <string name="dm_group_members_format">Group · %1$d members</string>
+    <string name="dm_message_unsent">Message unsent</string>
+    <string name="dm_sent_attachment">Sent an attachment</string>
+    <string name="dm_mode_direct">Direct Message</string>
+    <string name="dm_mode_group">New Group</string>
+    <string name="dm_search_people">Search people…</string>
+    <string name="dm_shared_ago">Shared %1$s ago</string>
+    <string name="dm_delete_or_leave">Delete conversation</string>
+    <string name="dm_people_header">People</string>
+    <string name="dm_conversations_header">Conversations</string>
 </resources>

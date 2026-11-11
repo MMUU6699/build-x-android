@@ -71,7 +71,7 @@ import app.buildx.chat.ui.screens.BlockedAccountsScreen
 import app.buildx.chat.ui.screens.ChatAndDrawerScreen
 import app.buildx.chat.ui.screens.DmInboxScreen
 import app.buildx.chat.ui.screens.DmConversationScreen
-import app.buildx.chat.ui.screens.CreateGroupSheet
+import app.buildx.chat.ui.screens.NewMessageOrGroupSheet
 import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.ui.screens.ConversationActionsSheet
 import app.buildx.chat.ui.screens.DataPrivacyScreen
@@ -949,7 +949,24 @@ fun BuildXRoot(
                             },
                             onCreateGroupClick = { viewModel.openCreateGroupSheet(true) },
                             onTogglePinConversation = { convId -> viewModel.togglePinDmConversation(convId) },
-                            onToggleMuteConversation = { convId -> viewModel.toggleMuteDmConversation(convId) }
+                            onToggleMuteConversation = { convId -> viewModel.toggleMuteDmConversation(convId) },
+                            onSelectFilterTab = { tab -> viewModel.selectDmFilterTab(tab) },
+                            onToggleReadUnreadConversation = { convId ->
+                                val conv = uiState.dmInboxItems.firstOrNull { it.id == convId }
+                                if ((conv?.unreadCount ?: 0) > 0) {
+                                    viewModel.markDmRead(convId)
+                                } else {
+                                    viewModel.markDmUnread(convId)
+                                }
+                            },
+                            onDeleteOrLeaveConversation = { convId ->
+                                viewModel.leaveOrDeleteDmConversation(convId)
+                            },
+                            onOpenDirectChatWithUser = { userId ->
+                                viewModel.openDirectChatWithUser(userId) { convId ->
+                                    navController.navigate("dm/$convId")
+                                }
+                            }
                         )
                     }
 
@@ -1087,21 +1104,30 @@ fun BuildXRoot(
                 }
             )
 
-            // Create Group Sheet
+            // New Message or Group Sheet
             if (uiState.isCreateGroupSheetOpen) {
-                CreateGroupSheet(
-                    title = uiState.groupCreationTitle,
-                    onTitleChange = { viewModel.onGroupCreationTitleChanged(it) },
+                NewMessageOrGroupSheet(
                     candidateUsers = uiState.followingListUsers,
-                    selectedUserIds = uiState.groupCreationSelectedUserIds,
-                    onToggleSelectUser = { viewModel.toggleGroupCreationUserSelection(it) },
+                    searchResults = uiState.dmSearchPeopleResults,
+                    isSearchLoading = uiState.isDmSearchPeopleLoading,
+                    searchQuery = uiState.dmSearchQuery,
+                    onSearchQueryChange = { viewModel.onDmSearchQueryChanged(it) },
+                    onSelectDirectUser = { userId ->
+                        viewModel.openDirectChatWithUser(userId) { convId ->
+                            navController.navigate("dm/$convId")
+                        }
+                    },
+                    groupTitle = uiState.groupCreationTitle,
+                    onGroupTitleChange = { viewModel.onGroupCreationTitleChanged(it) },
+                    selectedGroupUserIds = uiState.groupCreationSelectedUserIds,
+                    onToggleSelectGroupUser = { viewModel.toggleGroupCreationUserSelection(it) },
                     onCreateGroup = {
                         viewModel.submitCreateGroup { convId ->
                             navController.navigate("dm/$convId")
                         }
                     },
-                    onDismiss = { viewModel.openCreateGroupSheet(false) },
-                    isCreating = uiState.isCreatingGroup
+                    isCreatingGroup = uiState.isCreatingGroup,
+                    onDismiss = { viewModel.openCreateGroupSheet(false) }
                 )
             }
 

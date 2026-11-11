@@ -70,6 +70,13 @@ enum class SessionState {
     SignedOut
 }
 
+enum class DmFilterTab {
+    ALL,
+    UNREAD,
+    GROUPS,
+    REQUESTS
+}
+
 data class BuildXUiState(
     val isAuthenticated: Boolean = false,
     val sessionState: SessionState = if (isAuthenticated) SessionState.SignedIn else SessionState.Loading,
@@ -165,6 +172,9 @@ data class BuildXUiState(
     val dmSearchQuery: String = "",
     val isDmInboxLoading: Boolean = false,
     val totalUnreadDmCount: Int = 0,
+    val selectedDmFilterTab: DmFilterTab = DmFilterTab.ALL,
+    val dmSearchPeopleResults: List<PersonSearchResult> = emptyList(),
+    val isDmSearchPeopleLoading: Boolean = false,
     val inboxNotesTray: List<FeedNoteItem> = emptyList(),
     val activeReplyTargetNote: FeedNoteItem? = null,
     val activeDmDetail: DmConversationDetail? = null,
@@ -2599,9 +2609,75 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun selectDmFilterTab(tab: DmFilterTab) {
+        _uiState.update { it.copy(selectedDmFilterTab = tab) }
+    }
+
     fun onDmSearchQueryChanged(query: String) {
         _uiState.update { it.copy(dmSearchQuery = query) }
         loadDmInbox(query)
+        if (query.trim().length >= 2) {
+            viewModelScope.launch {
+                _uiState.update { it.copy(isDmSearchPeopleLoading = true) }
+                repository.searchPeople(query.trim()).fold(
+                    onSuccess = { people ->
+                        _uiState.update { it.copy(dmSearchPeopleResults = people, isDmSearchPeopleLoading = false) }
+                    },
+                    onFailure = {
+                        _uiState.update { it.copy(isDmSearchPeopleLoading = false) }
+                    }
+                )
+            }
+        } else {
+            _uiState.update { it.copy(dmSearchPeopleResults = emptyList(), isDmSearchPeopleLoading = false) }
+        }
+    }
+
+    fun leaveOrDeleteDmConversation(conversationId: String) {
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    dmInboxItems = it.dmInboxItems.filterNot { item -> item.id == conversationId }
+                )
+            }
+            repository.leaveOrDeleteDmConversation(conversationId).onFailure { err ->
+                showSnackbar(mapError(err))
+                loadDmInbox()
+            }
+        }
+    }
+
+    fun markDmUnread(conversationId: String) {
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    dmInboxItems = it.dmInboxItems.map { item ->
+                        if (item.id == conversationId) item.copy(unreadCount = 1) else item
+                    }
+                )
+            }
+            repository.markDmUnread(conversationId).onFailure { err ->
+                showSnackbar(mapError(err))
+                loadDmInbox()
+            }
+        }
+    }
+
+    fun markDmRead(conversationId: String) {
+        viewModelScope.launch {
+            val conv = _uiState.value.dmInboxItems.firstOrNull { it.id == conversationId }
+            val lastMsgId = conv?.lastMessage?.id
+            _uiState.update {
+                it.copy(
+                    dmInboxItems = it.dmInboxItems.map { item ->
+                        if (item.id == conversationId) item.copy(unreadCount = 0) else item
+                    }
+                )
+            }
+            if (lastMsgId != null) {
+                repository.markDmRead(conversationId, lastMsgId)
+            }
+        }
     }
 
     fun loadInboxNotesTray() {

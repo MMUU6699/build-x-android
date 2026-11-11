@@ -1553,6 +1553,28 @@ class BuildXRepository(val context: Context) {
         }
     }
 
+    suspend fun leaveOrDeleteDmConversation(conversationId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_conversation_id", conversationId)
+            }
+            val response = supabase.postgrest.rpc("leave_or_delete_dm_conversation", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
+        }
+    }
+
+    suspend fun markDmUnread(conversationId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_conversation_id", conversationId)
+            }
+            val response = supabase.postgrest.rpc("mark_dm_unread", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
+        }
+    }
+
     suspend fun uploadDmAttachment(staged: StagedAttachment): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val uid = currentUserId() ?: error("Not authenticated")
