@@ -1395,7 +1395,8 @@ fun DrawerNavRow(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    isActive: Boolean = false
+    isActive: Boolean = false,
+    badgeCount: Int = 0
 ) {
     val colors = BuildXTheme.colors
     Row(
@@ -1419,8 +1420,25 @@ fun DrawerNavRow(
             color = colors.primaryText,
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Start
+            textAlign = TextAlign.Start,
+            modifier = Modifier.weight(1f)
         )
+        if (badgeCount > 0) {
+            Box(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(colors.primaryBlue)
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (badgeCount > 99) "99+" else badgeCount.toString(),
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
     }
 }
 

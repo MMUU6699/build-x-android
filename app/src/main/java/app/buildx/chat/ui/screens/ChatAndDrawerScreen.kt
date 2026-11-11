@@ -61,6 +61,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -121,6 +122,7 @@ fun ChatAndDrawerScreen(
     onNavigateToMedia: () -> Unit,
     onNavigateToProfile: () -> Unit = {},
     onNavigateToSearch: () -> Unit = {},
+    onNavigateToMessages: () -> Unit = {},
     onComposerTextChange: (String) -> Unit,
     onToggleMode: () -> Unit,
     onPlusClick: () -> Unit,
@@ -222,6 +224,10 @@ fun ChatAndDrawerScreen(
                 onOpenProfile = {
                     focusManager.clearFocus()
                     onNavigateToProfile()
+                },
+                onOpenMessages = {
+                    focusManager.clearFocus()
+                    onNavigateToMessages()
                 },
                 onOpenSearch = {
                     focusManager.clearFocus()
@@ -1012,6 +1018,8 @@ private fun DrawerContent(
     onNewChat: () -> Unit,
     onOpenMedia: () -> Unit,
     onOpenProfile: () -> Unit = {},
+    onOpenMessages: () -> Unit = {},
+    unreadDmCount: Int = 0,
     onOpenSearch: () -> Unit = {},
     onSelectConversation: (String) -> Unit,
     onOpenNotifications: () -> Unit,
@@ -1096,11 +1104,18 @@ private fun DrawerContent(
                     )
                 }
             } else {
-                // Navigation rows: New chat, Media
+                // Navigation rows: New chat, Messages, Media, Profile
                 DrawerNavRow(
                     iconRes = R.drawable.ic_edit_compose,
                     label = strings.newChat,
                     onClick = onNewChat
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                DrawerNavRow(
+                    iconRes = R.drawable.ic_chat_bubble,
+                    label = stringResource(R.string.dm_nav_messages),
+                    badgeCount = unreadDmCount,
+                    onClick = onOpenMessages
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 DrawerNavRow(

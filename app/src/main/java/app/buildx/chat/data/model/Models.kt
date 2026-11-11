@@ -282,3 +282,143 @@ data class VerificationStatusInfo(
     @SerialName("reviewed_at") val reviewedAt: String? = null
 )
 
+enum class DmSendStatus { SENDING, SENT, FAILED }
+
+@Serializable
+data class DmPeerSummary(
+    val id: String,
+    val username: String? = null,
+    val handle: String? = null,
+    @SerialName("display_name") val displayName: String? = null,
+    @SerialName("avatar_url") val avatarUrl: String? = null,
+    @SerialName("is_verified") val isVerified: Boolean = false
+)
+
+@Serializable
+data class DmLastMessageSummary(
+    val id: String,
+    @SerialName("sender_id") val senderId: String,
+    @SerialName("message_type") val messageType: String = "text",
+    val content: String = "",
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("deleted_at") val deletedAt: String? = null
+)
+
+@Serializable
+data class DmInboxItem(
+    val id: String,
+    val kind: String = "direct",
+    val title: String? = null,
+    @SerialName("avatar_url") val avatarUrl: String? = null,
+    val status: String = "active",
+    @SerialName("is_muted") val isMuted: Boolean = false,
+    @SerialName("is_pinned") val isPinned: Boolean = false,
+    @SerialName("last_read_at") val lastReadAt: String? = null,
+    @SerialName("last_read_message_id") val lastReadMessageId: String? = null,
+    @SerialName("unread_count") val unreadCount: Int = 0,
+    @SerialName("last_message_text") val lastMessageText: String? = null,
+    @SerialName("last_message_at") val lastMessageAt: String? = null,
+    @SerialName("last_message") val lastMessage: DmLastMessageSummary? = null,
+    val peer: DmPeerSummary? = null,
+    @SerialName("member_count") val memberCount: Int? = null
+)
+
+@Serializable
+data class DmParticipant(
+    @SerialName("user_id") val userId: String,
+    val username: String? = null,
+    val handle: String? = null,
+    @SerialName("display_name") val displayName: String? = null,
+    @SerialName("avatar_url") val avatarUrl: String? = null,
+    @SerialName("is_verified") val isVerified: Boolean = false,
+    val role: String = "member",
+    val status: String = "active",
+    @SerialName("is_muted") val isMuted: Boolean = false,
+    @SerialName("is_pinned") val isPinned: Boolean = false,
+    @SerialName("last_read_at") val lastReadAt: String? = null,
+    @SerialName("last_read_message_id") val lastReadMessageId: String? = null
+)
+
+@Serializable
+data class DmPeerIntro(
+    val id: String,
+    val username: String? = null,
+    val handle: String? = null,
+    @SerialName("display_name") val displayName: String? = null,
+    @SerialName("avatar_url") val avatarUrl: String? = null,
+    @SerialName("is_verified") val isVerified: Boolean = false,
+    @SerialName("followers_count") val followersCount: Int = 0,
+    @SerialName("following_count") val followingCount: Int = 0,
+    @SerialName("posts_count") val postsCount: Int = 0,
+    @SerialName("following_since") val followingSince: String? = null,
+    @SerialName("created_at") val createdAt: String? = null
+)
+
+@Serializable
+data class DmConversationMetadata(
+    val id: String,
+    val kind: String = "direct",
+    val title: String? = null,
+    @SerialName("avatar_url") val avatarUrl: String? = null,
+    @SerialName("pinned_message_id") val pinnedMessageId: String? = null,
+    @SerialName("created_by") val createdBy: String? = null,
+    @SerialName("created_at") val createdAt: String? = null
+)
+
+@Serializable
+data class DmConversationDetail(
+    val success: Boolean = true,
+    val conversation: DmConversationMetadata? = null,
+    @SerialName("pinned_message") val pinnedMessage: DmMessage? = null,
+    val participants: List<DmParticipant> = emptyList(),
+    @SerialName("peer_intro") val peerIntro: DmPeerIntro? = null,
+    val error: String? = null
+)
+
+@Serializable
+data class DmReplyPreview(
+    val id: String,
+    @SerialName("sender_id") val senderId: String,
+    @SerialName("sender_display_name") val senderDisplayName: String? = null,
+    val content: String = "",
+    @SerialName("attachment_mime") val attachmentMime: String? = null,
+    @SerialName("is_deleted") val isDeleted: Boolean = false
+)
+
+@Serializable
+data class DmMessage(
+    val id: String,
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("sender_id") val senderId: String,
+    @SerialName("sender_username") val senderUsername: String? = null,
+    @SerialName("sender_handle") val senderHandle: String? = null,
+    @SerialName("sender_display_name") val senderDisplayName: String? = null,
+    @SerialName("sender_avatar_url") val senderAvatarUrl: String? = null,
+    @SerialName("sender_is_verified") val senderIsVerified: Boolean = false,
+    @SerialName("message_type") val messageType: String = "text",
+    val content: String = "",
+    @SerialName("reply_to") val replyTo: DmReplyPreview? = null,
+    @SerialName("reply_to_note_id") val replyToNoteId: String? = null,
+    @SerialName("note_snapshot_text") val noteSnapshotText: String? = null,
+    @SerialName("attachment_path") val attachmentPath: String? = null,
+    @SerialName("attachment_mime") val attachmentMime: String? = null,
+    @SerialName("attachment_size") val attachmentSize: Long? = null,
+    @SerialName("client_temp_id") val clientTempId: String? = null,
+    @SerialName("edited_at") val editedAt: String? = null,
+    @SerialName("deleted_at") val deletedAt: String? = null,
+    @SerialName("created_at") val createdAt: String,
+    val localSendStatus: DmSendStatus = DmSendStatus.SENT
+)
+
+@Serializable
+data class FeedNoteItem(
+    val id: String,
+    @SerialName("user_id") val userId: String,
+    val content: String,
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("expires_at") val expiresAt: String,
+    @SerialName("is_own") val isOwn: Boolean = false,
+    val author: DmPeerSummary
+)
+
+

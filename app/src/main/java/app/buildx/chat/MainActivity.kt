@@ -69,6 +69,10 @@ import app.buildx.chat.ui.screens.AppLanguageScreen
 import app.buildx.chat.ui.screens.AuthScreen
 import app.buildx.chat.ui.screens.BlockedAccountsScreen
 import app.buildx.chat.ui.screens.ChatAndDrawerScreen
+import app.buildx.chat.ui.screens.DmInboxScreen
+import app.buildx.chat.ui.screens.DmConversationScreen
+import app.buildx.chat.ui.screens.CreateGroupSheet
+import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.ui.screens.ConversationActionsSheet
 import app.buildx.chat.ui.screens.DataPrivacyScreen
 import app.buildx.chat.ui.screens.DeleteChatDialog
@@ -455,6 +459,10 @@ fun BuildXRoot(
                                 viewModel.setDrawerOpen(false)
                                 navController.navigate("search")
                             },
+                            onNavigateToMessages = {
+                                viewModel.setDrawerOpen(false)
+                                navController.navigate("messages")
+                            },
                             onComposerTextChange = { text -> viewModel.onComposerTextChange(text) },
                             onToggleMode = { viewModel.toggleMode() },
                             onPlusClick = {
@@ -677,8 +685,7 @@ fun BuildXRoot(
                             onOpenVerification = { navController.navigate("verification") },
                             onOpenBlockedAccounts = { navController.navigate("blocked_accounts") },
                             onMessageClick = {
-                                viewModel.startNewChat()
-                                navController.popBackStack("chat", inclusive = false)
+                                navController.navigate("messages")
                             },
                             onAvatarPicked = { bytes, uri ->
                                 viewModel.uploadProfileAvatar(bytes, uri)
@@ -761,9 +768,12 @@ fun BuildXRoot(
                             onOpenVerification = { navController.navigate("verification") },
                             onOpenBlockedAccounts = { navController.navigate("blocked_accounts") },
                             onMessageClick = {
-                                viewModel.startNewChat()
-                                viewModel.onComposerTextChange("@$usernameArg ")
-                                navController.popBackStack("chat", inclusive = false)
+                                val targetId = uiState.viewedPublicProfile?.id
+                                if (targetId != null) {
+                                    viewModel.openDirectChatWithUser(targetId) { convId ->
+                                        navController.navigate("dm/$convId")
+                                    }
+                                }
                             }
                         )
                     }
@@ -915,6 +925,71 @@ fun BuildXRoot(
                             onBackClick = { navController.popBackStack() }
                         )
                     }
+
+                    composable("messages") {
+                        LaunchedEffect(Unit) {
+                            viewModel.loadDmInbox()
+                            viewModel.loadInboxNotesTray()
+                            val uid = viewModel.currentUserId()
+                            if (uid != null) {
+                                viewModel.loadFollowLists(uid, 0)
+                            }
+                        }
+                        DmInboxScreen(
+                            uiState = uiState,
+                            onBackClick = { navController.popBackStack() },
+                            onSearchQueryChange = { q -> viewModel.onDmSearchQueryChanged(q) },
+                            onConversationClick = { convId -> navController.navigate("dm/$convId") },
+                            onOpenProfile = { handle -> navController.navigate("profile/$handle") },
+                            onOpenNoteSheet = { viewModel.openNoteSheet(true) },
+                            onReplyToNote = { note, replyText ->
+                                viewModel.sendNoteReplyMessage(note, replyText) { convId ->
+                                    navController.navigate("dm/$convId")
+                                }
+                            },
+                            onCreateGroupClick = { viewModel.openCreateGroupSheet(true) },
+                            onTogglePinConversation = { convId -> viewModel.togglePinDmConversation(convId) },
+                            onToggleMuteConversation = { convId -> viewModel.toggleMuteDmConversation(convId) }
+                        )
+                    }
+
+                    composable("dm/{conversationId}") { backStackEntry ->
+                        val conversationId = backStackEntry.arguments?.getString("conversationId") ?: ""
+                        LaunchedEffect(conversationId) {
+                            viewModel.enterDmRoom(conversationId)
+                        }
+                        DisposableEffect(conversationId) {
+                            onDispose {
+                                viewModel.leaveDmRoom()
+                            }
+                        }
+                        DmConversationScreen(
+                            uiState = uiState,
+                            conversationId = conversationId,
+                            onBackClick = {
+                                viewModel.leaveDmRoom()
+                                navController.popBackStack()
+                            },
+                            onProfileClick = { handle -> navController.navigate("profile/$handle") },
+                            onSendMessage = { viewModel.sendDmMessage(conversationId) },
+                            onComposerTextChange = { text -> viewModel.onDmComposerTextChanged(text) },
+                            onAddStagedAttachment = { att -> viewModel.addDmStagedAttachment(att) },
+                            onRemoveStagedAttachment = { att -> viewModel.removeDmStagedAttachment(att) },
+                            onReplyToMessage = { msg -> viewModel.setDmReplyingTo(msg) },
+                            onCancelReply = { viewModel.setDmReplyingTo(null) },
+                            onEditMessage = { msg -> viewModel.setDmEditing(msg) },
+                            onCancelEdit = { viewModel.setDmEditing(null) },
+                            onDeleteMessage = { msgId -> viewModel.deleteDmMessage(msgId) },
+                            onTogglePinMessage = { msgId -> viewModel.togglePinDmMessage(conversationId, msgId) },
+                            onTogglePinConversation = { viewModel.togglePinDmConversation(conversationId) },
+                            onToggleMuteConversation = { viewModel.toggleMuteDmConversation(conversationId) },
+                            onReportMessage = { msg ->
+                                viewModel.submitReport(msg.senderId, ReportReason.SPAM, "Reported message: ${msg.id}") {
+                                    viewModel.showSnackbar("Report submitted")
+                                }
+                            }
+                        )
+                    }
                 }
             }
 
@@ -1011,6 +1086,24 @@ fun BuildXRoot(
                     viewModel.repository.checkUsernameAvailable(candidate).getOrDefault(false)
                 }
             )
+
+            // Create Group Sheet
+            if (uiState.isCreateGroupSheetOpen) {
+                CreateGroupSheet(
+                    title = uiState.groupCreationTitle,
+                    onTitleChange = { viewModel.onGroupCreationTitleChanged(it) },
+                    candidateUsers = uiState.followingListUsers,
+                    selectedUserIds = uiState.groupCreationSelectedUserIds,
+                    onToggleSelectUser = { viewModel.toggleGroupCreationUserSelection(it) },
+                    onCreateGroup = {
+                        viewModel.submitCreateGroup { convId ->
+                            navController.navigate("dm/$convId")
+                        }
+                    },
+                    onDismiss = { viewModel.openCreateGroupSheet(false) },
+                    isCreating = uiState.isCreatingGroup
+                )
+            }
 
             // Subtle pill snackbar confirmation at bottom center
             AnimatedVisibility(

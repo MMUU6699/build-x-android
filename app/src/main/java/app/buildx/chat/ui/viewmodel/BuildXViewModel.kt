@@ -31,6 +31,14 @@ import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
 import app.buildx.chat.data.model.VerificationStatusInfo
+import app.buildx.chat.data.model.DmInboxItem
+import app.buildx.chat.data.model.DmConversationDetail
+import app.buildx.chat.data.model.DmMessage
+import app.buildx.chat.data.model.FeedNoteItem
+import app.buildx.chat.data.model.DmSendStatus
+import app.buildx.chat.data.model.DmParticipant
+import app.buildx.chat.data.model.DmReplyPreview
+import app.buildx.chat.data.model.DmPeerIntro
 import app.buildx.chat.data.repository.BuildXRepository
 import app.buildx.chat.util.AuthValidation
 import app.buildx.chat.util.AvatarImageProcessor
@@ -151,7 +159,27 @@ data class BuildXUiState(
     val hasMoreBlockedUsers: Boolean = false,
     val isSubmittingReport: Boolean = false,
     val reportError: String? = null,
-    val isBlocking: Boolean = false
+    val isBlocking: Boolean = false,
+    // Direct & Group Messaging System (DMs, Group Chats, Notes Tray, Seen Receipts)
+    val dmInboxItems: List<DmInboxItem> = emptyList(),
+    val dmSearchQuery: String = "",
+    val isDmInboxLoading: Boolean = false,
+    val totalUnreadDmCount: Int = 0,
+    val inboxNotesTray: List<FeedNoteItem> = emptyList(),
+    val activeReplyTargetNote: FeedNoteItem? = null,
+    val activeDmDetail: DmConversationDetail? = null,
+    val dmMessages: List<DmMessage> = emptyList(),
+    val isDmMessagesLoading: Boolean = false,
+    val dmComposerText: String = "",
+    val dmStagedAttachments: List<StagedAttachment> = emptyList(),
+    val dmReplyingToMessage: DmMessage? = null,
+    val dmEditingMessage: DmMessage? = null,
+    val activeDmMessageMenuId: String? = null,
+    val forwardingDmMessage: DmMessage? = null,
+    val isCreateGroupSheetOpen: Boolean = false,
+    val groupCreationSelectedUserIds: Set<String> = emptySet(),
+    val groupCreationTitle: String = "",
+    val isCreatingGroup: Boolean = false
 )
 
 class BuildXViewModel(application: Application) : AndroidViewModel(application) {
@@ -295,6 +323,9 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     refreshConversationsAndAttachments()
                     loadInAppNotifications()
                     subscribeToRealtimeNotifications(uid)
+                    loadDmInbox()
+                    loadInboxNotesTray()
+                    subscribeToRealtimeInbox(uid)
                 } else {
                     val cached = getCachedUserProfile()
                     if (cached != null) {
@@ -569,8 +600,12 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 realtimeNotificationChannel?.unsubscribe()
+                dmInboxChannel?.unsubscribe()
+                dmRoomChannel?.unsubscribe()
             } catch (_: Exception) {}
             realtimeNotificationChannel = null
+            dmInboxChannel = null
+            dmRoomChannel = null
             repository.signOut()
         }
     }
@@ -2517,6 +2552,490 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     fun dismissUsernameReviewSheet() {
         _uiState.update { it.copy(showUsernameReviewSheet = false) }
     }
+
+    // =========================================================================
+    // DIRECT & GROUP MESSAGING SYSTEM (DMs, Group Chats, Notes Tray, Seen Receipts)
+    // =========================================================================
+
+    private var dmInboxChannel: RealtimeChannel? = null
+    private var dmRoomChannel: RealtimeChannel? = null
+
+    private fun subscribeToRealtimeInbox(uid: String) {
+        viewModelScope.launch {
+            try {
+                dmInboxChannel?.unsubscribe()
+                val channel = repository.supabase.channel("dm-inbox-$uid")
+                val partFlow = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                    table = "dm_participants"
+                    filter("user_id", FilterOperator.EQ, uid)
+                }
+                dmInboxChannel = channel
+                channel.subscribe()
+                partFlow.collect {
+                    loadDmInbox()
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun loadDmInbox(search: String = uiState.value.dmSearchQuery) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isDmInboxLoading = true) }
+            repository.getDmInbox(search).fold(
+                onSuccess = { items ->
+                    val unread = items.sumOf { it.unreadCount }
+                    _uiState.update {
+                        it.copy(
+                            dmInboxItems = items,
+                            totalUnreadDmCount = unread,
+                            isDmInboxLoading = false
+                        )
+                    }
+                },
+                onFailure = {
+                    _uiState.update { it.copy(isDmInboxLoading = false) }
+                }
+            )
+        }
+    }
+
+    fun onDmSearchQueryChanged(query: String) {
+        _uiState.update { it.copy(dmSearchQuery = query) }
+        loadDmInbox(query)
+    }
+
+    fun loadInboxNotesTray() {
+        viewModelScope.launch {
+            repository.getFollowedActiveNotes().onSuccess { notes ->
+                _uiState.update { it.copy(inboxNotesTray = notes) }
+            }
+        }
+    }
+
+    fun openDirectChatWithUser(targetUserId: String, onResolved: (String) -> Unit) {
+        viewModelScope.launch {
+            repository.getOrCreateDirectConversation(targetUserId).fold(
+                onSuccess = { convId ->
+                    loadDmInbox()
+                    onResolved(convId)
+                },
+                onFailure = { err ->
+                    showSnackbar(mapError(err))
+                }
+            )
+        }
+    }
+
+    fun openCreateGroupSheet(open: Boolean) {
+        _uiState.update {
+            it.copy(
+                isCreateGroupSheetOpen = open,
+                groupCreationSelectedUserIds = emptySet(),
+                groupCreationTitle = ""
+            )
+        }
+    }
+
+    fun toggleGroupCreationUserSelection(userId: String) {
+        _uiState.update {
+            val selected = it.groupCreationSelectedUserIds.toMutableSet()
+            if (selected.contains(userId)) {
+                selected.remove(userId)
+            } else {
+                selected.add(userId)
+            }
+            it.copy(groupCreationSelectedUserIds = selected)
+        }
+    }
+
+    fun onGroupCreationTitleChanged(title: String) {
+        _uiState.update { it.copy(groupCreationTitle = title) }
+    }
+
+    fun submitCreateGroup(onCreated: (String) -> Unit) {
+        val title = uiState.value.groupCreationTitle.trim()
+        val members = uiState.value.groupCreationSelectedUserIds.toList()
+        if (title.isBlank() || members.isEmpty()) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isCreatingGroup = true) }
+            repository.createGroupConversation(title, members).fold(
+                onSuccess = { convId ->
+                    _uiState.update {
+                        it.copy(
+                            isCreatingGroup = false,
+                            isCreateGroupSheetOpen = false,
+                            groupCreationSelectedUserIds = emptySet(),
+                            groupCreationTitle = ""
+                        )
+                    }
+                    loadDmInbox()
+                    onCreated(convId)
+                },
+                onFailure = { err ->
+                    _uiState.update {
+                        it.copy(
+                            isCreatingGroup = false
+                        )
+                    }
+                    showSnackbar(mapError(err))
+                }
+            )
+        }
+    }
+
+    fun enterDmRoom(conversationId: String) {
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isDmMessagesLoading = true,
+                    activeDmDetail = null,
+                    dmMessages = emptyList(),
+                    dmComposerText = "",
+                    dmStagedAttachments = emptyList(),
+                    dmReplyingToMessage = null,
+                    dmEditingMessage = null,
+                    activeDmMessageMenuId = null
+                )
+            }
+
+            repository.getDmConversationDetail(conversationId).onSuccess { detail ->
+                _uiState.update { it.copy(activeDmDetail = detail) }
+            }
+
+            repository.getDmMessages(conversationId).fold(
+                onSuccess = { msgs ->
+                    _uiState.update {
+                        it.copy(
+                            dmMessages = msgs,
+                            isDmMessagesLoading = false
+                        )
+                    }
+                    val latest = msgs.lastOrNull()
+                    if (latest != null) {
+                        repository.markDmRead(conversationId, latest.id)
+                    }
+                },
+                onFailure = {
+                    _uiState.update { it.copy(isDmMessagesLoading = false) }
+                }
+            )
+
+            subscribeToDmRoom(conversationId)
+        }
+    }
+
+    private fun subscribeToDmRoom(conversationId: String) {
+        viewModelScope.launch {
+            try {
+                dmRoomChannel?.unsubscribe()
+                val channel = repository.supabase.channel("dm-room-$conversationId")
+
+                val msgFlow = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                    table = "dm_messages"
+                    filter("conversation_id", FilterOperator.EQ, conversationId)
+                }
+
+                val partFlow = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                    table = "dm_participants"
+                    filter("conversation_id", FilterOperator.EQ, conversationId)
+                }
+
+                val convFlow = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                    table = "dm_conversations"
+                    filter("id", FilterOperator.EQ, conversationId)
+                }
+
+                dmRoomChannel = channel
+                channel.subscribe()
+
+                launch {
+                    msgFlow.collect {
+                        repository.getDmMessages(conversationId).onSuccess { msgs ->
+                            _uiState.update { it.copy(dmMessages = msgs) }
+                            val latest = msgs.lastOrNull()
+                            if (latest != null) {
+                                repository.markDmRead(conversationId, latest.id)
+                            }
+                        }
+                    }
+                }
+
+                launch {
+                    partFlow.collect {
+                        repository.getDmConversationDetail(conversationId).onSuccess { detail ->
+                            _uiState.update { it.copy(activeDmDetail = detail) }
+                        }
+                    }
+                }
+
+                launch {
+                    convFlow.collect {
+                        repository.getDmConversationDetail(conversationId).onSuccess { detail ->
+                            _uiState.update { it.copy(activeDmDetail = detail) }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun leaveDmRoom() {
+        viewModelScope.launch {
+            try {
+                dmRoomChannel?.unsubscribe()
+            } catch (_: Exception) {}
+            dmRoomChannel = null
+            _uiState.update {
+                it.copy(
+                    activeDmDetail = null,
+                    dmMessages = emptyList(),
+                    dmComposerText = "",
+                    dmStagedAttachments = emptyList(),
+                    dmReplyingToMessage = null,
+                    dmEditingMessage = null,
+                    activeDmMessageMenuId = null
+                )
+            }
+            loadDmInbox()
+        }
+    }
+
+    fun onDmComposerTextChanged(text: String) {
+        _uiState.update { it.copy(dmComposerText = text) }
+    }
+
+    fun addDmStagedAttachment(attachment: StagedAttachment) {
+        _uiState.update { it.copy(dmStagedAttachments = it.dmStagedAttachments + attachment) }
+    }
+
+    fun removeDmStagedAttachment(attachment: StagedAttachment) {
+        _uiState.update { it.copy(dmStagedAttachments = it.dmStagedAttachments - attachment) }
+    }
+
+    fun setDmReplyingTo(message: DmMessage?) {
+        _uiState.update { it.copy(dmReplyingToMessage = message, dmEditingMessage = null) }
+    }
+
+    fun setDmEditing(message: DmMessage?) {
+        _uiState.update {
+            it.copy(
+                dmEditingMessage = message,
+                dmReplyingToMessage = null,
+                dmComposerText = message?.content ?: ""
+            )
+        }
+    }
+
+    fun setActiveDmMessageMenuId(messageId: String?) {
+        _uiState.update { it.copy(activeDmMessageMenuId = messageId) }
+    }
+
+    fun openNoteReply(note: FeedNoteItem) {
+        _uiState.update { it.copy(activeReplyTargetNote = note) }
+    }
+
+    fun closeNoteReply() {
+        _uiState.update { it.copy(activeReplyTargetNote = null) }
+    }
+
+    fun sendDmMessage(conversationId: String) {
+        val state = uiState.value
+        val text = state.dmComposerText.trim()
+        val staged = state.dmStagedAttachments
+        val replyingTo = state.dmReplyingToMessage
+        val editing = state.dmEditingMessage
+
+        if (editing != null) {
+            if (text.isBlank()) return
+            viewModelScope.launch {
+                repository.editDmMessage(editing.id, text).fold(
+                    onSuccess = {
+                        _uiState.update {
+                            it.copy(
+                                dmEditingMessage = null,
+                                dmComposerText = "",
+                                dmMessages = it.dmMessages.map { m ->
+                                    if (m.id == editing.id) m.copy(content = text, editedAt = Instant.now().toString()) else m
+                                }
+                            )
+                        }
+                    },
+                    onFailure = { err ->
+                        showSnackbar(mapError(err))
+                    }
+                )
+            }
+            return
+        }
+
+        if (text.isBlank() && staged.isEmpty()) return
+
+        val myProfile = state.profile
+        val clientTempId = UUID.randomUUID().toString()
+        val tempId = UUID.randomUUID().toString()
+        val nowIso = Instant.now().toString()
+
+        val optimisticMsg = DmMessage(
+            id = tempId,
+            conversationId = conversationId,
+            senderId = myProfile?.id ?: "",
+            senderUsername = myProfile?.username,
+            senderHandle = myProfile?.handle,
+            senderDisplayName = myProfile?.displayName,
+            senderAvatarUrl = myProfile?.avatarUrl,
+            senderIsVerified = myProfile?.isVerified ?: false,
+            messageType = if (staged.isNotEmpty()) "media" else "text",
+            content = text,
+            replyTo = replyingTo?.let {
+                DmReplyPreview(
+                    id = it.id,
+                    senderId = it.senderId,
+                    senderDisplayName = it.senderDisplayName,
+                    content = it.content,
+                    attachmentMime = it.attachmentMime,
+                    isDeleted = it.deletedAt != null
+                )
+            },
+            attachmentPath = staged.firstOrNull()?.uri?.toString(),
+            attachmentMime = staged.firstOrNull()?.mimeType,
+            clientTempId = clientTempId,
+            createdAt = nowIso,
+            localSendStatus = DmSendStatus.SENDING
+        )
+
+        _uiState.update {
+            it.copy(
+                dmMessages = it.dmMessages + optimisticMsg,
+                dmComposerText = "",
+                dmStagedAttachments = emptyList(),
+                dmReplyingToMessage = null
+            )
+        }
+
+        viewModelScope.launch {
+            var uploadedUrl: String? = null
+            var mime: String? = null
+            var size: Long? = null
+            if (staged.isNotEmpty()) {
+                val first = staged.first()
+                mime = first.mimeType
+                size = first.sizeBytes
+                repository.uploadDmAttachment(first).onSuccess { url ->
+                    uploadedUrl = url
+                }
+            }
+
+            repository.sendDmMessage(
+                conversationId = conversationId,
+                content = text,
+                replyToMessageId = replyingTo?.id,
+                attachmentPath = uploadedUrl,
+                attachmentMime = mime,
+                attachmentSize = size,
+                clientTempId = clientTempId
+            ).fold(
+                onSuccess = { realMsg ->
+                    _uiState.update {
+                        it.copy(
+                            dmMessages = it.dmMessages.map { m ->
+                                if (m.clientTempId == clientTempId || m.id == tempId) realMsg else m
+                            }
+                        )
+                    }
+                },
+                onFailure = {
+                    _uiState.update {
+                        it.copy(
+                            dmMessages = it.dmMessages.map { m ->
+                                if (m.clientTempId == clientTempId || m.id == tempId) {
+                                    m.copy(localSendStatus = DmSendStatus.FAILED)
+                                } else m
+                            }
+                        )
+                    }
+                }
+            )
+        }
+    }
+
+    fun sendNoteReplyMessage(note: FeedNoteItem, replyText: String, onSent: (String) -> Unit) {
+        val text = replyText.trim()
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            repository.getOrCreateDirectConversation(note.author.id).fold(
+                onSuccess = { convId ->
+                    repository.sendDmMessage(
+                        conversationId = convId,
+                        content = text,
+                        replyToNoteId = note.id
+                    ).fold(
+                        onSuccess = {
+                            _uiState.update { it.copy(activeReplyTargetNote = null) }
+                            loadDmInbox()
+                            onSent(convId)
+                        },
+                        onFailure = { err ->
+                            showSnackbar(mapError(err))
+                        }
+                    )
+                },
+                onFailure = { err ->
+                    showSnackbar(mapError(err))
+                }
+            )
+        }
+    }
+
+    fun deleteDmMessage(messageId: String) {
+        viewModelScope.launch {
+            repository.deleteDmMessage(messageId).fold(
+                onSuccess = {
+                    _uiState.update {
+                        it.copy(
+                            dmMessages = it.dmMessages.map { m ->
+                                if (m.id == messageId) m.copy(content = "", deletedAt = Instant.now().toString()) else m
+                            }
+                        )
+                    }
+                },
+                onFailure = { err ->
+                    showSnackbar(mapError(err))
+                }
+            )
+        }
+    }
+
+    fun togglePinDmMessage(conversationId: String, messageId: String?) {
+        viewModelScope.launch {
+            repository.togglePinDmMessage(conversationId, messageId).onSuccess {
+                repository.getDmConversationDetail(conversationId).onSuccess { detail ->
+                    _uiState.update { it.copy(activeDmDetail = detail) }
+                }
+            }
+        }
+    }
+
+    fun toggleMuteDmConversation(conversationId: String) {
+        viewModelScope.launch {
+            repository.toggleMuteDmConversation(conversationId).onSuccess {
+                loadDmInbox()
+                repository.getDmConversationDetail(conversationId).onSuccess { detail ->
+                    _uiState.update { it.copy(activeDmDetail = detail) }
+                }
+            }
+        }
+    }
+
+    fun togglePinDmConversation(conversationId: String) {
+        viewModelScope.launch {
+            repository.togglePinDmConversation(conversationId).onSuccess {
+                loadDmInbox()
+            }
+        }
+    }
+
+    fun currentUserId(): String? = repository.currentUserId()
 
     companion object {
         fun isNetworkRefreshFailure(cause: RefreshFailureCause): Boolean {

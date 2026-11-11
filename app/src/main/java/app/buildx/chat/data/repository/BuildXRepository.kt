@@ -32,6 +32,18 @@ import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
 import app.buildx.chat.data.model.VerificationStatusInfo
+import app.buildx.chat.data.model.DmInboxItem
+import app.buildx.chat.data.model.DmConversationDetail
+import app.buildx.chat.data.model.DmMessage
+import app.buildx.chat.data.model.FeedNoteItem
+import app.buildx.chat.data.model.DmSendStatus
+import app.buildx.chat.data.model.DmParticipant
+import app.buildx.chat.data.model.DmReplyPreview
+import app.buildx.chat.data.model.DmPeerIntro
+import app.buildx.chat.data.model.DmLastMessageSummary
+import app.buildx.chat.data.model.DmPeerSummary
+import app.buildx.chat.data.model.DmConversationMetadata
+import kotlinx.serialization.json.add
 import app.buildx.chat.util.AuthValidation
 import app.buildx.chat.util.AvatarImageProcessor
 import io.github.jan.supabase.SupabaseClient
@@ -1292,6 +1304,268 @@ class BuildXRepository(val context: Context) {
                 )
             }
             json.encodeToString(JsonObject.serializer(), exportObj)
+        }
+    }
+
+    // =========================================================================
+    // DIRECT & GROUP MESSAGING (DMs, Group Chats, Notes Tray, Seen Receipts)
+    // =========================================================================
+
+    suspend fun getOrCreateDirectConversation(targetUserId: String): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("target_user_id", targetUserId)
+            }
+            val response = supabase.postgrest.rpc("get_or_create_direct_conversation", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            if (!success) {
+                val err = obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to open conversation"
+                error(err)
+            }
+            obj["conversation_id"]?.jsonPrimitive?.contentOrNull ?: error("Missing conversation_id")
+        }
+    }
+
+    suspend fun createGroupConversation(
+        title: String,
+        memberIds: List<String>,
+        avatarUrl: String? = null
+    ): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_title", title.trim())
+                put("p_member_ids", buildJsonArray {
+                    memberIds.forEach { add(it) }
+                })
+                if (!avatarUrl.isNullOrBlank()) {
+                    put("p_avatar_url", avatarUrl)
+                }
+            }
+            val response = supabase.postgrest.rpc("create_group_conversation", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            if (!success) {
+                val err = obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to create group"
+                error(err)
+            }
+            obj["conversation_id"]?.jsonPrimitive?.contentOrNull ?: error("Missing conversation_id")
+        }
+    }
+
+    suspend fun addGroupMembers(conversationId: String, memberIds: List<String>): Result<Int> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_conversation_id", conversationId)
+                put("p_member_ids", buildJsonArray {
+                    memberIds.forEach { add(it) }
+                })
+            }
+            val response = supabase.postgrest.rpc("add_group_members", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            if (!success) {
+                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to add members")
+            }
+            obj["added_count"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 0
+        }
+    }
+
+    suspend fun removeOrLeaveGroupMember(conversationId: String, targetUserId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_conversation_id", conversationId)
+                put("p_target_user_id", targetUserId)
+            }
+            val response = supabase.postgrest.rpc("remove_or_leave_group_member", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            if (!success) {
+                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to remove member")
+            }
+            true
+        }
+    }
+
+    suspend fun getDmInbox(search: String = "", limit: Int = 40, offset: Int = 0): Result<List<DmInboxItem>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_search", search)
+                put("p_limit", limit)
+                put("p_offset", offset)
+            }
+            val response = supabase.postgrest.rpc("get_dm_inbox", params)
+            json.decodeFromString<List<DmInboxItem>>(response.data)
+        }
+    }
+
+    suspend fun getFollowedActiveNotes(): Result<List<FeedNoteItem>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val response = supabase.postgrest.rpc("get_followed_active_notes")
+            json.decodeFromString<List<FeedNoteItem>>(response.data)
+        }
+    }
+
+    suspend fun getDmConversationDetail(conversationId: String): Result<DmConversationDetail> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_conversation_id", conversationId)
+            }
+            val response = supabase.postgrest.rpc("get_dm_conversation_detail", params)
+            json.decodeFromString<DmConversationDetail>(response.data)
+        }
+    }
+
+    suspend fun getDmMessages(conversationId: String, before: String? = null, limit: Int = 50): Result<List<DmMessage>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_conversation_id", conversationId)
+                if (!before.isNullOrBlank()) {
+                    put("p_before", before)
+                }
+                put("p_limit", limit)
+            }
+            val response = supabase.postgrest.rpc("get_dm_messages", params)
+            json.decodeFromString<List<DmMessage>>(response.data)
+        }
+    }
+
+    suspend fun sendDmMessage(
+        conversationId: String,
+        content: String,
+        replyToMessageId: String? = null,
+        replyToNoteId: String? = null,
+        attachmentPath: String? = null,
+        attachmentMime: String? = null,
+        attachmentSize: Long? = null,
+        clientTempId: String? = null
+    ): Result<DmMessage> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_conversation_id", conversationId)
+                put("p_content", content)
+                if (!replyToMessageId.isNullOrBlank()) put("p_reply_to_message_id", replyToMessageId)
+                if (!replyToNoteId.isNullOrBlank()) put("p_reply_to_note_id", replyToNoteId)
+                if (!attachmentPath.isNullOrBlank()) put("p_attachment_path", attachmentPath)
+                if (!attachmentMime.isNullOrBlank()) put("p_attachment_mime", attachmentMime)
+                if (attachmentSize != null) put("p_attachment_size", attachmentSize)
+                if (!clientTempId.isNullOrBlank()) put("p_client_temp_id", clientTempId)
+            }
+            val response = supabase.postgrest.rpc("send_dm_message", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            if (!success) {
+                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to send message")
+            }
+            val msgElement = obj["message"] ?: error("Missing message object in response")
+            json.decodeFromJsonElement(DmMessage.serializer(), msgElement)
+        }
+    }
+
+    suspend fun markDmRead(conversationId: String, lastReadMessageId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_conversation_id", conversationId)
+                put("p_last_read_message_id", lastReadMessageId)
+            }
+            val response = supabase.postgrest.rpc("mark_dm_read", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
+        }
+    }
+
+    suspend fun editDmMessage(messageId: String, newContent: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_message_id", messageId)
+                put("p_new_content", newContent)
+            }
+            val response = supabase.postgrest.rpc("edit_dm_message", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            if (!success) {
+                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to edit message")
+            }
+            true
+        }
+    }
+
+    suspend fun deleteDmMessage(messageId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_message_id", messageId)
+            }
+            val response = supabase.postgrest.rpc("delete_dm_message", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            if (!success) {
+                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to delete message")
+            }
+            true
+        }
+    }
+
+    suspend fun togglePinDmMessage(conversationId: String, messageId: String?): Result<String?> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_conversation_id", conversationId)
+                if (messageId != null) {
+                    put("p_message_id", messageId)
+                }
+            }
+            val response = supabase.postgrest.rpc("toggle_pin_dm_message", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            if (!success) {
+                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to pin message")
+            }
+            obj["pinned_message_id"]?.jsonPrimitive?.contentOrNull
+        }
+    }
+
+    suspend fun toggleMuteDmConversation(conversationId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_conversation_id", conversationId)
+            }
+            val response = supabase.postgrest.rpc("toggle_mute_dm_conversation", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            if (!success) {
+                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to mute conversation")
+            }
+            obj["is_muted"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+        }
+    }
+
+    suspend fun togglePinDmConversation(conversationId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_conversation_id", conversationId)
+            }
+            val response = supabase.postgrest.rpc("toggle_pin_dm_conversation", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            if (!success) {
+                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to pin conversation")
+            }
+            obj["is_pinned"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+        }
+    }
+
+    suspend fun uploadDmAttachment(staged: StagedAttachment): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val uid = currentUserId() ?: error("Not authenticated")
+            val bytes = context.contentResolver.openInputStream(staged.uri)?.use { it.readBytes() }
+                ?: error("Cannot read attachment bytes")
+            val safeName = staged.fileName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+            val objectPath = "$uid/${System.currentTimeMillis()}_$safeName"
+
+            val bucket = supabase.storage.from("attachments")
+            bucket.upload(objectPath, bytes) {
+                upsert = true
+            }
+            bucket.publicUrl(objectPath)
         }
     }
 }
