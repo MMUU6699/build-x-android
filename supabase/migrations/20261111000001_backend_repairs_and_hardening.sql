@@ -32,8 +32,21 @@ CREATE INDEX IF NOT EXISTS idx_notifications_actor_id
 CREATE INDEX IF NOT EXISTS idx_profile_audit_log_changed_by 
     ON public.profile_audit_log (changed_by);
 
+CREATE INDEX IF NOT EXISTS idx_profile_audit_log_user_id 
+    ON public.profile_audit_log (user_id);
+
 CREATE INDEX IF NOT EXISTS idx_verification_events_user_id 
     ON public.verification_events (user_id);
+
+-- Additional Performance Advisor FK Indexes (Ensures zero unindexed FKs database-wide)
+CREATE INDEX IF NOT EXISTS idx_assistants_user_id ON public.assistants (user_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_assistant_id ON public.conversations (assistant_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_workspace_id ON public.conversations (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_messages_user_id ON public.messages (user_id);
+CREATE INDEX IF NOT EXISTS idx_work_agent_messages_user_id ON public.work_agent_messages (user_id);
+CREATE INDEX IF NOT EXISTS idx_work_sessions_user_id ON public.work_sessions (user_id);
+CREATE INDEX IF NOT EXISTS idx_work_sessions_workspace_id ON public.work_sessions (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_user_id ON public.workspaces (user_id);
 
 -- =====================================================================
 -- 3. SCHEMA DRIFT RESOLUTION (Deliverable 3 - follow_rate_events & note_subscriptions)
@@ -96,6 +109,7 @@ BEGIN
     RETURN jsonb_build_object('success', true, 'avatar_url', p_avatar_url);
 END;
 $$;
+REVOKE EXECUTE ON FUNCTION public.update_profile_avatar(text) FROM anon, public;
 GRANT EXECUTE ON FUNCTION public.update_profile_avatar(text) TO authenticated;
 
 -- Dedicated security-definer RPC for updating profile details
@@ -128,6 +142,7 @@ BEGIN
     RETURN to_jsonb(v_prof);
 END;
 $$;
+REVOKE EXECUTE ON FUNCTION public.update_profile_details(text, text, text) FROM anon, public;
 GRANT EXECUTE ON FUNCTION public.update_profile_details(text, text, text) TO authenticated;
 
 -- =====================================================================
