@@ -966,7 +966,11 @@ fun BuildXRoot(
                                 viewModel.openDirectChatWithUser(userId) { convId ->
                                     navController.navigate("dm/$convId")
                                 }
-                            }
+                            },
+                            onRenameGroup = { convId, newTitle ->
+                                viewModel.updateGroupTitle(convId, newTitle)
+                            },
+                            currentUserId = viewModel.currentUserId()
                         )
                     }
 

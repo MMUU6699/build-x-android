@@ -65,4 +65,27 @@
     <string name="dm_delete_or_leave">Delete conversation</string>
     <string name="dm_people_header">People</string>
     <string name="dm_conversations_header">Conversations</string>
+    <string name="dm_group_info">Group info &amp; members</string>
+    <string name="dm_add_members">Add members</string>
+    <string name="dm_rename_group">Rename group</string>
+    <string name="dm_save">Save</string>
+    <string name="dm_cancel">Cancel</string>
+    <string name="dm_delete_conv_title">Delete conversation?</string>
+    <string name="dm_delete_conv_message">This conversation will be removed from your inbox.</string>
+    <string name="dm_leave_group_title">Leave &amp; delete group?</string>
+    <string name="dm_leave_group_message">You will leave this group and it will be removed from your inbox.</string>
+    <string name="dm_empty_unread_title">No unread messages</string>
+    <string name="dm_empty_unread_subtitle">You\'re all caught up!</string>
+    <string name="dm_empty_groups_title">No groups yet</string>
+    <string name="dm_empty_groups_subtitle">Create a group to chat with multiple people at once.</string>
+    <string name="dm_empty_requests_title">No message requests</string>
+    <string name="dm_empty_requests_subtitle">Messages from people you don\'t follow will appear here.</string>
+    <string name="dm_show_all_chats">Show all chats</string>
+    <string name="dm_create_a_group">Create a group</string>
+    <string name="dm_start_a_conversation">Start a conversation</string>
+    <string name="dm_you_prefix">You: </string>
+    <string name="dm_conv_pinned">Conversation pinned</string>
+    <string name="dm_conv_unpinned">Conversation unpinned</string>
+    <string name="dm_conv_muted">Conversation muted</string>
+    <string name="dm_conv_unmuted">Conversation unmuted</string>
 </resources>

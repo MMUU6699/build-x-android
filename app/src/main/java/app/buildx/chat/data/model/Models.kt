@@ -295,9 +295,17 @@ data class DmPeerSummary(
 )
 
 @Serializable
+data class DmMemberAvatar(
+    @SerialName("user_id") val userId: String,
+    @SerialName("display_name") val displayName: String = "",
+    @SerialName("avatar_url") val avatarUrl: String? = null
+)
+
+@Serializable
 data class DmLastMessageSummary(
     val id: String,
     @SerialName("sender_id") val senderId: String,
+    @SerialName("sender_name") val senderName: String? = null,
     @SerialName("message_type") val messageType: String = "text",
     val content: String = "",
     @SerialName("created_at") val createdAt: String,
@@ -320,7 +328,9 @@ data class DmInboxItem(
     @SerialName("last_message_at") val lastMessageAt: String? = null,
     @SerialName("last_message") val lastMessage: DmLastMessageSummary? = null,
     val peer: DmPeerSummary? = null,
-    @SerialName("member_count") val memberCount: Int? = null
+    @SerialName("member_count") val memberCount: Int? = null,
+    @SerialName("member_avatars") val memberAvatars: List<DmMemberAvatar> = emptyList(),
+    @SerialName("is_marked_unread") val isMarkedUnread: Boolean = false
 )
 
 @Serializable

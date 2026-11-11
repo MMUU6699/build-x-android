@@ -3,6 +3,7 @@ package app.buildx.chat.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,13 +18,21 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,10 +59,12 @@ fun DmConversationActionsSheet(
     onToggleMute: () -> Unit,
     onToggleReadUnread: () -> Unit,
     onViewProfile: ((String) -> Unit)? = null,
+    onViewGroupInfo: (() -> Unit)? = null,
     onDeleteOrLeave: () -> Unit
 ) {
     val colors = BuildXTheme.colors
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -78,50 +89,68 @@ fun DmConversationActionsSheet(
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp, vertical = 6.dp)
         ) {
-            // Header Row: Avatar + Title + Subtitle
+            // Header: 48dp Avatar + Title + Status Subtitle
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Avatar (52dp)
-                Box(modifier = Modifier.size(52.dp)) {
+                // 48dp Avatar
+                Box(modifier = Modifier.size(48.dp)) {
                     if (item.kind == "group") {
-                        // Composite dual-avatar stack for groups
+                        // Real Overlapping Dual-Member Avatar
+                        val m1 = item.memberAvatars.getOrNull(0)
+                        val m2 = item.memberAvatars.getOrNull(1)
+
+                        // Back circle (32dp at Top-Start)
                         Box(
                             modifier = Modifier
-                                .size(34.dp)
+                                .size(32.dp)
                                 .align(Alignment.TopStart)
                                 .clip(CircleShape)
-                                .background(colors.primaryBlue.copy(alpha = 0.16f)),
+                                .background(colors.surfaceMuted),
                             contentAlignment = Alignment.Center
                         ) {
-                            val initial = (item.title?.firstOrNull() ?: 'G').uppercaseChar().toString()
-                            Text(
-                                text = initial,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = colors.primaryBlue
-                            )
+                            if (!m1?.avatarUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = m1?.avatarUrl,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                )
+                            } else {
+                                val initial = (m1?.displayName?.firstOrNull() ?: item.title?.firstOrNull() ?: 'G').uppercaseChar().toString()
+                                Text(text = initial, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = colors.primaryBlue)
+                            }
                         }
+
+                        // Front circle (34dp at Bottom-End) with 2dp cutout ring
                         Box(
                             modifier = Modifier
                                 .size(34.dp)
                                 .align(Alignment.BottomEnd)
                                 .clip(CircleShape)
-                                .background(colors.surfaceMuted)
-                                .border(2.dp, colors.cardBackground, CircleShape),
+                                .background(colors.cardBackground)
+                                .padding(2.dp)
+                                .clip(CircleShape)
+                                .background(colors.surfaceMuted),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = item.memberCount.toString(),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = colors.secondaryText
-                            )
+                            if (!m2?.avatarUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = m2?.avatarUrl,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                )
+                            } else {
+                                val initial = (m2?.displayName?.firstOrNull() ?: 'U').uppercaseChar().toString()
+                                Text(text = initial, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = colors.secondaryText)
+                            }
                         }
                     } else {
+                        // Direct Chat 48dp Clean Avatar (NO verified badge on avatar!)
                         val avatarUrl = item.peer?.avatarUrl
                         if (!avatarUrl.isNullOrBlank()) {
                             AsyncImage(
@@ -131,14 +160,15 @@ fun DmConversationActionsSheet(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .clip(CircleShape)
-                                    .border(1.dp, colors.subtleSurfaceBorder, CircleShape)
+                                    .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
                             )
                         } else {
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .clip(CircleShape)
-                                    .background(colors.surfaceMuted),
+                                    .background(colors.surfaceMuted)
+                                    .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
@@ -148,14 +178,6 @@ fun DmConversationActionsSheet(
                                     modifier = Modifier.size(24.dp)
                                 )
                             }
-                        }
-                        if (item.peer?.isVerified == true) {
-                            VerifiedBadge(
-                                size = 15.dp,
-                                modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .offset(x = 2.dp, y = 2.dp)
-                            )
                         }
                     }
                 }
@@ -180,14 +202,21 @@ fun DmConversationActionsSheet(
                         )
                         if (item.kind == "direct" && item.peer?.isVerified == true) {
                             Spacer(modifier = Modifier.width(4.dp))
-                            VerifiedBadge(size = 14.dp)
+                            VerifiedBadge(size = 15.dp)
                         }
                     }
 
                     Spacer(modifier = Modifier.height(2.dp))
 
                     val subtitle = if (item.kind == "direct") {
-                        if (!item.peer?.handle.isNullOrBlank()) "@${item.peer.handle}" else ""
+                        val statusList = mutableListOf<String>()
+                        if (item.isPinned) statusList.add(stringResource(R.string.dm_pinned_conversations))
+                        if (item.isMuted) statusList.add(stringResource(R.string.dm_mute_chat))
+                        if (!item.peer?.handle.isNullOrBlank()) {
+                            if (statusList.isEmpty()) "@${item.peer.handle}" else "${statusList.joinToString(" · ")} • @${item.peer.handle}"
+                        } else {
+                            statusList.joinToString(" · ")
+                        }
                     } else {
                         stringResource(R.string.dm_group_members_format, item.memberCount ?: 0)
                     }
@@ -207,12 +236,12 @@ fun DmConversationActionsSheet(
             Spacer(modifier = Modifier.height(4.dp))
             HorizontalDivider(
                 color = colors.hairlineBorder,
-                thickness = 0.8.dp,
+                thickness = 0.7.dp,
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Action 1: Pin / Unpin
+            // Action 1: Pin / Unpin Conversation
             ActionRow(
                 iconRes = R.drawable.ic_pin,
                 title = if (item.isPinned) stringResource(R.string.dm_unpin_chat) else stringResource(R.string.dm_pin_chat),
@@ -223,7 +252,7 @@ fun DmConversationActionsSheet(
                 }
             )
 
-            // Action 2: Mute / Unmute
+            // Action 2: Mute / Unmute Notifications
             ActionRow(
                 iconRes = if (item.isMuted) R.drawable.ic_bell else R.drawable.ic_volume_off,
                 title = if (item.isMuted) stringResource(R.string.dm_unmute_chat) else stringResource(R.string.dm_mute_chat),
@@ -234,10 +263,10 @@ fun DmConversationActionsSheet(
                 }
             )
 
-            // Action 3: Mark as read / Mark as unread
-            val isUnread = item.unreadCount > 0
+            // Action 3: Mark as Read / Mark as Unread
+            val isUnread = item.unreadCount > 0 || item.isMarkedUnread
             ActionRow(
-                iconRes = R.drawable.ic_check,
+                iconRes = if (isUnread) R.drawable.ic_check else R.drawable.ic_chat_bubble,
                 title = if (isUnread) stringResource(R.string.dm_mark_read) else stringResource(R.string.dm_mark_unread),
                 tint = colors.primaryText,
                 onClick = {
@@ -246,7 +275,7 @@ fun DmConversationActionsSheet(
                 }
             )
 
-            // Action 4: View Profile (direct only)
+            // Action 4: Profile / Group Management
             if (item.kind == "direct" && !item.peer?.handle.isNullOrBlank() && onViewProfile != null) {
                 ActionRow(
                     iconRes = R.drawable.ic_user,
@@ -257,22 +286,83 @@ fun DmConversationActionsSheet(
                         onViewProfile(item.peer.handle)
                     }
                 )
+            } else if (item.kind == "group" && onViewGroupInfo != null) {
+                ActionRow(
+                    iconRes = R.drawable.ic_user,
+                    title = stringResource(R.string.dm_group_info),
+                    tint = colors.primaryText,
+                    onClick = {
+                        onDismiss()
+                        onViewGroupInfo()
+                    }
+                )
             }
 
-            // Action 5: Delete or Leave (destructive red)
+            // Action 5: Delete or Leave (destructive red with confirmation dialog)
             ActionRow(
                 iconRes = R.drawable.ic_trash,
                 title = if (item.kind == "group") stringResource(R.string.dm_leave_group) else stringResource(R.string.dm_delete_chat),
                 tint = Color(0xFFE53935),
                 isDestructive = true,
                 onClick = {
-                    onDismiss()
-                    onDeleteOrLeave()
+                    showDeleteConfirmDialog = true
                 }
             )
 
             Spacer(modifier = Modifier.height(14.dp))
         }
+    }
+
+    // Confirmation Dialog before deletion
+    if (showDeleteConfirmDialog) {
+        val isGroup = item.kind == "group"
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            containerColor = colors.cardBackground,
+            title = {
+                Text(
+                    text = if (isGroup) stringResource(R.string.dm_leave_group_title) else stringResource(R.string.dm_delete_conv_title),
+                    fontSize = 17.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.primaryText
+                )
+            },
+            text = {
+                Text(
+                    text = if (isGroup) stringResource(R.string.dm_leave_group_message) else stringResource(R.string.dm_delete_conv_message),
+                    fontSize = 14.5.sp,
+                    color = colors.secondaryText
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirmDialog = false
+                        onDismiss()
+                        onDeleteOrLeave()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFE53935),
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = if (isGroup) stringResource(R.string.dm_leave_group) else stringResource(R.string.dm_action_delete),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                    Text(
+                        text = stringResource(R.string.dm_cancel),
+                        color = colors.secondaryText,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        )
     }
 }
 

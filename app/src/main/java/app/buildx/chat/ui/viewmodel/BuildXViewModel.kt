@@ -2635,9 +2635,11 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     fun leaveOrDeleteDmConversation(conversationId: String) {
         viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    dmInboxItems = it.dmInboxItems.filterNot { item -> item.id == conversationId }
+            _uiState.update { state ->
+                val updated = state.dmInboxItems.filterNot { item -> item.id == conversationId }
+                state.copy(
+                    dmInboxItems = updated,
+                    totalUnreadDmCount = updated.count { it.unreadCount > 0 || it.isMarkedUnread }
                 )
             }
             repository.leaveOrDeleteDmConversation(conversationId).onFailure { err ->
@@ -2649,11 +2651,13 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     fun markDmUnread(conversationId: String) {
         viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    dmInboxItems = it.dmInboxItems.map { item ->
-                        if (item.id == conversationId) item.copy(unreadCount = 1) else item
-                    }
+            _uiState.update { state ->
+                val updated = state.dmInboxItems.map { item ->
+                    if (item.id == conversationId) item.copy(unreadCount = maxOf(1, item.unreadCount), isMarkedUnread = true) else item
+                }
+                state.copy(
+                    dmInboxItems = updated,
+                    totalUnreadDmCount = updated.count { it.unreadCount > 0 || it.isMarkedUnread }
                 )
             }
             repository.markDmUnread(conversationId).onFailure { err ->
@@ -2667,15 +2671,17 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             val conv = _uiState.value.dmInboxItems.firstOrNull { it.id == conversationId }
             val lastMsgId = conv?.lastMessage?.id
-            _uiState.update {
-                it.copy(
-                    dmInboxItems = it.dmInboxItems.map { item ->
-                        if (item.id == conversationId) item.copy(unreadCount = 0) else item
-                    }
+            _uiState.update { state ->
+                val updated = state.dmInboxItems.map { item ->
+                    if (item.id == conversationId) item.copy(unreadCount = 0, isMarkedUnread = false) else item
+                }
+                state.copy(
+                    dmInboxItems = updated,
+                    totalUnreadDmCount = updated.count { it.unreadCount > 0 || it.isMarkedUnread }
                 )
             }
-            if (lastMsgId != null) {
-                repository.markDmRead(conversationId, lastMsgId)
+            repository.markDmRead(conversationId, lastMsgId).onFailure {
+                loadDmInbox()
             }
         }
     }
@@ -3094,20 +3100,58 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     fun toggleMuteDmConversation(conversationId: String) {
         viewModelScope.launch {
-            repository.toggleMuteDmConversation(conversationId).onSuccess {
-                loadDmInbox()
-                repository.getDmConversationDetail(conversationId).onSuccess { detail ->
-                    _uiState.update { it.copy(activeDmDetail = detail) }
+            var newMuted = false
+            _uiState.update { state ->
+                val updatedList = state.dmInboxItems.map { item ->
+                    if (item.id == conversationId) {
+                        newMuted = !item.isMuted
+                        item.copy(isMuted = newMuted)
+                    } else item
                 }
+                state.copy(dmInboxItems = updatedList)
+            }
+            showSnackbar(if (newMuted) "Conversation muted" else "Conversation unmuted")
+            repository.toggleMuteDmConversation(conversationId).onFailure {
+                loadDmInbox()
             }
         }
     }
 
     fun togglePinDmConversation(conversationId: String) {
         viewModelScope.launch {
-            repository.togglePinDmConversation(conversationId).onSuccess {
+            var newPinned = false
+            _uiState.update { state ->
+                val updatedList = state.dmInboxItems.map { item ->
+                    if (item.id == conversationId) {
+                        newPinned = !item.isPinned
+                        item.copy(isPinned = newPinned)
+                    } else item
+                }.sortedWith(
+                    compareByDescending<DmInboxItem> { it.isPinned }
+                        .thenByDescending { it.lastMessageAt ?: "" }
+                )
+                state.copy(dmInboxItems = updatedList)
+            }
+            showSnackbar(if (newPinned) "Conversation pinned" else "Conversation unpinned")
+            repository.togglePinDmConversation(conversationId).onFailure {
                 loadDmInbox()
             }
+        }
+    }
+
+    fun updateGroupTitle(conversationId: String, title: String) {
+        viewModelScope.launch {
+            _uiState.update { state ->
+                state.copy(
+                    dmInboxItems = state.dmInboxItems.map { item ->
+                        if (item.id == conversationId) item.copy(title = title) else item
+                    }
+                )
+            }
+            repository.updateGroupInfo(conversationId, title).fold(
+                onSuccess = { showSnackbar("Group name updated") },
+                onFailure = { err -> showSnackbar(mapError(err)); loadDmInbox() }
+            )
         }
     }
 

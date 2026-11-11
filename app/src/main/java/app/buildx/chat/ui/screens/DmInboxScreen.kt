@@ -6,7 +6,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,6 +31,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -51,7 +53,6 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -59,7 +60,6 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.buildx.chat.R
@@ -91,14 +91,17 @@ fun DmInboxScreen(
     onToggleReadUnreadConversation: (String) -> Unit = {},
     onDeleteOrLeaveConversation: (String) -> Unit = {},
     onOpenDirectChatWithUser: (String) -> Unit = {},
+    onRenameGroup: (String, String) -> Unit = { _, _ -> },
+    currentUserId: String? = null,
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
     var selectedActionItem by remember { mutableStateOf<DmInboxItem?>(null) }
+    var selectedGroupInfoItem by remember { mutableStateOf<DmInboxItem?>(null) }
     var noteToReply by remember { mutableStateOf<FeedNoteItem?>(null) }
 
-    // Text selection colors tailored to Build X to avoid native turquoise/blue cursor flash
+    // Text selection styling to prevent default native blue cursor flash at (0,0)
     val customTextSelectionColors = remember(colors.primaryBlue) {
         TextSelectionColors(
             handleColor = colors.primaryBlue,
@@ -149,7 +152,7 @@ fun DmInboxScreen(
                     )
                 }
 
-                // Search Bar (44dp height, 22dp corner, real-time input)
+                // Search Bar (44dp height, 22dp corner, real-time query)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -213,9 +216,8 @@ fun DmInboxScreen(
                     }
                 }
 
-                // Dynamic Body: Search Results Mode vs Normal Inbox Mode
+                // Dynamic Body: Search Results vs Normal Inbox
                 if (uiState.dmSearchQuery.isNotBlank()) {
-                    // Search Mode
                     SearchResultsView(
                         query = uiState.dmSearchQuery,
                         peopleResults = uiState.dmSearchPeopleResults,
@@ -223,11 +225,12 @@ fun DmInboxScreen(
                         conversations = uiState.dmInboxItems,
                         onPersonClick = { personId -> onOpenDirectChatWithUser(personId) },
                         onConversationClick = onConversationClick,
-                        onOpenProfile = onOpenProfile
+                        onOpenProfile = onOpenProfile,
+                        currentUserId = currentUserId
                     )
                 } else {
                     // Normal Inbox Mode
-                    // 1. Notes Tray Section
+                    // 1. Upgraded Notes Tray Section (Fixed Geometry: 88dp x 118dp)
                     NotesTraySection(
                         notes = uiState.inboxNotesTray,
                         myAvatarUrl = uiState.profile?.avatarUrl,
@@ -236,31 +239,37 @@ fun DmInboxScreen(
                         onFollowedNoteClick = { noteToReply = it }
                     )
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
-                    // 2. Section Divider
+                    // 2. Filter Chips Bar with Live Counts
+                    val unreadThreadsCount = remember(uiState.dmInboxItems) {
+                        uiState.dmInboxItems.count { it.unreadCount > 0 || it.isMarkedUnread }
+                    }
+                    val groupThreadsCount = remember(uiState.dmInboxItems) {
+                        uiState.dmInboxItems.count { it.kind == "group" }
+                    }
+
+                    FilterChipsBar(
+                        selectedTab = uiState.selectedDmFilterTab,
+                        allCount = uiState.dmInboxItems.size,
+                        unreadCount = unreadThreadsCount,
+                        groupsCount = groupThreadsCount,
+                        requestsCount = 0,
+                        onSelectTab = onSelectFilterTab
+                    )
+
+                    // 0.6dp Hairline Divider below chips
                     HorizontalDivider(
-                        thickness = 0.7.dp,
+                        thickness = 0.6.dp,
                         color = colors.hairlineBorder,
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    // 3. Filter Chips Bar (All, Unread, Groups, Requests)
-                    FilterChipsBar(
-                        selectedTab = uiState.selectedDmFilterTab,
-                        unreadCount = uiState.totalUnreadDmCount,
-                        onSelectTab = onSelectFilterTab
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    // 4. Filtered Conversations List
+                    // 3. Filtered Conversations List
                     val filteredList = remember(uiState.dmInboxItems, uiState.selectedDmFilterTab) {
                         when (uiState.selectedDmFilterTab) {
                             DmFilterTab.ALL -> uiState.dmInboxItems
-                            DmFilterTab.UNREAD -> uiState.dmInboxItems.filter { it.unreadCount > 0 }
+                            DmFilterTab.UNREAD -> uiState.dmInboxItems.filter { it.unreadCount > 0 || it.isMarkedUnread }
                             DmFilterTab.GROUPS -> uiState.dmInboxItems.filter { it.kind == "group" }
                             DmFilterTab.REQUESTS -> emptyList()
                         }
@@ -280,42 +289,13 @@ fun DmInboxScreen(
                             )
                         }
                     } else if (filteredList.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                                .padding(horizontal = 32.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_chat_bubble),
-                                    contentDescription = null,
-                                    tint = colors.secondaryText.copy(alpha = 0.35f),
-                                    modifier = Modifier.size(52.dp)
-                                )
-                                Spacer(modifier = Modifier.height(14.dp))
-                                Text(
-                                    text = if (uiState.selectedDmFilterTab == DmFilterTab.UNREAD) {
-                                        stringResource(R.string.dm_filter_unread)
-                                    } else {
-                                        stringResource(R.string.dm_empty_inbox_title)
-                                    },
-                                    color = colors.primaryText,
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    textAlign = TextAlign.Center
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = stringResource(R.string.dm_empty_inbox_subtitle),
-                                    color = colors.secondaryText,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Normal,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
+                        // Contextual Empty States per Tab
+                        ContextualEmptyState(
+                            tab = uiState.selectedDmFilterTab,
+                            onShowAllClick = { onSelectFilterTab(DmFilterTab.ALL) },
+                            onCreateGroupClick = onCreateGroupClick,
+                            modifier = Modifier.weight(1f)
+                        )
                     } else {
                         LazyColumn(
                             modifier = Modifier
@@ -330,9 +310,16 @@ fun DmInboxScreen(
                                 DmInboxRow(
                                     item = item,
                                     hasActiveNote = hasActiveNote,
+                                    currentUserId = currentUserId,
                                     onClick = { onConversationClick(item.id) },
                                     onLongClick = { selectedActionItem = item },
                                     onOpenProfile = onOpenProfile
+                                )
+                                // Indented Hairline Divider between rows aligned with text column
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(start = 88.dp, end = 18.dp),
+                                    thickness = 0.6.dp,
+                                    color = colors.hairlineBorder
                                 )
                             }
                         }
@@ -351,7 +338,33 @@ fun DmInboxScreen(
                     onViewProfile = if (item.kind == "direct" && item.peer?.handle != null) {
                         { handle -> onOpenProfile(handle) }
                     } else null,
+                    onViewGroupInfo = if (item.kind == "group") {
+                        {
+                            selectedActionItem = null
+                            selectedGroupInfoItem = item
+                        }
+                    } else null,
                     onDeleteOrLeave = { onDeleteOrLeaveConversation(item.id) }
+                )
+            }
+
+            // Group Info & Members Bottom Sheet
+            selectedGroupInfoItem?.let { groupItem ->
+                GroupInfoSheet(
+                    item = groupItem,
+                    participants = emptyList(),
+                    isLoadingParticipants = false,
+                    onRenameGroup = { newTitle -> onRenameGroup(groupItem.id, newTitle) },
+                    onAddMembersClick = {
+                        selectedGroupInfoItem = null
+                        onCreateGroupClick()
+                    },
+                    onLeaveGroupClick = {
+                        selectedGroupInfoItem = null
+                        onDeleteOrLeaveConversation(groupItem.id)
+                    },
+                    onOpenProfile = onOpenProfile,
+                    onDismiss = { selectedGroupInfoItem = null }
                 )
             }
 
@@ -374,25 +387,29 @@ fun DmInboxScreen(
 @Composable
 private fun FilterChipsBar(
     selectedTab: DmFilterTab,
+    allCount: Int,
     unreadCount: Int,
+    groupsCount: Int,
+    requestsCount: Int,
     onSelectTab: (DmFilterTab) -> Unit
 ) {
     val colors = BuildXTheme.colors
 
     LazyRow(
-        modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 18.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         val tabs = listOf(
-            DmFilterTab.ALL to R.string.dm_filter_all,
-            DmFilterTab.UNREAD to R.string.dm_filter_unread,
-            DmFilterTab.GROUPS to R.string.dm_filter_groups,
-            DmFilterTab.REQUESTS to R.string.dm_filter_requests
+            FilterChipData(DmFilterTab.ALL, R.string.dm_filter_all, allCount),
+            FilterChipData(DmFilterTab.UNREAD, R.string.dm_filter_unread, unreadCount),
+            FilterChipData(DmFilterTab.GROUPS, R.string.dm_filter_groups, groupsCount),
+            FilterChipData(DmFilterTab.REQUESTS, R.string.dm_filter_requests, requestsCount)
         )
 
-        items(tabs, key = { it.first.name }) { (tab, stringRes) ->
-            val isSelected = selectedTab == tab
+        items(tabs, key = { it.tab.name }) { item ->
+            val isSelected = selectedTab == item.tab
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(16.dp))
@@ -402,34 +419,145 @@ private fun FilterChipsBar(
                             Modifier.border(0.7.dp, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
                         } else Modifier
                     )
-                    .clickable { onSelectTab(tab) }
+                    .clickable { onSelectTab(item.tab) }
                     .padding(horizontal = 14.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = stringResource(id = stringRes),
+                    text = stringResource(id = item.titleRes),
                     color = if (isSelected) colors.pageBackground else colors.secondaryText,
                     fontSize = 13.sp,
                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                 )
 
-                if (tab == DmFilterTab.UNREAD && unreadCount > 0) {
+                if (item.count > 0 && item.tab != DmFilterTab.ALL) {
                     Spacer(modifier = Modifier.width(6.dp))
                     Box(
                         modifier = Modifier
-                            .size(17.dp)
+                            .defaultMinSize(minWidth = 17.dp)
+                            .height(17.dp)
                             .clip(CircleShape)
-                            .background(if (isSelected) colors.pageBackground else colors.primaryBlue),
+                            .background(if (isSelected) colors.pageBackground else colors.primaryBlue)
+                            .padding(horizontal = 4.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = if (unreadCount > 99) "99+" else unreadCount.toString(),
+                            text = if (item.count > 99) "99+" else item.count.toString(),
                             color = if (isSelected) colors.primaryText else Color.White,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+private data class FilterChipData(
+    val tab: DmFilterTab,
+    val titleRes: Int,
+    val count: Int
+)
+
+@Composable
+private fun ContextualEmptyState(
+    tab: DmFilterTab,
+    onShowAllClick: () -> Unit,
+    onCreateGroupClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colors = BuildXTheme.colors
+
+    val iconRes = when (tab) {
+        DmFilterTab.UNREAD -> R.drawable.ic_check_circle
+        DmFilterTab.GROUPS -> R.drawable.ic_user
+        DmFilterTab.REQUESTS -> R.drawable.ic_chat_bubble
+        DmFilterTab.ALL -> R.drawable.ic_chat_bubble
+    }
+
+    val title = when (tab) {
+        DmFilterTab.UNREAD -> stringResource(R.string.dm_empty_unread_title)
+        DmFilterTab.GROUPS -> stringResource(R.string.dm_empty_groups_title)
+        DmFilterTab.REQUESTS -> stringResource(R.string.dm_empty_requests_title)
+        DmFilterTab.ALL -> stringResource(R.string.dm_empty_inbox_title)
+    }
+
+    val subtitle = when (tab) {
+        DmFilterTab.UNREAD -> stringResource(R.string.dm_empty_unread_subtitle)
+        DmFilterTab.GROUPS -> stringResource(R.string.dm_empty_groups_subtitle)
+        DmFilterTab.REQUESTS -> stringResource(R.string.dm_empty_requests_subtitle)
+        DmFilterTab.ALL -> stringResource(R.string.dm_empty_inbox_subtitle)
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 32.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                painter = painterResource(id = iconRes),
+                contentDescription = null,
+                tint = colors.secondaryText.copy(alpha = 0.35f),
+                modifier = Modifier.size(52.dp)
+            )
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                text = title,
+                color = colors.primaryText,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = subtitle,
+                color = colors.secondaryText,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Normal,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            when (tab) {
+                DmFilterTab.UNREAD -> {
+                    Button(
+                        onClick = onShowAllClick,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colors.surfaceMuted,
+                            contentColor = colors.primaryText
+                        ),
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.height(38.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.dm_show_all_chats),
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                DmFilterTab.GROUPS -> {
+                    Button(
+                        onClick = onCreateGroupClick,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colors.primaryBlue,
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.height(38.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.dm_create_a_group),
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                else -> {}
             }
         }
     }
@@ -448,16 +576,16 @@ private fun NotesTraySection(
     LazyRow(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 8.dp),
-        contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(top = 6.dp),
+        contentPadding = PaddingValues(horizontal = 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Own Note Item (74dp avatar container)
+        // Own Note Item (Fixed geometry: 88dp x 118dp)
         item(key = "own_note") {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .width(86.dp)
+                    .width(88.dp)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -465,28 +593,32 @@ private fun NotesTraySection(
                     )
             ) {
                 Box(
-                    modifier = Modifier.width(86.dp),
+                    modifier = Modifier
+                        .width(88.dp)
+                        .height(98.dp),
                     contentAlignment = Alignment.TopCenter
                 ) {
-                    // Thought Bubble above avatar
+                    // Floating Thought Bubble Card at TopCenter
                     if (!myActiveNoteContent.isNullOrBlank()) {
                         NoteThoughtBubble(
                             text = myActiveNoteContent,
-                            modifier = Modifier.padding(bottom = 6.dp)
+                            modifier = Modifier.align(Alignment.TopCenter)
                         )
                     } else {
-                        // Subtle hint bubble for empty note
+                        // Subtle prompt bubble so the layout height stays uniform
                         Box(
                             modifier = Modifier
-                                .padding(bottom = 6.dp)
-                                .clip(RoundedCornerShape(12.dp))
+                                .align(Alignment.TopCenter)
+                                .clip(RoundedCornerShape(16.dp))
                                 .background(colors.cardBackground)
-                                .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(12.dp))
-                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                                .softShadow(colors.cardBackground.copy(alpha = 0.2f), cornerRadius = 16.dp, blurRadius = 8.dp)
+                                .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
+                                .padding(horizontal = 9.dp, vertical = 4.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = stringResource(R.string.dm_leave_a_note),
-                                fontSize = 10.5.sp,
+                                fontSize = 11.5.sp,
                                 color = colors.secondaryText,
                                 fontWeight = FontWeight.Medium,
                                 maxLines = 1
@@ -494,11 +626,11 @@ private fun NotesTraySection(
                         }
                     }
 
-                    // 74dp Avatar with Plus Badge
+                    // 72dp Circular Avatar at BottomCenter
                     Box(
                         modifier = Modifier
-                            .padding(top = 26.dp)
-                            .size(74.dp)
+                            .align(Alignment.BottomCenter)
+                            .size(72.dp)
                     ) {
                         if (!myAvatarUrl.isNullOrBlank()) {
                             AsyncImage(
@@ -523,12 +655,12 @@ private fun NotesTraySection(
                                     painter = painterResource(id = R.drawable.ic_user),
                                     contentDescription = null,
                                     tint = colors.secondaryText,
-                                    modifier = Modifier.size(32.dp)
+                                    modifier = Modifier.size(30.dp)
                                 )
                             }
                         }
 
-                        // Plus Badge at BottomEnd (24dp circle, 2dp border, primaryText background, 13dp ic_plus)
+                        // Plus Badge cleanly at Alignment.BottomEnd (24dp circle, 2dp border)
                         Box(
                             modifier = Modifier
                                 .size(24.dp)
@@ -550,7 +682,7 @@ private fun NotesTraySection(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(5.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = stringResource(R.string.dm_you),
                     color = colors.secondaryText,
@@ -562,12 +694,12 @@ private fun NotesTraySection(
             }
         }
 
-        // Followed Users' Notes (74dp avatar container)
+        // Followed Users' Notes (Fixed geometry: 88dp x 118dp)
         items(notes.filter { !it.isOwn }, key = { it.id }) { note ->
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .width(86.dp)
+                    .width(88.dp)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -575,18 +707,20 @@ private fun NotesTraySection(
                     )
             ) {
                 Box(
-                    modifier = Modifier.width(86.dp),
+                    modifier = Modifier
+                        .width(88.dp)
+                        .height(98.dp),
                     contentAlignment = Alignment.TopCenter
                 ) {
                     NoteThoughtBubble(
                         text = note.content,
-                        modifier = Modifier.padding(bottom = 6.dp)
+                        modifier = Modifier.align(Alignment.TopCenter)
                     )
 
                     Box(
                         modifier = Modifier
-                            .padding(top = 26.dp)
-                            .size(74.dp)
+                            .align(Alignment.BottomCenter)
+                            .size(72.dp)
                     ) {
                         if (!note.author.avatarUrl.isNullOrBlank()) {
                             AsyncImage(
@@ -611,14 +745,14 @@ private fun NotesTraySection(
                                     painter = painterResource(id = R.drawable.ic_user),
                                     contentDescription = null,
                                     tint = colors.secondaryText,
-                                    modifier = Modifier.size(32.dp)
+                                    modifier = Modifier.size(30.dp)
                                 )
                             }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(5.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
@@ -656,11 +790,11 @@ private fun NoteThoughtBubble(
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
+                    .clip(RoundedCornerShape(16.dp))
                     .background(colors.cardBackground)
-                    .softShadow(colors.cardBackground.copy(alpha = 0.22f), cornerRadius = 14.dp, blurRadius = 8.dp)
-                    .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(14.dp))
-                    .padding(horizontal = 9.dp, vertical = 5.dp),
+                    .softShadow(colors.cardBackground.copy(alpha = 0.22f), cornerRadius = 16.dp, blurRadius = 10.dp, offsetY = 2.dp)
+                    .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -676,10 +810,10 @@ private fun NoteThoughtBubble(
 
             Spacer(modifier = Modifier.height(2.dp))
 
-            // Two thought tail dots
+            // Two distinct circular tail dots connecting to top rim of avatar
             Box(
                 modifier = Modifier
-                    .size(6.5.dp)
+                    .size(6.dp)
                     .clip(CircleShape)
                     .background(colors.cardBackground)
                     .border(0.6.dp, colors.subtleSurfaceBorder, CircleShape)
@@ -700,21 +834,22 @@ private fun NoteThoughtBubble(
 private fun DmInboxRow(
     item: DmInboxItem,
     hasActiveNote: Boolean,
+    currentUserId: String?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onOpenProfile: (String) -> Unit
 ) {
     val colors = BuildXTheme.colors
-    val hasUnread = item.unreadCount > 0
+    val isUnread = item.unreadCount > 0 || item.isMarkedUnread
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 10.dp),
+            .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Avatar (56dp)
+        // Leading: 56dp Avatar
         Box(
             modifier = Modifier
                 .size(56.dp)
@@ -727,41 +862,68 @@ private fun DmInboxRow(
                 }
         ) {
             if (item.kind == "group") {
-                // Composite dual-avatar stack for groups (36dp overlapping circles)
+                // Real Overlapping Dual-Member Avatar inside 56dp box
+                val m1 = item.memberAvatars.getOrNull(0)
+                val m2 = item.memberAvatars.getOrNull(1)
+
+                // Back Circle (36dp at Alignment.TopStart)
                 Box(
                     modifier = Modifier
                         .size(36.dp)
                         .align(Alignment.TopStart)
                         .clip(CircleShape)
-                        .background(colors.primaryBlue.copy(alpha = 0.16f)),
+                        .background(colors.surfaceMuted),
                     contentAlignment = Alignment.Center
                 ) {
-                    val initial = (item.title?.firstOrNull() ?: 'G').uppercaseChar().toString()
-                    Text(
-                        text = initial,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.primaryBlue
-                    )
+                    if (!m1?.avatarUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = m1?.avatarUrl,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().clip(CircleShape)
+                        )
+                    } else {
+                        val initial = (m1?.displayName?.firstOrNull() ?: item.title?.firstOrNull() ?: 'G').uppercaseChar().toString()
+                        Text(
+                            text = initial,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.primaryBlue
+                        )
+                    }
                 }
 
+                // Front Circle (38dp at Alignment.BottomEnd) with 2dp cutout ring in pageBackground
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(38.dp)
                         .align(Alignment.BottomEnd)
                         .clip(CircleShape)
-                        .background(colors.surfaceMuted)
-                        .border(2.dp, colors.pageBackground, CircleShape),
+                        .background(colors.pageBackground)
+                        .padding(2.dp)
+                        .clip(CircleShape)
+                        .background(colors.surfaceMuted),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = item.memberCount.toString(),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.secondaryText
-                    )
+                    if (!m2?.avatarUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = m2?.avatarUrl,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().clip(CircleShape)
+                        )
+                    } else {
+                        val initial = (m2?.displayName?.firstOrNull() ?: 'U').uppercaseChar().toString()
+                        Text(
+                            text = initial,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.secondaryText
+                        )
+                    }
                 }
             } else {
+                // 1-on-1 Clean 56dp Circular Avatar (NO verified checkmark on avatar!)
                 val avatarUrl = item.peer?.avatarUrl
                 val avatarModifier = Modifier
                     .fillMaxSize()
@@ -790,7 +952,9 @@ private fun DmInboxRow(
                             .then(
                                 if (hasActiveNote) {
                                     Modifier.border(2.dp, colors.primaryBlue, CircleShape)
-                                } else Modifier
+                                } else {
+                                    Modifier.border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
+                                }
                             ),
                         contentAlignment = Alignment.Center
                     ) {
@@ -802,132 +966,153 @@ private fun DmInboxRow(
                         )
                     }
                 }
-
-                if (item.peer?.isVerified == true) {
-                    VerifiedBadge(
-                        size = 15.dp,
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .offset(x = 2.dp, y = 2.dp)
-                    )
-                }
             }
         }
 
         Spacer(modifier = Modifier.width(14.dp))
 
-        // Titles & Last Message
+        // Center + Trailing Column (True Two-Axis Geometry: Start & End)
         Column(modifier = Modifier.weight(1f)) {
+            // Top Line: Start (Title + VerifiedBadge) vs End (Timestamp)
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                val displayName = if (item.kind == "direct") {
-                    item.peer?.displayName ?: item.peer?.handle ?: "User"
-                } else {
-                    item.title ?: stringResource(R.string.dm_new_group)
+                // Start: Title + VerifiedBadge
+                Row(
+                    modifier = Modifier.weight(1f, fill = false),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val displayName = if (item.kind == "direct") {
+                        item.peer?.displayName ?: item.peer?.handle ?: "User"
+                    } else {
+                        item.title ?: stringResource(R.string.dm_new_group)
+                    }
+
+                    Text(
+                        text = displayName,
+                        color = colors.primaryText,
+                        fontSize = 16.sp,
+                        fontWeight = if (isUnread) FontWeight.Bold else FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    // Verified Badge ONLY next to Display Name (15dp)
+                    if (item.kind == "direct" && item.peer?.isVerified == true) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        VerifiedBadge(size = 15.dp)
+                    }
                 }
 
-                Text(
-                    text = displayName,
-                    color = colors.primaryText,
-                    fontSize = 15.5.sp,
-                    fontWeight = if (hasUnread) FontWeight.Bold else FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
+                Spacer(modifier = Modifier.width(8.dp))
 
-                if (item.kind == "direct" && item.peer?.isVerified == true) {
-                    Spacer(modifier = Modifier.width(4.dp))
-                    VerifiedBadge(size = 14.dp)
-                }
-
-                // Inline relative timestamp: " · 12m"
+                // End: Relative Time
                 val timeStr = formatRelativeTime(item.lastMessageAt)
                 if (timeStr.isNotEmpty()) {
                     Text(
-                        text = " · $timeStr",
-                        color = if (hasUnread) colors.primaryBlue else colors.secondaryText,
-                        fontSize = 12.sp,
-                        fontWeight = if (hasUnread) FontWeight.Bold else FontWeight.Normal
+                        text = timeStr,
+                        color = if (isUnread) colors.primaryBlue else colors.secondaryText,
+                        fontSize = 12.5.sp,
+                        fontWeight = if (isUnread) FontWeight.Bold else FontWeight.Medium
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(3.dp))
+            Spacer(modifier = Modifier.height(5.dp))
 
+            // Bottom Line: Start (Subtitle Preview) vs End (Mute, Pin, Unread Badge)
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                // Start: Subtitle Preview Text
                 val isDeleted = item.lastMessage?.deletedAt != null
+                val isSentByMe = currentUserId != null && item.lastMessage?.senderId == currentUserId
+
                 val subtitleText = when {
                     isDeleted -> stringResource(R.string.dm_message_unsent)
-                    item.lastMessage?.messageType == "image" || item.lastMessage?.messageType == "photo" -> stringResource(R.string.dm_media_attachment)
-                    !item.lastMessageText.isNullOrBlank() -> item.lastMessageText
+                    item.lastMessage?.messageType == "image" || item.lastMessage?.messageType == "photo" -> stringResource(R.string.dm_sent_attachment)
+                    !item.lastMessageText.isNullOrBlank() -> {
+                        when {
+                            isSentByMe -> stringResource(R.string.dm_you_prefix) + item.lastMessageText
+                            item.kind == "group" && !item.lastMessage?.senderName.isNullOrBlank() -> {
+                                val firstName = item.lastMessage!!.senderName!!.split(" ").firstOrNull() ?: item.lastMessage!!.senderName!!
+                                "$firstName: ${item.lastMessageText}"
+                            }
+                            else -> item.lastMessageText
+                        }
+                    }
                     item.kind == "group" -> stringResource(R.string.dm_group_members_format, item.memberCount ?: 0)
-                    else -> stringResource(R.string.dm_tap_to_chat)
+                    else -> stringResource(R.string.dm_start_a_conversation)
                 }
 
                 val isItalic = isDeleted
 
                 Text(
                     text = subtitleText,
-                    color = if (hasUnread) colors.primaryText else colors.secondaryText,
-                    fontSize = 13.5.sp,
+                    color = if (isUnread) colors.primaryText else colors.secondaryText,
+                    fontSize = 14.sp,
                     fontStyle = if (isItalic) FontStyle.Italic else FontStyle.Normal,
-                    fontWeight = if (hasUnread) FontWeight.Bold else FontWeight.Normal,
+                    fontWeight = if (isUnread) FontWeight.SemiBold else FontWeight.Normal,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
 
-                if (item.isPinned) {
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_pin),
-                        contentDescription = "Pinned",
-                        tint = colors.secondaryText,
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
+                // End: Mute, Pin, Unread Indicators
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(start = 8.dp)
+                ) {
+                    if (item.isMuted) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_volume_off),
+                            contentDescription = "Muted",
+                            tint = colors.secondaryText,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
 
-                if (item.isMuted) {
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_volume_off),
-                        contentDescription = "Muted",
-                        tint = colors.secondaryText,
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
+                    if (item.isPinned) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_pin),
+                            contentDescription = "Pinned",
+                            tint = colors.secondaryText,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
 
-                if (hasUnread) {
-                    Spacer(modifier = Modifier.width(6.dp))
-                    if (item.unreadCount > 1) {
-                        Box(
-                            modifier = Modifier
-                                .height(18.dp)
-                                .clip(RoundedCornerShape(9.dp))
-                                .background(colors.primaryBlue)
-                                .padding(horizontal = 6.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = if (item.unreadCount > 99) "99+" else item.unreadCount.toString(),
-                                color = Color.White,
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.Bold
+                    if (isUnread) {
+                        if (item.unreadCount > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .defaultMinSize(minWidth = 20.dp)
+                                    .height(20.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(colors.primaryBlue)
+                                    .padding(horizontal = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (item.unreadCount > 99) "99+" else item.unreadCount.toString(),
+                                    color = Color.White,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        } else {
+                            // Marked unread with unreadCount == 0: 10dp blue circle
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                    .background(colors.primaryBlue)
                             )
                         }
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .clip(CircleShape)
-                                .background(colors.primaryBlue)
-                        )
                     }
                 }
             }
@@ -943,7 +1128,8 @@ private fun SearchResultsView(
     conversations: List<DmInboxItem>,
     onPersonClick: (String) -> Unit,
     onConversationClick: (String) -> Unit,
-    onOpenProfile: (String) -> Unit
+    onOpenProfile: (String) -> Unit,
+    currentUserId: String?
 ) {
     val colors = BuildXTheme.colors
     val q = query.trim().lowercase()
@@ -1039,14 +1225,6 @@ private fun SearchResultsView(
                                     )
                                 }
                             }
-                            if (person.isVerified) {
-                                VerifiedBadge(
-                                    size = 14.dp,
-                                    modifier = Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .offset(x = 2.dp, y = 2.dp)
-                                )
-                            }
                         }
 
                         Spacer(modifier = Modifier.width(12.dp))
@@ -1063,7 +1241,7 @@ private fun SearchResultsView(
                                 )
                                 if (person.isVerified) {
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    VerifiedBadge(size = 13.dp)
+                                    VerifiedBadge(size = 14.dp)
                                 }
                             }
                             Text(
@@ -1094,9 +1272,15 @@ private fun SearchResultsView(
                     DmInboxRow(
                         item = conv,
                         hasActiveNote = false,
+                        currentUserId = currentUserId,
                         onClick = { onConversationClick(conv.id) },
                         onLongClick = {},
                         onOpenProfile = onOpenProfile
+                    )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 88.dp, end = 18.dp),
+                        thickness = 0.6.dp,
+                        color = colors.hairlineBorder
                     )
                 }
             }
@@ -1162,7 +1346,7 @@ private fun NoteReplySheetDialog(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .clip(CircleShape)
-                                .border(1.dp, colors.subtleSurfaceBorder, CircleShape)
+                                .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
                         )
                     } else {
                         Box(
@@ -1179,14 +1363,6 @@ private fun NoteReplySheetDialog(
                                 modifier = Modifier.size(26.dp)
                             )
                         }
-                    }
-                    if (note.author.isVerified) {
-                        VerifiedBadge(
-                            size = 15.dp,
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .offset(x = 2.dp, y = 2.dp)
-                        )
                     }
                 }
 
@@ -1331,9 +1507,10 @@ private fun formatRelativeTime(isoStr: String?): String {
         val duration = java.time.Duration.between(instant, now)
         val seconds = duration.seconds
         when {
-            seconds < 60 -> "now"
+            seconds < 60 -> "Just now"
             seconds < 3600 -> "${seconds / 60}m"
             seconds < 86400 -> "${seconds / 3600}h"
+            seconds < 172800 -> "Yesterday"
             seconds < 604800 -> "${seconds / 86400}d"
             else -> {
                 val zdt = instant.atZone(java.time.ZoneId.systemDefault())

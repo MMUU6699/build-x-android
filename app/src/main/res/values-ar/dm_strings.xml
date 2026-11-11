@@ -65,4 +65,27 @@
     <string name="dm_delete_or_leave">حذف المحادثة</string>
     <string name="dm_people_header">الأشخاص</string>
     <string name="dm_conversations_header">المحادثات</string>
+    <string name="dm_group_info">معلومات المجموعة والأعضاء</string>
+    <string name="dm_add_members">إضافة أعضاء</string>
+    <string name="dm_rename_group">إعادة تسمية المجموعة</string>
+    <string name="dm_save">حفظ</string>
+    <string name="dm_cancel">إلغاء</string>
+    <string name="dm_delete_conv_title">حذف المحادثة؟</string>
+    <string name="dm_delete_conv_message">سيتم حذف هذه المحادثة من صندوق الرسائل الخاص بك.</string>
+    <string name="dm_leave_group_title">مغادرة وحذف المجموعة؟</string>
+    <string name="dm_leave_group_message">ستغادر هذه المجموعة وسيتم حذفها من صندوق الرسائل الخاص بك.</string>
+    <string name="dm_empty_unread_title">لا توجد رسائل غير مقروءة</string>
+    <string name="dm_empty_unread_subtitle">لقد قرأت جميع الرسائل!</string>
+    <string name="dm_empty_groups_title">لا توجد مجموعات بعد</string>
+    <string name="dm_empty_groups_subtitle">أنشئ مجموعة للدردشة مع عدة أشخاص في وقت واحد.</string>
+    <string name="dm_empty_requests_title">لا توجد طلبات مراسلة</string>
+    <string name="dm_empty_requests_subtitle">الرسائل من الأشخاص الذين لا تتابعهم ستظهر هنا.</string>
+    <string name="dm_show_all_chats">عرض كافة المحادثات</string>
+    <string name="dm_create_a_group">إنشاء مجموعة</string>
+    <string name="dm_start_a_conversation">ابدأ محادثة جديدة</string>
+    <string name="dm_you_prefix">أنت: </string>
+    <string name="dm_conv_pinned">تم تثبيت المحادثة</string>
+    <string name="dm_conv_unpinned">تم إلغاء تثبيت المحادثة</string>
+    <string name="dm_conv_muted">تم كتم المحادثة</string>
+    <string name="dm_conv_unmuted">تم إلغاء كتم المحادثة</string>
 </resources>

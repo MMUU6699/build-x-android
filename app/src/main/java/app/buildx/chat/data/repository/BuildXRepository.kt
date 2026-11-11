@@ -1462,13 +1462,30 @@ class BuildXRepository(val context: Context) {
         }
     }
 
-    suspend fun markDmRead(conversationId: String, lastReadMessageId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+    suspend fun markDmRead(conversationId: String, lastReadMessageId: String? = null): Result<Boolean> = withContext(Dispatchers.IO) {
         runCatching {
             val params = buildJsonObject {
                 put("p_conversation_id", conversationId)
-                put("p_last_read_message_id", lastReadMessageId)
+                if (lastReadMessageId != null) {
+                    put("p_last_read_message_id", lastReadMessageId)
+                }
             }
             val response = supabase.postgrest.rpc("mark_dm_read", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
+        }
+    }
+
+    suspend fun updateGroupInfo(conversationId: String, title: String, avatarUrl: String? = null): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_conversation_id", conversationId)
+                put("p_title", title.trim())
+                if (avatarUrl != null) {
+                    put("p_avatar_url", avatarUrl)
+                }
+            }
+            val response = supabase.postgrest.rpc("update_group_info", params)
             val obj = json.decodeFromString<JsonObject>(response.data)
             obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
         }
