@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -50,8 +51,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -66,9 +69,14 @@ import app.buildx.chat.R
 import app.buildx.chat.data.model.PublicNote
 import app.buildx.chat.data.model.PublicProfile
 import app.buildx.chat.data.model.UserProfile
+import app.buildx.chat.ui.components.ActionCapsule
 import app.buildx.chat.ui.components.HeaderCircleButton
+import app.buildx.chat.ui.components.NameWithBadge
+import app.buildx.chat.ui.components.VerifiedBadge
+import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.isRtlText
+import app.buildx.chat.ui.theme.softShadow
 import coil.compose.AsyncImage
 
 /**
@@ -97,7 +105,9 @@ fun ProfileScreen(
     onFollowClick: (String) -> Unit,
     onFollowingClick: (String) -> Unit,
     onFollowersListClick: (String, Int) -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    isSubscribedToNotes: Boolean = publicProfile?.noteSubscribed == true,
+    onToggleNotification: (String) -> Unit = {}
 ) {
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
@@ -172,13 +182,15 @@ fun ProfileScreen(
             .fillMaxSize()
             .background(colors.pageBackground)
             .statusBarsPadding()
+            .navigationBarsPadding()
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
+                .padding(bottom = 24.dp)
         ) {
-            // Header Bar: Back, Action Icon (Pencil or Bell), Share Icon
+            // Header Bar: Back, Action Capsule (Edit/Bell + Share)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -192,39 +204,43 @@ fun ProfileScreen(
                     onClick = onBackClick
                 )
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    if (isOwnProfile) {
-                        HeaderCircleButton(
-                            iconRes = R.drawable.ic_pencil_edit,
-                            contentDescription = strings.editProfileTitle,
-                            onClick = onEditProfileClick
-                        )
+                // Unified Action Capsule token (using shared ActionCapsule from BuildXComponents.kt)
+                ActionCapsule(
+                    primaryIconRes = if (isOwnProfile) {
+                        R.drawable.ic_pencil_edit
+                    } else if (isSubscribedToNotes) {
+                        R.drawable.ic_bell_filled
                     } else {
-                        HeaderCircleButton(
-                            iconRes = R.drawable.ic_bell,
-                            contentDescription = strings.notificationsTitle,
-                            onClick = {
-                                // Toggle notifications or show info
+                        R.drawable.ic_bell
+                    },
+                    primaryContentDescription = if (isOwnProfile) {
+                        strings.editProfileTitle
+                    } else if (isSubscribedToNotes) {
+                        if (strings.isRtl) "كتم الإشعارات" else "Mute notifications"
+                    } else {
+                        strings.notificationsTitle
+                    },
+                    onPrimaryClick = {
+                        if (isOwnProfile) {
+                            onEditProfileClick()
+                        } else {
+                            val targetId = publicProfile?.id
+                            if (!targetId.isNullOrBlank()) {
+                                onToggleNotification(targetId)
                             }
-                        )
-                    }
-
-                    HeaderCircleButton(
-                        iconRes = R.drawable.ic_share,
-                        contentDescription = strings.shareButton,
-                        onClick = {
-                            val shareText = String.format(strings.shareProfileText, username, username)
-                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_TEXT, shareText)
-                            }
-                            context.startActivity(Intent.createChooser(shareIntent, strings.shareButton))
                         }
-                    )
-                }
+                    },
+                    secondaryIconRes = R.drawable.ic_share,
+                    secondaryContentDescription = strings.shareButton,
+                    onSecondaryClick = {
+                        val shareText = String.format(strings.shareProfileText, username, username)
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, shareText)
+                        }
+                        context.startActivity(Intent.createChooser(shareIntent, strings.shareButton))
+                    }
+                )
             }
 
             if (isLoading) {
@@ -297,46 +313,37 @@ fun ProfileScreen(
                                 .weight(1f)
                                 .padding(end = 12.dp)
                         ) {
-                            // Display Name
+                            // Display Name with inline VerifiedBadge (never ellipsized, wraps with last word)
                             CompositionLocalProvider(
                                 LocalLayoutDirection provides if (isNameRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
                             ) {
-                                Text(
-                                    text = displayName,
+                                NameWithBadge(
+                                    name = displayName,
+                                    isVerified = isVerified,
+                                    badgeSize = 20.dp,
+                                    badgeSpacing = 6.dp,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
                                     fontSize = 24.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = colors.primaryText,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                    style = androidx.compose.ui.text.TextStyle(
-                                        textDirection = if (isNameRtl) TextDirection.Rtl else TextDirection.Ltr
-                                    )
+                                    badgeContentDescription = strings.verifiedAccountDescription
                                 )
                             }
 
                             Spacer(modifier = Modifier.height(4.dp))
 
-                            // @username + Verified badge
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                                    Text(
-                                        text = "@$username",
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = colors.secondaryText
+                            // @username row (verified badge removed per Deliverable 1)
+                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                Text(
+                                    text = "@$username",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = colors.secondaryText,
+                                    style = TextStyle(
+                                        textDirection = TextDirection.Ltr
                                     )
-                                }
-                                if (isVerified) {
-                                    Spacer(modifier = Modifier.width(5.dp))
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.ic_verified_badge),
-                                        contentDescription = strings.verifiedAccountDescription,
-                                        tint = colors.primaryBlue,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
+                                )
                             }
 
                             Spacer(modifier = Modifier.height(14.dp))
@@ -451,7 +458,7 @@ fun ProfileScreen(
                                                 .clip(CircleShape)
                                                 .background(colors.primaryBlue)
                                                 .border(2.dp, colors.pageBackground, CircleShape)
-                                                .clickable { onOpenNoteSheet() },
+                                                .pressScaleClickable { onOpenNoteSheet() },
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Icon(
@@ -479,7 +486,7 @@ fun ProfileScreen(
                                     .height(44.dp)
                                     .clip(RoundedCornerShape(22.dp))
                                     .background(colors.surfaceMuted)
-                                    .clickable { showUnfollowDialog = true },
+                                    .pressScaleClickable { showUnfollowDialog = true },
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -506,7 +513,7 @@ fun ProfileScreen(
                                     .height(44.dp)
                                     .clip(RoundedCornerShape(22.dp))
                                     .background(colors.primaryBlue)
-                                    .clickable { onFollowClick(targetId) },
+                                    .pressScaleClickable { onFollowClick(targetId) },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
@@ -526,7 +533,7 @@ fun ProfileScreen(
                             Row(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(8.dp))
-                                    .clickable { onEditProfileClick() }
+                                    .pressScaleClickable { onEditProfileClick() }
                                     .padding(vertical = 4.dp, horizontal = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -538,7 +545,7 @@ fun ProfileScreen(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (strings.isRtl) "إضافة نبذة تعريفية" else "Add bio",
+                                    text = stringResource(id = R.string.profile_add_bio),
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = colors.primaryBlue
@@ -621,7 +628,7 @@ fun ProfileScreen(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(16.dp))
                                     .background(colors.primaryBlue)
-                                    .clickable { onReviewUsernameClick() }
+                                    .pressScaleClickable { onReviewUsernameClick() }
                                     .padding(horizontal = 14.dp, vertical = 8.dp),
                                 contentAlignment = Alignment.Center
                             ) {
@@ -709,6 +716,7 @@ fun ProfileScreen(
 
 /**
  * Speech bubble displaying an active public note over the avatar.
+ * Uses softShadow and whisper-soft contour border matching Rule 2.
  */
 @Composable
 private fun NoteBubble(
@@ -716,28 +724,44 @@ private fun NoteBubble(
     onClick: () -> Unit
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
+    val isContentRtl = isRtlText(content, defaultRtl = strings.isRtl)
     Box(
         modifier = Modifier
-            .shadow(4.dp, RoundedCornerShape(16.dp))
+            .softShadow(
+                color = colors.headerHaloShadowColor,
+                cornerRadius = 16.dp,
+                blurRadius = 10.dp,
+                offsetY = 2.dp
+            )
             .clip(RoundedCornerShape(16.dp))
             .background(colors.cardBackground)
-            .clickable { onClick() }
+            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
+            .pressScaleClickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = content,
-            fontSize = 12.5.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = colors.primaryText,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
+        CompositionLocalProvider(
+            LocalLayoutDirection provides if (isContentRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
+        ) {
+            Text(
+                text = content,
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = colors.primaryText,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                style = TextStyle(
+                    textDirection = if (isContentRtl) TextDirection.Rtl else TextDirection.Ltr
+                )
+            )
+        }
     }
 }
 
 /**
  * Prompt bubble ("Spill the tea") above avatar when no note exists.
+ * Uses softShadow and whisper-soft contour border matching Rule 2.
  */
 @Composable
 private fun NotePromptBubble(
@@ -747,10 +771,16 @@ private fun NotePromptBubble(
     val colors = BuildXTheme.colors
     Box(
         modifier = Modifier
-            .shadow(2.dp, RoundedCornerShape(14.dp))
+            .softShadow(
+                color = colors.headerHaloShadowColor,
+                cornerRadius = 14.dp,
+                blurRadius = 8.dp,
+                offsetY = 2.dp
+            )
             .clip(RoundedCornerShape(14.dp))
             .background(colors.cardBackground)
-            .clickable { onClick() }
+            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(14.dp))
+            .pressScaleClickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 5.dp),
         contentAlignment = Alignment.Center
     ) {

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="continue_with_google">Continue with Google</string>
+    <string name="sign_up_button">Sign up</string>
+    <string name="log_in_button">Log in</string>
+    <string name="username_or_email">Username or email</string>
+    <string name="password_label">Password</string>
+    <string name="create_account_heading">Create account</string>
+    <string name="create_account_subtitle">Choose your username and start chatting</string>
+    <string name="welcome_back_heading">Log in</string>
+    <string name="welcome_back_subtitle">Enter your username or email to continue</string>
+    <string name="auth_signing_in">Signing in…</string>
+    <string name="auth_creating_account">Creating account…</string>
+    <string name="auth_google_signing_in">Connecting to Google…</string>
+    <string name="auth_sign_in_failed">Sign in failed. Check your credentials.</string>
+    <string name="auth_account_creation_failed">Account creation failed.</string>
+    <string name="auth_google_sign_in_failed">Google sign in failed.</string>
+    <string name="auth_callback_failed">Authentication callback failed.</string>
+    <string name="auth_credentials_required">Please enter your username or email and password.</string>
+    <string name="auth_session_loading">Starting Build X…</string>
+    <string name="auth_signed_out">Signed out</string>
+</resources>

@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -50,6 +51,8 @@ import app.buildx.chat.data.model.VerificationStatusInfo
 import app.buildx.chat.ui.components.GroupedCard
 import app.buildx.chat.ui.components.HeaderCircleButton
 import app.buildx.chat.ui.components.MarkLoader
+import app.buildx.chat.ui.components.VerifiedBadge
+import app.buildx.chat.ui.components.formatVerifiedDate
 import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.theme.BuildXTheme
 
@@ -161,15 +164,14 @@ fun VerificationRequestScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_verified_badge),
-                    contentDescription = null,
-                    tint = colors.primaryBlue,
-                    modifier = Modifier.size(22.dp)
-                )
+                VerifiedBadge(size = 22.dp)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = strings.requestVerificationTitle,
+                    text = if (verificationStatus?.isVerified == true) {
+                        stringResource(R.string.verification_title)
+                    } else {
+                        strings.requestVerificationTitle
+                    },
                     color = colors.primaryText,
                     fontSize = 19.sp,
                     fontWeight = FontWeight.Bold
@@ -207,12 +209,7 @@ fun VerificationRequestScreen(
                                 .background(colors.primaryBlue.copy(alpha = 0.12f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_verified_badge),
-                                contentDescription = null,
-                                tint = colors.primaryBlue,
-                                modifier = Modifier.size(44.dp)
-                            )
+                            VerifiedBadge(size = 48.dp)
                         }
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
@@ -221,6 +218,16 @@ fun VerificationRequestScreen(
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold
                         )
+                        val formattedDate = formatVerifiedDate(verificationStatus.verifiedAt)
+                        if (!formattedDate.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = stringResource(R.string.account_verified_on, formattedDate),
+                                color = colors.primaryBlue,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = strings.accountVerifiedDesc,
@@ -371,12 +378,7 @@ fun VerificationRequestScreen(
             GroupedCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_verified_badge),
-                            contentDescription = null,
-                            tint = colors.primaryBlue,
-                            modifier = Modifier.size(24.dp)
-                        )
+                        VerifiedBadge(size = 24.dp)
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
                             text = strings.verificationCriteriaHeading,
@@ -686,3 +688,4 @@ private fun VerificationTextArea(
         )
     }
 }
+

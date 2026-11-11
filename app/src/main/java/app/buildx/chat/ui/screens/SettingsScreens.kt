@@ -35,10 +35,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -53,6 +55,7 @@ import app.buildx.chat.data.model.UserProfile
 import app.buildx.chat.ui.components.AppearanceRadioRow
 import app.buildx.chat.ui.components.GroupedCard
 import app.buildx.chat.ui.components.HeaderCircleButton
+import app.buildx.chat.ui.components.NameWithBadge
 import app.buildx.chat.ui.components.SettingsRow
 import app.buildx.chat.ui.theme.BuildXTheme
 import coil.compose.AsyncImage
@@ -192,23 +195,15 @@ fun SettingsScreen(
                 }
                 Spacer(modifier = Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = strings.viewProfile,
-                            color = colors.primaryText,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        if (profile?.isVerified == true) {
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_verified_badge),
-                                contentDescription = "Verified",
-                                tint = colors.primaryBlue,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
+                    NameWithBadge(
+                        name = strings.viewProfile,
+                        isVerified = profile?.isVerified == true,
+                        color = colors.primaryText,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        badgeSize = 16.dp,
+                        badgeSpacing = 6.dp
+                    )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = handleText,
@@ -299,10 +294,14 @@ fun SettingsScreen(
             )
             SettingsRow(
                 iconRes = R.drawable.ic_verified_badge,
-                title = strings.requestVerificationTitle,
+                title = if (profile?.isVerified == true) {
+                    stringResource(id = R.string.verification_title)
+                } else {
+                    strings.requestVerificationTitle
+                },
                 subtitle = if (profile?.isVerified == true) strings.verifiedAccountDescription else null,
                 onClick = onRequestVerificationClick,
-                iconTint = colors.primaryBlue,
+                iconTint = Color.Unspecified,
                 showDivider = false
             )
         }

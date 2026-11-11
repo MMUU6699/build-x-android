@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="verified_account">Verified account</string>
+    <string name="verification_title">Verification</string>
+    <string name="account_verified_on">Verified on %1$s</string>
+    <string name="account_verified_since">Verified since %1$s</string>
+</resources>

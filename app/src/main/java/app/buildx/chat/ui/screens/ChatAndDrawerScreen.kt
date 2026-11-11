@@ -166,6 +166,7 @@ fun ChatAndDrawerScreen(
 ) {
     val colors = BuildXTheme.colors
     val focusManager = LocalFocusManager.current
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
     BoxWithConstraints(
         modifier = modifier
@@ -243,7 +244,10 @@ fun ChatAndDrawerScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .offset { IntOffset(drawerOffsetDp.roundToPx(), 0) }
+                .offset {
+                    val px = drawerOffsetDp.roundToPx()
+                    IntOffset(if (isRtl) -px else px, 0)
+                }
                 .background(colors.pageBackground)
         ) {
             when (uiState.activeSurfacePane) {

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile_edit">Edit profile</string>
+    <string name="profile_share">Share</string>
+    <string name="profile_share_text">Check out @%1$s on Build X: https://buildx.chat/%2$s</string>
+    <string name="profile_following">Following</string>
+    <string name="profile_followers">Followers</string>
+    <string name="profile_follow">Follow</string>
+    <string name="profile_follow_back">Follow back</string>
+    <string name="profile_following_status">Following</string>
+    <string name="profile_unfollow">Unfollow</string>
+    <string name="profile_unfollow_confirmation">Unfollow @%1$s?</string>
+    <string name="profile_verified_account">Verified account</string>
+    <string name="profile_add_bio">Add bio</string>
+    <string name="profile_user_not_found_title">User not found</string>
+    <string name="profile_user_not_found_subtitle">This profile may have been removed or does not exist.</string>
+    <string name="profile_retry">Retry</string>
+    <string name="profile_cancel">Cancel</string>
+    <string name="profile_leave_a_note">Leave a note</string>
+    <string name="profile_spill_the_tea">Spill the tea...</string>
+    <string name="profile_username_review_title">Choose your username</string>
+    <string name="profile_username_review_subtitle">You can keep your assigned username or pick a new one.</string>
+    <string name="profile_review">Review</string>
+    <string name="profile_no_media">No media yet</string>
+    <string name="profile_notifications_enabled">Notifications turned on for @%1$s</string>
+    <string name="profile_notifications_disabled">Notifications turned off for @%1$s</string>
+    <string name="profile_notifications_not_following">Follow @%1$s first to receive notifications</string>
+</resources>

@@ -47,7 +47,8 @@ data class PublicProfile(
     @SerialName("followers_count") val followersCount: Int = 0,
     @SerialName("is_following") val isFollowing: Boolean = false,
     @SerialName("follows_you") val followsYou: Boolean = false,
-    @SerialName("active_note") val activeNote: PublicNote? = null
+    @SerialName("active_note") val activeNote: PublicNote? = null,
+    @SerialName("note_subscribed") val noteSubscribed: Boolean = false
 )
 
 @Serializable

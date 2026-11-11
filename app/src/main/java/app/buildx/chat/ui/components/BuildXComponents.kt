@@ -206,16 +206,19 @@ fun HeaderCircleButton(
 }
 
 /**
- * 3. ActionCapsule: 91dp x 44dp header action capsule with New Chat (edit icon) + More (3-dots icon).
+ * 3. ActionCapsule: 92dp x 44dp header action capsule token with soft halo shadow.
  */
 @Composable
 fun ActionCapsule(
-    onNewChatClick: () -> Unit,
-    onMoreClick: () -> Unit,
+    @DrawableRes primaryIconRes: Int,
+    primaryContentDescription: String,
+    onPrimaryClick: () -> Unit,
+    @DrawableRes secondaryIconRes: Int,
+    secondaryContentDescription: String,
+    onSecondaryClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
-    val strings = BuildXTheme.strings
     Row(
         modifier = modifier
             .width(92.dp)
@@ -235,12 +238,12 @@ fun ActionCapsule(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxSize()
-                .pressScaleClickable(onClick = onNewChatClick),
+                .pressScaleClickable(onClick = onPrimaryClick),
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                painter = painterResource(id = R.drawable.ic_edit_compose),
-                contentDescription = strings.newChat,
+                painter = painterResource(id = primaryIconRes),
+                contentDescription = primaryContentDescription,
                 tint = colors.primaryText,
                 modifier = Modifier.size(21.dp)
             )
@@ -249,17 +252,38 @@ fun ActionCapsule(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxSize()
-                .pressScaleClickable(onClick = onMoreClick),
+                .pressScaleClickable(onClick = onSecondaryClick),
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                painter = painterResource(id = R.drawable.ic_more_horizontal),
-                contentDescription = "More options",
+                painter = painterResource(id = secondaryIconRes),
+                contentDescription = secondaryContentDescription,
                 tint = colors.primaryText,
                 modifier = Modifier.size(21.dp)
             )
         }
     }
+}
+
+/**
+ * 3b. ActionCapsule convenience overload for Chat: New Chat (edit icon) + More (3-dots icon).
+ */
+@Composable
+fun ActionCapsule(
+    onNewChatClick: () -> Unit,
+    onMoreClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val strings = BuildXTheme.strings
+    ActionCapsule(
+        primaryIconRes = R.drawable.ic_edit_compose,
+        primaryContentDescription = strings.newChat,
+        onPrimaryClick = onNewChatClick,
+        secondaryIconRes = R.drawable.ic_more_horizontal,
+        secondaryContentDescription = "More options",
+        onSecondaryClick = onMoreClick,
+        modifier = modifier
+    )
 }
 
 /**

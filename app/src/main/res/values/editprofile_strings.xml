@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="edit_profile_title">Edit profile</string>
+    <string name="edit_profile_save">Save</string>
+    <string name="edit_profile_cancel">Cancel</string>
+    <string name="edit_profile_change_photo">Change photo</string>
+    <string name="edit_profile_display_name_label">Display name</string>
+    <string name="edit_profile_username_label">Username</string>
+    <string name="edit_profile_bio_label">Bio</string>
+    <string name="edit_profile_bio_placeholder">Tell the world about yourself...</string>
+    <string name="edit_profile_max_lines_exceeded">Max 4 lines</string>
+    <string name="edit_profile_choose_photo">Choose photo</string>
+    <string name="edit_profile_remove_photo">Remove photo</string>
+    <string name="edit_profile_remove_photo_title">Remove profile photo?</string>
+    <string name="edit_profile_remove_photo_desc">Your avatar will be removed and reset to the default icon.</string>
+    <string name="edit_profile_remove_action">Remove</string>
+    <string name="edit_profile_discard_title">Discard changes?</string>
+    <string name="edit_profile_discard_desc">You have unsaved changes. Are you sure you want to discard them?</string>
+    <string name="edit_profile_discard_action">Discard</string>
+    <string name="edit_profile_keep_editing">Keep editing</string>
+    <string name="edit_profile_photo_updated">Profile photo updated</string>
+    <string name="edit_profile_photo_removed">Profile photo removed</string>
+    <string name="edit_profile_updated">Profile updated</string>
+    <string name="crop_screen_title">Move and scale</string>
+    <string name="crop_screen_subtitle">Drag to position • Pinch to zoom</string>
+    <string name="crop_screen_cancel">Cancel</string>
+    <string name="crop_screen_done">Done</string>
+    <string name="crop_screen_processing">Processing photo...</string>
+    <string name="crop_screen_error_title">Could not load photo</string>
+    <string name="crop_screen_error_desc">Unable to load this image. Please choose another one.</string>
+</resources>

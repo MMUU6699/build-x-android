@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile_edit">تعديل الملف الشخصي</string>
+    <string name="profile_share">مشاركة</string>
+    <string name="profile_share_text">تابع @%1$s على Build X: https://buildx.chat/%2$s</string>
+    <string name="profile_following">المتابَعون</string>
+    <string name="profile_followers">المتابعون</string>
+    <string name="profile_follow">متابعة</string>
+    <string name="profile_follow_back">رد المتابعة</string>
+    <string name="profile_following_status">تتابعه</string>
+    <string name="profile_unfollow">إلغاء المتابعة</string>
+    <string name="profile_unfollow_confirmation">إلغاء متابعة @%1$s؟</string>
+    <string name="profile_verified_account">حساب موثق</string>
+    <string name="profile_add_bio">إضافة نبذة تعريفية</string>
+    <string name="profile_user_not_found_title">المستخدم غير موجود</string>
+    <string name="profile_user_not_found_subtitle">قد يكون هذا الحساب قد تم حذفه أو أنه غير موجود.</string>
+    <string name="profile_retry">إعادة المحاولة</string>
+    <string name="profile_cancel">إلغاء</string>
+    <string name="profile_leave_a_note">ترك ملاحظة</string>
+    <string name="profile_spill_the_tea">ما الجديد...</string>
+    <string name="profile_username_review_title">اختر اسم المستخدم</string>
+    <string name="profile_username_review_subtitle">يمكنك الاحتفاظ باسم المستخدم الحالي أو اختيار اسم جديد.</string>
+    <string name="profile_review">مراجعة</string>
+    <string name="profile_no_media">لا توجد وسائط بعد</string>
+    <string name="profile_notifications_enabled">تم تفعيل الإشعارات لـ @%1$s</string>
+    <string name="profile_notifications_disabled">تم إيقاف الإشعارات لـ @%1$s</string>
+    <string name="profile_notifications_not_following">تابع @%1$s أولاً لتفعيل الإشعارات</string>
+</resources>

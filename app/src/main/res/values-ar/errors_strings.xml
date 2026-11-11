@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Network & Connectivity -->
+    <string name="error_network_offline">أنت غير متصل بالإنترنت. يرجى التحقق من اتصالك.</string>
+    <string name="error_timeout">انتهت مهلة الطلب. يرجى المحاولة مرة أخرى.</string>
+
+    <!-- HTTP Status Errors -->
+    <string name="error_bad_request">طلب غير صالح. يرجى التحقق من المدخلات والمحاولة مرة أخرى.</string>
+    <string name="error_unauthorized">انتهت صلاحية الجلسة. يرجى تسجيل الدخول مجدداً.</string>
+    <string name="error_forbidden">تم رفض الوصول. ليس لديك إذن لتنفيذ هذا الإجراء.</string>
+    <string name="error_not_found">لم يتم العثور على العنصر المطلوب.</string>
+    <string name="error_conflict">هذا العنصر موجود بالفعل أو يتعارض مع بيانات حالية.</string>
+    <string name="error_unprocessable">تعذر معالجة هذا الطلب. يرجى مراجعة المدخلات.</string>
+    <string name="error_rate_limited">عدد طلبات كبير جداً. يرجى الانتظار قليلاً ثم المحاولة مرة أخرى.</string>
+    <string name="error_server">خطأ في الخادم. يرجى المحاولة بعد قليل.</string>
+
+    <!-- Authentication Errors -->
+    <string name="error_invalid_credentials">البريد الإلكتروني أو كلمة المرور غير صحيحة. يرجى التحقق من بياناتك.</string>
+    <string name="error_user_already_exists">يوجد حساب مسجل بالفعل بهذا البريد الإلكتروني.</string>
+    <string name="error_weak_password">كلمة المرور ضعيفة جداً. يرجى اختيار كلمة مرور أقوى.</string>
+    <string name="error_email_not_confirmed">يرجى تأكيد بريدك الإلكتروني قبل تسجيل الدخول.</string>
+    <string name="error_auth_callback">تم إلغاء المصادقة أو فشلت. يرجى المحاولة مرة أخرى.</string>
+    <string name="error_session_missing">يرجى تسجيل الدخول للمتابعة.</string>
+
+    <!-- Supabase / Database Errors -->
+    <string name="error_permission_denied">تم رفض الإذن. ليس لديك صلاحية تعديل هذا العنصر.</string>
+    <string name="error_duplicate_entry">اسم المستخدم أو هذا السجل مستخدم بالفعل.</string>
+    <string name="error_foreign_key">السجل المرتبط غير موجود.</string>
+
+    <!-- Profile & Media Errors -->
+    <string name="error_avatar_upload">تعذر رفع الصورة. يرجى اختيار صورة بحجم أقل من 5 ميغابايت.</string>
+    <string name="error_profile_update">فشل تحديث الملف الشخصي. يرجى المحاولة مرة أخرى.</string>
+    <string name="error_username_taken">اسم المستخدم هذا مستخدم بالفعل. يرجى اختيار اسم آخر.</string>
+    <string name="error_delete_account">فشل حذف الحساب. يرجى المحاولة مرة أخرى.</string>
+    <string name="error_export_data">فشل تصدير البيانات. يرجى المحاولة مرة أخرى.</string>
+
+    <!-- Notes & Social -->
+    <string name="error_note_share">فشل نشر الملاحظة. يرجى المحاولة مرة أخرى.</string>
+    <string name="error_note_delete">فشل حذف الملاحظة. يرجى المحاولة مرة أخرى.</string>
+    <string name="error_load_profile">تعذر تحميل الملف الشخصي. يرجى المحاولة مرة أخرى.</string>
+    <string name="error_load_follow_lists">تعذر تحميل قائمة المستخدمين. يرجى المحاولة مرة أخرى.</string>
+    <string name="error_search_people">تعذر البحث عن المستخدمين. يرجى المحاولة مرة أخرى.</string>
+
+    <!-- Chat & Streaming -->
+    <string name="error_stream_connection">تعذر إكمال الرد. يرجى التحقق من الاتصال بالإنترنت.</string>
+    <string name="error_regenerate">فشل إعادة إنشاء الرد. يرجى المحاولة مرة أخرى.</string>
+    <string name="error_edit_message">فشل تعديل الرسالة. يرجى المحاولة مرة أخرى.</string>
+    <string name="error_share_link">فشل إنشاء رابط المشاركة. يرجى المحاولة مرة أخرى.</string>
+
+    <!-- Generic Fallback & Actions -->
+    <string name="error_generic">حدث خطأ ما. يرجى المحاولة مرة أخرى.</string>
+    <string name="action_retry">إعادة المحاولة</string>
+    <string name="action_sign_in">تسجيل الدخول</string>
+    <string name="action_dismiss">إغلاق</string>
+</resources>

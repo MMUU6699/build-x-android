@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="continue_with_google">المتابعة باستخدام Google</string>
+    <string name="sign_up_button">إنشاء حساب</string>
+    <string name="log_in_button">تسجيل الدخول</string>
+    <string name="username_or_email">اسم المستخدم أو البريد الإلكتروني</string>
+    <string name="password_label">كلمة المرور</string>
+    <string name="create_account_heading">إنشاء حساب</string>
+    <string name="create_account_subtitle">اختر اسم المستخدم الفريد الخاص بك وابدأ المحادثات</string>
+    <string name="welcome_back_heading">تسجيل الدخول</string>
+    <string name="welcome_back_subtitle">أدخل اسم المستخدم أو البريد الإلكتروني للمتابعة</string>
+    <string name="auth_signing_in">جارٍ تسجيل الدخول…</string>
+    <string name="auth_creating_account">جارٍ إنشاء الحساب…</string>
+    <string name="auth_google_signing_in">جارٍ الاتصال بـ Google…</string>
+    <string name="auth_sign_in_failed">فشل تسجيل الدخول. يرجى التحقق من بياناتك.</string>
+    <string name="auth_account_creation_failed">فشل إنشاء الحساب.</string>
+    <string name="auth_google_sign_in_failed">فشل تسجيل الدخول باستخدام Google.</string>
+    <string name="auth_callback_failed">فشل استكمال المصادقة.</string>
+    <string name="auth_credentials_required">يرجى إدخال اسم المستخدم أو البريد الإلكتروني وكلمة المرور.</string>
+    <string name="auth_session_loading">جارٍ بدء Build X…</string>
+    <string name="auth_signed_out">تم تسجيل الخروج</string>
+</resources>

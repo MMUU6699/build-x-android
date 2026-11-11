@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -29,7 +30,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -43,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -79,7 +84,9 @@ import app.buildx.chat.ui.screens.SettingsScreen
 import app.buildx.chat.ui.screens.ShareLinkDialog
 import app.buildx.chat.ui.screens.VerificationRequestScreen
 import app.buildx.chat.ui.theme.BuildXTheme
+import app.buildx.chat.ui.theme.softShadow
 import app.buildx.chat.ui.viewmodel.BuildXViewModel
+import app.buildx.chat.ui.viewmodel.SessionState
 import kotlinx.coroutines.delay
 import java.io.File
 
@@ -89,7 +96,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
         setContent {
             val viewModel: BuildXViewModel = viewModel()
             vm = viewModel
@@ -115,6 +128,25 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         onDeepLink?.invoke(intent) ?: run {
             vm?.handleAuthDeeplink(intent)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        vm?.onActivityResumed()
+    }
+
+    override fun onPostCreate(savedInstanceState: Bundle?) {
+        super.onPostCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
         }
     }
 
@@ -244,7 +276,10 @@ fun BuildXRoot(
                 .fillMaxSize()
                 .background(colors.pageBackground)
         ) {
-            if (!uiState.isAuthenticated) {
+            val isUserSignedIn = uiState.sessionState == SessionState.SignedIn || uiState.isAuthenticated
+            if (uiState.sessionState == SessionState.Loading && !uiState.isAuthenticated) {
+                SessionLoadingSurface()
+            } else if (!isUserSignedIn) {
                 AuthScreen(
                     isLoading = uiState.isAuthLoading,
                     errorMessage = uiState.authError,
@@ -557,7 +592,11 @@ fun BuildXRoot(
                             onFollowersListClick = { userId, initialTab ->
                                 navController.navigate("follow_lists/$userId/$initialTab")
                             },
-                            onRetry = { viewModel.loadPublicProfile(usernameArg) }
+                            onRetry = { viewModel.loadPublicProfile(usernameArg) },
+                            isSubscribedToNotes = uiState.viewedPublicProfile?.noteSubscribed == true,
+                            onToggleNotification = { targetId ->
+                                viewModel.toggleNoteSubscription(targetId, usernameArg)
+                            }
                         )
                     }
 
@@ -800,4 +839,36 @@ private fun sharePlainText(context: Context, text: String) {
         putExtra(Intent.EXTRA_TEXT, text)
     }
     context.startActivity(Intent.createChooser(intent, "Share via"))
+}
+
+@Composable
+fun SessionLoadingSurface() {
+    val colors = BuildXTheme.colors
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colors.pageBackground),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .softShadow(
+                    color = colors.headerHaloShadowColor,
+                    cornerRadius = 32.dp,
+                    blurRadius = 16.dp,
+                    offsetY = 4.dp
+                )
+                .clip(CircleShape)
+                .background(colors.cardBackground),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_buildx_mark),
+                contentDescription = null,
+                modifier = Modifier.size(36.dp),
+                tint = colors.primaryText
+            )
+        }
+    }
 }

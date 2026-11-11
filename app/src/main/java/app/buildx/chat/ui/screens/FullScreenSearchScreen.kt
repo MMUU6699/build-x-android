@@ -57,6 +57,7 @@ import app.buildx.chat.data.model.Conversation
 import app.buildx.chat.data.model.PersonSearchResult
 import app.buildx.chat.ui.components.DrawerChatRow
 import app.buildx.chat.ui.components.HeaderCircleButton
+import app.buildx.chat.ui.components.NameWithBadge
 import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.isRtlText
@@ -467,25 +468,15 @@ private fun PersonSearchRow(
         Spacer(modifier = Modifier.width(12.dp))
 
         Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = person.displayName,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colors.primaryText,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (person.isVerified) {
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_verified_badge),
-                        contentDescription = strings.verifiedAccountDescription,
-                        tint = colors.primaryBlue,
-                        modifier = Modifier.size(15.dp)
-                    )
-                }
-            }
+            NameWithBadge(
+                name = person.displayName,
+                isVerified = person.isVerified,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = colors.primaryText,
+                badgeSize = 15.dp,
+                badgeSpacing = 4.dp
+            )
             Spacer(modifier = Modifier.height(2.dp))
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                 Text(

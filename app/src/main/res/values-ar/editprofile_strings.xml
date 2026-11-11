@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="edit_profile_title">تعديل الملف الشخصي</string>
+    <string name="edit_profile_save">حفظ</string>
+    <string name="edit_profile_cancel">إلغاء</string>
+    <string name="edit_profile_change_photo">تغيير الصورة</string>
+    <string name="edit_profile_display_name_label">الاسم المعروض</string>
+    <string name="edit_profile_username_label">اسم المستخدم</string>
+    <string name="edit_profile_bio_label">نبذة تعريفية</string>
+    <string name="edit_profile_bio_placeholder">أخبر العالم عن نفسك...</string>
+    <string name="edit_profile_max_lines_exceeded">الحد الأقصى 4 أسطر</string>
+    <string name="edit_profile_choose_photo">اختيار صورة</string>
+    <string name="edit_profile_remove_photo">إزالة الصورة</string>
+    <string name="edit_profile_remove_photo_title">إزالة الصورة الشخصية؟</string>
+    <string name="edit_profile_remove_photo_desc">سيتم حذف صورتك الشخصية والعودة إلى الرمز الافتراضي.</string>
+    <string name="edit_profile_remove_action">إزالة</string>
+    <string name="edit_profile_discard_title">تجاهل التغييرات؟</string>
+    <string name="edit_profile_discard_desc">لديك تغييرات غير محفوظة. هل تريد تجاهلها؟</string>
+    <string name="edit_profile_discard_action">تجاهل</string>
+    <string name="edit_profile_keep_editing">متابعة التعديل</string>
+    <string name="edit_profile_photo_updated">تم تحديث الصورة الشخصية</string>
+    <string name="edit_profile_photo_removed">تمت إزالة الصورة الشخصية</string>
+    <string name="edit_profile_updated">تم تحديث الملف الشخصي</string>
+    <string name="crop_screen_title">تحريك وتكبير</string>
+    <string name="crop_screen_subtitle">اسحب للتحريك • قرّب للتكبير</string>
+    <string name="crop_screen_cancel">إلغاء</string>
+    <string name="crop_screen_done">تم</string>
+    <string name="crop_screen_processing">جارٍ معالجة الصورة...</string>
+    <string name="crop_screen_error_title">تعذر تحميل الصورة</string>
+    <string name="crop_screen_error_desc">تعذر تحميل هذه الصورة. يرجى اختيار صورة أخرى.</string>
+</resources>

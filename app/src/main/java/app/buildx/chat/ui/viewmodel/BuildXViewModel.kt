@@ -9,6 +9,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.buildx.chat.R
 import app.buildx.chat.data.model.AppAppearance
 import app.buildx.chat.data.model.AppLanguage
 import app.buildx.chat.data.model.AppNotificationItem
@@ -28,8 +29,12 @@ import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
 import app.buildx.chat.data.model.VerificationStatusInfo
 import app.buildx.chat.data.repository.BuildXRepository
+import app.buildx.chat.util.AuthValidation
+import app.buildx.chat.util.AvatarImageProcessor
+import app.buildx.chat.data.util.ErrorMapper
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.handleDeeplinks
+import io.github.jan.supabase.auth.status.RefreshFailureCause
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.realtime.RealtimeChannel
@@ -48,8 +53,15 @@ import java.time.Instant
 import java.util.Locale
 import java.util.UUID
 
+enum class SessionState {
+    Loading,
+    SignedIn,
+    SignedOut
+}
+
 data class BuildXUiState(
     val isAuthenticated: Boolean = false,
+    val sessionState: SessionState = if (isAuthenticated) SessionState.SignedIn else SessionState.Loading,
     val isAuthLoading: Boolean = false,
     val authError: String? = null,
     val profile: UserProfile? = null,
@@ -89,6 +101,7 @@ data class BuildXUiState(
     val notifications: List<AppNotificationItem> = emptyList(),
     // Phase E Profile, Follow, Note, Search, and Realtime Notifications additions
     val viewedPublicProfile: PublicProfile? = null,
+    val isSubscribedToNotes: Boolean = false,
     val isPublicProfileLoading: Boolean = false,
     val publicProfileError: String? = null,
     val activeOwnNote: PublicNote? = null,
@@ -125,11 +138,48 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     val repository = BuildXRepository(application.applicationContext)
 
+    private fun hasStoredSession(): Boolean {
+        return repository.prefs.contains("buildx_auth_session_json") ||
+            repository.prefs.contains("supabase_session")
+    }
+
+    private fun clearStoredSession() {
+        repository.prefs.edit()
+            .remove("buildx_auth_session_json")
+            .remove("supabase_session")
+            .remove("cached_user_profile")
+            .apply()
+    }
+
+    private fun cacheUserProfile(profile: UserProfile) {
+        runCatching {
+            val str = repository.json.encodeToString(UserProfile.serializer(), profile)
+            repository.prefs.edit().putString("cached_user_profile", str).apply()
+        }
+    }
+
+    private fun getCachedUserProfile(): UserProfile? {
+        val str = repository.prefs.getString("cached_user_profile", null) ?: return null
+        return runCatching { repository.json.decodeFromString(UserProfile.serializer(), str) }.getOrNull()
+    }
+
     private val _uiState = MutableStateFlow(
-        BuildXUiState(
-            appearance = repository.getSavedAppearance(),
-            language = repository.getSavedLanguage()
-        )
+        run {
+            val hasSession = repository.prefs.contains("buildx_auth_session_json") ||
+                repository.prefs.contains("supabase_session")
+            val cachedProfile = runCatching {
+                repository.prefs.getString("cached_user_profile", null)?.let {
+                    repository.json.decodeFromString(UserProfile.serializer(), it)
+                }
+            }.getOrNull()
+            BuildXUiState(
+                isAuthenticated = hasSession,
+                sessionState = if (hasSession) SessionState.SignedIn else SessionState.Loading,
+                profile = cachedProfile,
+                appearance = repository.getSavedAppearance(),
+                language = repository.getSavedLanguage()
+            )
+        }
     )
     val uiState: StateFlow<BuildXUiState> = _uiState.asStateFlow()
 
@@ -143,13 +193,48 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             repository.supabase.auth.sessionStatus.collect { status ->
                 when (status) {
                     is SessionStatus.Authenticated -> {
-                        _uiState.update { it.copy(isAuthenticated = true, isAuthLoading = false, authError = null) }
+                        _uiState.update {
+                            it.copy(
+                                sessionState = SessionState.SignedIn,
+                                isAuthenticated = true,
+                                isAuthLoading = false,
+                                authError = null
+                            )
+                        }
                         checkExistingSession()
                     }
                     is SessionStatus.NotAuthenticated -> {
-                        _uiState.update { it.copy(isAuthLoading = false) }
+                        if (!hasStoredSession() || status.isSignOut) {
+                            if (status.isSignOut) {
+                                clearStoredSession()
+                            }
+                            _uiState.update {
+                                it.copy(
+                                    sessionState = SessionState.SignedOut,
+                                    isAuthenticated = false,
+                                    isAuthLoading = false
+                                )
+                            }
+                        } else {
+                            _uiState.update { it.copy(isAuthLoading = false) }
+                        }
                     }
-                    else -> {}
+                    is SessionStatus.RefreshFailure -> {
+                        val isNetwork = isNetworkRefreshFailure(status.cause)
+                        if (!isNetwork && !hasStoredSession()) {
+                            clearStoredSession()
+                            _uiState.update {
+                                it.copy(
+                                    sessionState = SessionState.SignedOut,
+                                    isAuthenticated = false,
+                                    isAuthLoading = false
+                                )
+                            }
+                        } else {
+                            _uiState.update { it.copy(isAuthLoading = false) }
+                        }
+                    }
+                    is SessionStatus.Initializing -> {}
                 }
             }
         }
@@ -161,13 +246,23 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             repository.awaitAuthInitialization()
             val uid = repository.currentUserId()
             if (uid != null) {
-                runCatching {
-                    val profile = repository.ensureUserProfile()
+                _uiState.update {
+                    it.copy(
+                        sessionState = SessionState.SignedIn,
+                        isAuthenticated = true,
+                        isAuthLoading = false
+                    )
+                }
+                val profileResult = runCatching { repository.ensureUserProfile() }
+                if (profileResult.isSuccess) {
+                    val profile = profileResult.getOrThrow()
+                    cacheUserProfile(profile)
                     val resolvedAppearance = AppAppearance.fromDb(profile.appearance)
                     repository.saveAppearanceLocal(resolvedAppearance)
                     val showReview = profile.usernameReviewedAt == null
                     _uiState.update {
                         it.copy(
+                            sessionState = SessionState.SignedIn,
                             isAuthenticated = true,
                             isAuthLoading = false,
                             authError = null,
@@ -180,9 +275,32 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     refreshConversationsAndAttachments()
                     loadInAppNotifications()
                     subscribeToRealtimeNotifications(uid)
+                } else {
+                    val cached = getCachedUserProfile()
+                    if (cached != null) {
+                        val resolvedAppearance = AppAppearance.fromDb(cached.appearance)
+                        _uiState.update {
+                            it.copy(
+                                sessionState = SessionState.SignedIn,
+                                isAuthenticated = true,
+                                isAuthLoading = false,
+                                profile = cached,
+                                appearance = resolvedAppearance
+                            )
+                        }
+                    }
+                    refreshConversationsAndAttachments()
                 }
             } else {
-                _uiState.update { it.copy(isAuthLoading = false) }
+                if (!hasStoredSession()) {
+                    _uiState.update {
+                        it.copy(
+                            sessionState = SessionState.SignedOut,
+                            isAuthenticated = false,
+                            isAuthLoading = false
+                        )
+                    }
+                }
             }
         }
     }
@@ -218,18 +336,23 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun signInWithIdentifier(identifier: String, password: String) {
+        val isArabic = _uiState.value.language == AppLanguage.ARABIC
         if (identifier.isBlank() || password.isBlank()) {
-            _uiState.update { it.copy(authError = "Please enter your username or email and password.") }
+            val msg = if (isArabic) "يرجى إدخال اسم المستخدم أو البريد الإلكتروني وكلمة المرور."
+            else "Please enter your username or email and password."
+            _uiState.update { it.copy(authError = msg) }
             return
         }
         viewModelScope.launch {
             _uiState.update { it.copy(isAuthLoading = true, authError = null) }
             val result = repository.signInWithIdentifier(identifier, password)
             result.onSuccess { profile ->
+                cacheUserProfile(profile)
                 val resolvedAppearance = AppAppearance.fromDb(profile.appearance)
                 repository.saveAppearanceLocal(resolvedAppearance)
                 _uiState.update {
                     it.copy(
+                        sessionState = SessionState.SignedIn,
                         isAuthenticated = true,
                         isAuthLoading = false,
                         authError = null,
@@ -242,7 +365,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update {
                     it.copy(
                         isAuthLoading = false,
-                        authError = err.message ?: "Sign in failed. Check your credentials."
+                        authError = ErrorMapper.map(err, isArabic)
                     )
                 }
             }
@@ -250,14 +373,17 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun signUp(email: String, password: String, displayName: String, handle: String) {
+        val isArabic = _uiState.value.language == AppLanguage.ARABIC
         viewModelScope.launch {
             _uiState.update { it.copy(isAuthLoading = true, authError = null) }
             val result = repository.signUpWithEmail(email, password, displayName, handle)
             result.onSuccess { profile ->
+                cacheUserProfile(profile)
                 val resolvedAppearance = AppAppearance.fromDb(profile.appearance)
                 repository.saveAppearanceLocal(resolvedAppearance)
                 _uiState.update {
                     it.copy(
+                        sessionState = SessionState.SignedIn,
                         isAuthenticated = true,
                         isAuthLoading = false,
                         authError = null,
@@ -270,23 +396,40 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update {
                     it.copy(
                         isAuthLoading = false,
-                        authError = err.message ?: "Account creation failed."
+                        authError = ErrorMapper.map(err, isArabic)
                     )
                 }
             }
         }
     }
 
+    private var isWaitingForAuthCallback = false
+
     fun signInWithGoogle() {
+        val isArabic = _uiState.value.language == AppLanguage.ARABIC
         viewModelScope.launch {
             _uiState.update { it.copy(isAuthLoading = true, authError = null) }
+            isWaitingForAuthCallback = true
             val result = repository.signInWithGoogle()
             result.onFailure { err ->
+                isWaitingForAuthCallback = false
                 _uiState.update {
                     it.copy(
                         isAuthLoading = false,
-                        authError = err.message ?: "Google sign in failed."
+                        authError = ErrorMapper.map(err, isArabic)
                     )
+                }
+            }
+        }
+    }
+
+    fun onActivityResumed() {
+        if (isWaitingForAuthCallback) {
+            viewModelScope.launch {
+                delay(600L)
+                if (isWaitingForAuthCallback && _uiState.value.isAuthLoading && !_uiState.value.isAuthenticated) {
+                    isWaitingForAuthCallback = false
+                    _uiState.update { it.copy(isAuthLoading = false) }
                 }
             }
         }
@@ -299,7 +442,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             res.onSuccess { info ->
                 _uiState.update { it.copy(verificationStatus = info, isVerificationLoading = false) }
             }.onFailure { err ->
-                _uiState.update { it.copy(isVerificationLoading = false, verificationError = err.message) }
+                _uiState.update { it.copy(isVerificationLoading = false, verificationError = mapError(err)) }
             }
         }
     }
@@ -319,7 +462,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 loadVerificationStatus()
                 onSuccess()
             }.onFailure { err ->
-                _uiState.update { it.copy(isVerificationSubmitting = false, verificationError = err.message) }
+                _uiState.update { it.copy(isVerificationSubmitting = false, verificationError = mapError(err)) }
             }
         }
     }
@@ -332,47 +475,83 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update { it.copy(isVerificationSubmitting = false) }
                 loadVerificationStatus()
             }.onFailure { err ->
-                _uiState.update { it.copy(isVerificationSubmitting = false, verificationError = err.message) }
+                _uiState.update { it.copy(isVerificationSubmitting = false, verificationError = mapError(err)) }
             }
         }
     }
 
     fun handleAuthDeeplink(intent: Intent) {
         viewModelScope.launch {
-            val uri = intent.data
-            val errorDesc = uri?.getQueryParameter("error_description")
-                ?: uri?.getQueryParameter("error")
-                ?: uri?.fragment?.let { frag ->
-                    frag.split("&").firstOrNull { it.startsWith("error_description=") }?.substringAfter("error_description=")
-                        ?.let { java.net.URLDecoder.decode(it, "UTF-8") }
-                }
-            if (errorDesc != null) {
-                _uiState.update { it.copy(isAuthLoading = false, authError = errorDesc) }
+            val uri = intent.data ?: return@launch
+            if (uri.scheme != "app.buildx.chat" || uri.host != "login-callback") {
                 return@launch
             }
+            isWaitingForAuthCallback = false
+
+            val queryParams = buildMap {
+                uri.query?.split("&")?.forEach { param ->
+                    val parts = param.split("=", limit = 2)
+                    if (parts.isNotEmpty()) put(parts[0], if (parts.size > 1) runCatching { java.net.URLDecoder.decode(parts[1], "UTF-8") }.getOrDefault(parts[1]) else "")
+                }
+            }
+            val fragmentParams = buildMap {
+                uri.fragment?.split("&")?.forEach { param ->
+                    val parts = param.split("=", limit = 2)
+                    if (parts.isNotEmpty()) put(parts[0], if (parts.size > 1) runCatching { java.net.URLDecoder.decode(parts[1], "UTF-8") }.getOrDefault(parts[1]) else "")
+                }
+            }
+
+            val error = queryParams["error"] ?: fragmentParams["error"]
+            val errorCode = queryParams["error_code"] ?: fragmentParams["error_code"]
+            val errorDescription = queryParams["error_description"] ?: fragmentParams["error_description"]
+
+            val isCancellation = AuthValidation.isAuthCancellation(error, errorCode, errorDescription)
+
+            if (isCancellation) {
+                // Cancellation returns quietly to auth screen without error alerts
+                _uiState.update { it.copy(isAuthLoading = false, authError = null) }
+                return@launch
+            }
+
+            if (!errorDescription.isNullOrBlank() || !error.isNullOrBlank()) {
+                val isArabic = _uiState.value.language == AppLanguage.ARABIC
+                val mappedError = ErrorMapper.mapMessage(errorDescription ?: error, isArabic)
+                _uiState.update { it.copy(isAuthLoading = false, authError = mappedError) }
+                return@launch
+            }
+
             runCatching {
                 repository.supabase.handleDeeplinks(intent) {
                     checkExistingSession()
                 }
             }.onFailure { err ->
-                _uiState.update { it.copy(isAuthLoading = false, authError = err.message ?: "Authentication callback failed") }
+                val isArabic = _uiState.value.language == AppLanguage.ARABIC
+                val mappedError = ErrorMapper.map(err, isArabic)
+                _uiState.update {
+                    it.copy(
+                        isAuthLoading = false,
+                        authError = mappedError
+                    )
+                }
             }
         }
     }
 
     fun signOut() {
         activeStreamJob?.cancel()
+        clearStoredSession()
+        _uiState.value = BuildXUiState(
+            isAuthenticated = false,
+            sessionState = SessionState.SignedOut,
+            appearance = repository.getSavedAppearance(),
+            language = repository.getSavedLanguage()
+        )
         viewModelScope.launch {
             try {
                 realtimeNotificationChannel?.unsubscribe()
             } catch (_: Exception) {}
             realtimeNotificationChannel = null
             repository.signOut()
-            _uiState.value = BuildXUiState(
-                isAuthenticated = false,
-                appearance = repository.getSavedAppearance(),
-                language = repository.getSavedLanguage()
-            )
         }
     }
 
@@ -700,11 +879,12 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                         }
 
                         is ChatSseEvent.ErrorEvent -> {
+                            val safeError = mapErrorMessage(event.message)
                             _uiState.update { s ->
                                 val updatedMsgs = s.messages.map { msg ->
                                     if (msg.id == tempAssistantMsgId) {
                                         msg.copy(
-                                            content = if (msg.content.isBlank()) event.message else msg.content,
+                                            content = if (msg.content.isBlank()) safeError else msg.content,
                                             status = "error"
                                         )
                                     } else {
@@ -714,7 +894,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                                 s.copy(
                                     messages = updatedMsgs,
                                     isStreaming = false,
-                                    snackbarMessage = event.message
+                                    snackbarMessage = safeError
                                 )
                             }
                         }
@@ -736,15 +916,12 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 throw ce
             } catch (e: Exception) {
+                val safeError = mapError(e)
                 _uiState.update { s ->
                     val updatedMsgs = s.messages.map { msg ->
                         if (msg.id == tempAssistantMsgId) {
                             msg.copy(
-                                content = if (msg.content.isBlank()) {
-                                    "Unable to complete response: ${e.message ?: "network error"}"
-                                } else {
-                                    msg.content
-                                },
+                                content = if (msg.content.isBlank()) safeError else msg.content,
                                 status = "error"
                             )
                         } else {
@@ -754,7 +931,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     s.copy(
                         messages = updatedMsgs,
                         isStreaming = false,
-                        snackbarMessage = e.message ?: "Connection error"
+                        snackbarMessage = safeError
                     )
                 }
             }
@@ -903,7 +1080,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 if (!state.isIncognito && state.activeConversationId != null && messageId.isNotBlank()) {
                     repository.editUserMessage(messageId, trimmed).onFailure { err ->
-                        showSnackbar(err.message ?: "Failed to edit message")
+                        showSnackbar(mapError(err))
                         return@launch
                     }
                 }
@@ -960,7 +1137,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                                 val updated = s.messages.map { m ->
                                     if (m.id == tempAssistantMsgId) m.copy(status = "error") else m
                                 }
-                                s.copy(isStreaming = false, messages = updated, snackbarMessage = event.message)
+                                s.copy(isStreaming = false, messages = updated, snackbarMessage = mapErrorMessage(event.message))
                             }
                         }
                         else -> Unit
@@ -971,7 +1148,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     val updated = s.messages.map { m ->
                         if (m.id == tempAssistantMsgId) m.copy(status = "error") else m
                     }
-                    s.copy(isStreaming = false, messages = updated, snackbarMessage = e.message)
+                    s.copy(isStreaming = false, messages = updated, snackbarMessage = mapError(e))
                 }
             }
         }
@@ -1074,7 +1251,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                         is ChatSseEvent.ErrorEvent -> {
                             streamFailed = true
                             _uiState.update { s ->
-                                s.copy(isStreaming = false, snackbarMessage = event.message)
+                                s.copy(isStreaming = false, snackbarMessage = mapErrorMessage(event.message))
                             }
                         }
                         else -> Unit
@@ -1083,7 +1260,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 streamFailed = true
                 _uiState.update { s ->
-                    s.copy(isStreaming = false, snackbarMessage = e.message ?: "Failed to regenerate")
+                    s.copy(isStreaming = false, snackbarMessage = mapError(e))
                 }
             }
             if (streamFailed) {
@@ -1147,7 +1324,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                                 val updated = s.messages.map { m ->
                                     if (m.id == tempAssistantId) m.copy(status = "error") else m
                                 }
-                                s.copy(isStreaming = false, messages = updated, snackbarMessage = event.message)
+                                s.copy(isStreaming = false, messages = updated, snackbarMessage = mapErrorMessage(event.message))
                             }
                         }
                         else -> Unit
@@ -1158,7 +1335,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     val updated = s.messages.map { m ->
                         if (m.id == tempAssistantId) m.copy(status = "error") else m
                     }
-                    s.copy(isStreaming = false, messages = updated, snackbarMessage = e.message)
+                    s.copy(isStreaming = false, messages = updated, snackbarMessage = mapError(e))
                 }
             }
         }
@@ -1240,7 +1417,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             repository.createShareLink(convId).onSuccess { url ->
                 _uiState.update { it.copy(activeShareLink = url) }
             }.onFailure { err ->
-                showSnackbar(err.message ?: "Failed to create share link")
+                showSnackbar(mapError(err))
             }
         }
     }
@@ -1390,7 +1567,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             if (!cleanUser.isNullOrBlank() && cleanUser != currentUsername) {
                 val usernameResult = repository.changeUsername(cleanUser)
                 if (usernameResult.isFailure) {
-                    showSnackbar(usernameResult.exceptionOrNull()?.message ?: "Failed to change username")
+                    showSnackbar(mapError(usernameResult.exceptionOrNull()))
                     return@launch
                 }
             }
@@ -1399,31 +1576,142 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update {
                     it.copy(
                         profile = updated,
-                        snackbarMessage = "Profile updated"
+                        snackbarMessage = getLocalizedText(R.string.edit_profile_updated)
                     )
                 }
                 onSuccess?.invoke()
             }.onFailure { err ->
-                showSnackbar(err.message ?: "Failed to update profile")
+                showSnackbar(mapError(err))
+            }
+        }
+    }
+
+    private fun getLocalizedText(resId: Int, vararg formatArgs: Any): String {
+        val isArabic = when (_uiState.value.language) {
+            AppLanguage.ARABIC -> true
+            AppLanguage.ENGLISH -> false
+            AppLanguage.SYSTEM -> ErrorMapper.isCurrentArabic()
+        }
+        return try {
+            val app = getApplication<Application>()
+            val config = android.content.res.Configuration(app.resources.configuration)
+            config.setLocale(if (isArabic) java.util.Locale("ar") else java.util.Locale("en"))
+            if (formatArgs.isNotEmpty()) {
+                app.createConfigurationContext(config).resources.getString(resId, *formatArgs)
+            } else {
+                app.createConfigurationContext(config).resources.getString(resId)
+            }
+        } catch (_: Throwable) {
+            when (resId) {
+                R.string.edit_profile_photo_updated -> if (isArabic) "تم تحديث الصورة الشخصية" else "Profile photo updated"
+                R.string.edit_profile_photo_removed -> if (isArabic) "تمت إزالة الصورة الشخصية" else "Profile photo removed"
+                R.string.edit_profile_updated -> if (isArabic) "تم تحديث الملف الشخصي" else "Profile updated"
+                R.string.profile_notifications_enabled -> {
+                    val user = formatArgs.firstOrNull()?.toString() ?: ""
+                    if (isArabic) "تم تفعيل الإشعارات لـ @$user" else "Notifications turned on for @$user"
+                }
+                R.string.profile_notifications_disabled -> {
+                    val user = formatArgs.firstOrNull()?.toString() ?: ""
+                    if (isArabic) "تم إيقاف الإشعارات لـ @$user" else "Notifications turned off for @$user"
+                }
+                R.string.profile_notifications_not_following -> {
+                    val user = formatArgs.firstOrNull()?.toString() ?: ""
+                    if (isArabic) "تابع @$user أولاً لتفعيل الإشعارات" else "Follow @$user first to receive notifications"
+                }
+                else -> ""
+            }
+        }
+    }
+
+    fun uploadProfileAvatar(bytes: ByteArray, optimisticUri: Uri? = null) {
+        viewModelScope.launch {
+            val previousProfile = _uiState.value.profile
+            val tempAvatarUrl = optimisticUri?.toString() ?: run {
+                AvatarImageProcessor.saveToTempCache(getApplication(), bytes)?.toString()
+            }
+            _uiState.update { state ->
+                state.copy(
+                    profile = state.profile?.copy(avatarUrl = tempAvatarUrl ?: state.profile?.avatarUrl),
+                    isUploadingAvatar = true
+                )
+            }
+            repository.uploadAvatar(bytes).onSuccess {
+                val updated = repository.ensureUserProfile()
+                _uiState.update {
+                    it.copy(
+                        profile = updated,
+                        isUploadingAvatar = false,
+                        snackbarMessage = getLocalizedText(R.string.edit_profile_photo_updated)
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        profile = previousProfile,
+                        isUploadingAvatar = false
+                    )
+                }
+                showSnackbar(mapError(err))
             }
         }
     }
 
     fun uploadProfileAvatar(uri: Uri) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isUploadingAvatar = true) }
+            val previousProfile = _uiState.value.profile
+            _uiState.update { state ->
+                state.copy(
+                    profile = state.profile?.copy(avatarUrl = uri.toString()),
+                    isUploadingAvatar = true
+                )
+            }
             repository.uploadAvatar(uri).onSuccess {
                 val updated = repository.ensureUserProfile()
                 _uiState.update {
                     it.copy(
                         profile = updated,
                         isUploadingAvatar = false,
-                        snackbarMessage = "Profile photo updated"
+                        snackbarMessage = getLocalizedText(R.string.edit_profile_photo_updated)
                     )
                 }
             }.onFailure { err ->
-                _uiState.update { it.copy(isUploadingAvatar = false) }
-                showSnackbar(err.message ?: "Could not upload photo")
+                _uiState.update {
+                    it.copy(
+                        profile = previousProfile,
+                        isUploadingAvatar = false
+                    )
+                }
+                showSnackbar(mapError(err))
+            }
+        }
+    }
+
+    fun removeProfileAvatar() {
+        viewModelScope.launch {
+            val previousProfile = _uiState.value.profile
+            _uiState.update { state ->
+                state.copy(
+                    profile = state.profile?.copy(avatarUrl = null),
+                    isUploadingAvatar = true
+                )
+            }
+            repository.removeAvatar().onSuccess {
+                val updated = repository.ensureUserProfile()
+                _uiState.update {
+                    it.copy(
+                        profile = updated,
+                        isUploadingAvatar = false,
+                        snackbarMessage = getLocalizedText(R.string.edit_profile_photo_removed)
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        profile = previousProfile,
+                        isUploadingAvatar = false
+                    )
+                }
+                showSnackbar(mapError(err))
             }
         }
     }
@@ -1444,13 +1732,16 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             } catch (_: Exception) {}
             realtimeNotificationChannel = null
             repository.deleteAccount().onSuccess {
+                clearStoredSession()
                 _uiState.value = BuildXUiState(
                     isAuthenticated = false,
+                    sessionState = SessionState.SignedOut,
                     appearance = repository.getSavedAppearance(),
                     language = repository.getSavedLanguage()
                 )
             }.onFailure { err ->
-                showSnackbar(err.message ?: "Failed to delete account")
+                val isArabic = _uiState.value.language == AppLanguage.ARABIC
+                showSnackbar(ErrorMapper.map(err, isArabic))
             }
         }
     }
@@ -1460,7 +1751,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             repository.exportUserDataJson().onSuccess { jsonStr ->
                 onJsonReady(jsonStr)
             }.onFailure { err ->
-                showSnackbar(err.message ?: "Failed to export data")
+                showSnackbar(mapError(err))
             }
         }
     }
@@ -1479,7 +1770,25 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun showSnackbar(message: String) {
-        _uiState.update { it.copy(snackbarMessage = message) }
+        _uiState.update { it.copy(snackbarMessage = ErrorMapper.sanitize(message)) }
+    }
+
+    fun mapError(throwable: Throwable?): String {
+        val isArabic = when (_uiState.value.language) {
+            AppLanguage.ARABIC -> true
+            AppLanguage.ENGLISH -> false
+            AppLanguage.SYSTEM -> ErrorMapper.isCurrentArabic()
+        }
+        return ErrorMapper.map(throwable, isArabic)
+    }
+
+    fun mapErrorMessage(raw: String?): String {
+        val isArabic = when (_uiState.value.language) {
+            AppLanguage.ARABIC -> true
+            AppLanguage.ENGLISH -> false
+            AppLanguage.SYSTEM -> ErrorMapper.isCurrentArabic()
+        }
+        return ErrorMapper.mapMessage(raw, isArabic)
     }
 
     fun clearSnackbar() {
@@ -1615,6 +1924,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update {
                     it.copy(
                         viewedPublicProfile = pub,
+                        isSubscribedToNotes = pub.noteSubscribed,
                         isPublicProfileLoading = false,
                         publicProfileError = null
                     )
@@ -1623,8 +1933,9 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update {
                     it.copy(
                         viewedPublicProfile = null,
+                        isSubscribedToNotes = false,
                         isPublicProfileLoading = false,
-                        publicProfileError = err.message ?: "User not found"
+                        publicProfileError = mapError(err)
                     )
                 }
             }
@@ -1675,6 +1986,48 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun toggleNoteSubscription(targetUserId: String, targetUsername: String? = null) {
+        viewModelScope.launch {
+            val username = targetUsername ?: _uiState.value.viewedPublicProfile?.username ?: ""
+            repository.toggleNoteSubscription(targetUserId).onSuccess { subscribed ->
+                _uiState.update { state ->
+                    val currentPub = state.viewedPublicProfile
+                    if (currentPub != null && currentPub.id == targetUserId) {
+                        state.copy(
+                            viewedPublicProfile = currentPub.copy(noteSubscribed = subscribed),
+                            isSubscribedToNotes = subscribed
+                        )
+                    } else {
+                        state.copy(isSubscribedToNotes = subscribed)
+                    }
+                }
+                val msg = if (subscribed) {
+                    getLocalizedText(R.string.profile_notifications_enabled, username)
+                } else {
+                    getLocalizedText(R.string.profile_notifications_disabled, username)
+                }
+                showSnackbar(msg)
+            }.onFailure { err ->
+                val errorMsg = err.message ?: ""
+                val msg = when {
+                    errorMsg.contains("NOT_FOLLOWING", ignoreCase = true) -> {
+                        getLocalizedText(R.string.profile_notifications_not_following, username)
+                    }
+                    errorMsg.contains("SELF", ignoreCase = true) -> {
+                        val isArabic = when (_uiState.value.language) {
+                            AppLanguage.ARABIC -> true
+                            AppLanguage.ENGLISH -> false
+                            AppLanguage.SYSTEM -> ErrorMapper.isCurrentArabic()
+                        }
+                        if (isArabic) "لا يمكن تفعيل الإشعارات لحسابك" else "Cannot subscribe to your own notifications"
+                    }
+                    else -> mapError(err)
+                }
+                showSnackbar(msg)
+            }
+        }
+    }
+
     fun createNote(content: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(isCreatingNote = true) }
@@ -1689,7 +2042,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 showSnackbar("Note shared")
             }.onFailure { err ->
                 _uiState.update { it.copy(isCreatingNote = false) }
-                showSnackbar(err.message ?: "Failed to share note")
+                showSnackbar(mapError(err))
             }
         }
     }
@@ -1705,7 +2058,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 showSnackbar("Note deleted")
             }.onFailure { err ->
-                showSnackbar(err.message ?: "Failed to delete note")
+                showSnackbar(mapError(err))
             }
         }
     }
@@ -1721,13 +2074,13 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 repository.getUserFollowing(targetUserId).onSuccess { list ->
                     _uiState.update { it.copy(followingListUsers = list, isFollowListsLoading = false) }
                 }.onFailure { err ->
-                    _uiState.update { it.copy(isFollowListsLoading = false, followListsError = err.message) }
+                    _uiState.update { it.copy(isFollowListsLoading = false, followListsError = mapError(err)) }
                 }
             } else {
                 repository.getUserFollowers(targetUserId).onSuccess { list ->
                     _uiState.update { it.copy(followersListUsers = list, isFollowListsLoading = false) }
                 }.onFailure { err ->
-                    _uiState.update { it.copy(isFollowListsLoading = false, followListsError = err.message) }
+                    _uiState.update { it.copy(isFollowListsLoading = false, followListsError = mapError(err)) }
                 }
             }
         }
@@ -1747,7 +2100,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 repository.searchPeople(query).onSuccess { results ->
                     _uiState.update { it.copy(searchPeopleResults = results, isSearchPeopleLoading = false) }
                 }.onFailure { err ->
-                    _uiState.update { it.copy(searchPeopleError = err.message, isSearchPeopleLoading = false) }
+                    _uiState.update { it.copy(searchPeopleError = mapError(err), isSearchPeopleLoading = false) }
                 }
             } else {
                 repository.searchConversations(query).onSuccess { convs ->
@@ -1843,7 +2196,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 showSnackbar("Username updated to @$clean")
                 onComplete?.invoke(Result.success(clean))
             }.onFailure { err ->
-                showSnackbar(err.message ?: "Failed to update username")
+                showSnackbar(mapError(err))
                 onComplete?.invoke(Result.failure(err))
             }
         }
@@ -1855,5 +2208,12 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     fun dismissUsernameReviewSheet() {
         _uiState.update { it.copy(showUsernameReviewSheet = false) }
+    }
+
+    companion object {
+        fun isNetworkRefreshFailure(cause: RefreshFailureCause): Boolean {
+            return cause is RefreshFailureCause.NetworkError ||
+                cause is RefreshFailureCause.InternalServerError
+        }
     }
 }

@@ -70,4 +70,26 @@ object AuthValidation {
         if (isWeakPassword(password)) return "Please choose a stronger password."
         return null
     }
+
+    fun isBioLinesExceeded(bio: String, maxLineBreaks: Int = 4): Boolean {
+        return bio.count { it == '\n' } > maxLineBreaks
+    }
+
+    fun isValidBio(bio: String, maxChars: Int = 160, maxLineBreaks: Int = 4): Boolean {
+        return bio.length <= maxChars && !isBioLinesExceeded(bio, maxLineBreaks)
+    }
+
+    fun isValidDisplayName(name: String): Boolean {
+        val trimmed = name.trim()
+        return trimmed.isNotEmpty() && trimmed.length <= 30
+    }
+
+    fun isAuthCancellation(error: String?, errorCode: String?, errorDescription: String?): Boolean {
+        return error == "access_denied" ||
+            errorCode == "access_denied" ||
+            errorCode == "user_cancelled" ||
+            error == "user_cancelled" ||
+            errorDescription?.contains("cancel", ignoreCase = true) == true ||
+            errorDescription?.contains("denied", ignoreCase = true) == true
+    }
 }

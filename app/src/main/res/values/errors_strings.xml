@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Network & Connectivity -->
+    <string name="error_network_offline">You are offline. Please check your internet connection.</string>
+    <string name="error_timeout">The request timed out. Please try again.</string>
+
+    <!-- HTTP Status Errors -->
+    <string name="error_bad_request">Invalid request. Please check your input and try again.</string>
+    <string name="error_unauthorized">Session expired. Please sign in again.</string>
+    <string name="error_forbidden">Access denied. You do not have permission for this action.</string>
+    <string name="error_not_found">The requested item was not found.</string>
+    <string name="error_conflict">This item already exists or conflicts with existing data.</string>
+    <string name="error_unprocessable">Unable to process this request. Please review your input.</string>
+    <string name="error_rate_limited">Too many requests. Please wait a moment and try again.</string>
+    <string name="error_server">Server error. Please try again in a few moments.</string>
+
+    <!-- Authentication Errors -->
+    <string name="error_invalid_credentials">Invalid email or password. Please check your credentials.</string>
+    <string name="error_user_already_exists">An account with this email already exists.</string>
+    <string name="error_weak_password">Password is too weak. Please choose a stronger password.</string>
+    <string name="error_email_not_confirmed">Please confirm your email address before signing in.</string>
+    <string name="error_auth_callback">Authentication was cancelled or failed. Please try again.</string>
+    <string name="error_session_missing">Please sign in to continue.</string>
+
+    <!-- Supabase / Database Errors -->
+    <string name="error_permission_denied">Permission denied. You do not have permission to modify this.</string>
+    <string name="error_duplicate_entry">This username or record is already taken.</string>
+    <string name="error_foreign_key">Related record was not found.</string>
+
+    <!-- Profile & Media Errors -->
+    <string name="error_avatar_upload">Could not upload photo. Please choose an image under 5MB.</string>
+    <string name="error_profile_update">Failed to update profile. Please try again.</string>
+    <string name="error_username_taken">This username is already taken. Please choose another.</string>
+    <string name="error_delete_account">Failed to delete account. Please try again.</string>
+    <string name="error_export_data">Failed to export data. Please try again.</string>
+
+    <!-- Notes & Social -->
+    <string name="error_note_share">Failed to share note. Please try again.</string>
+    <string name="error_note_delete">Failed to delete note. Please try again.</string>
+    <string name="error_load_profile">Unable to load profile. Please try again.</string>
+    <string name="error_load_follow_lists">Unable to load users. Please try again.</string>
+    <string name="error_search_people">Unable to search users. Please try again.</string>
+
+    <!-- Chat & Streaming -->
+    <string name="error_stream_connection">Unable to complete response. Please check your connection.</string>
+    <string name="error_regenerate">Failed to regenerate response. Please try again.</string>
+    <string name="error_edit_message">Failed to edit message. Please try again.</string>
+    <string name="error_share_link">Failed to create share link. Please try again.</string>
+
+    <!-- Generic Fallback & Actions -->
+    <string name="error_generic">Something went wrong. Please try again.</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_sign_in">Sign in</string>
+    <string name="action_dismiss">Dismiss</string>
+</resources>

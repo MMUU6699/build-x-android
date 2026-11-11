@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import app.buildx.chat.R
 import app.buildx.chat.data.model.FollowUserItem
 import app.buildx.chat.ui.components.HeaderCircleButton
+import app.buildx.chat.ui.components.NameWithBadge
 import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
 import coil.compose.AsyncImage
@@ -326,27 +327,17 @@ private fun FollowUserRow(
 
         Spacer(modifier = Modifier.width(12.dp))
 
-        // Name and @username + verified
+        // Name and @username
         Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = user.displayName,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colors.primaryText,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (user.isVerified) {
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_verified_badge),
-                        contentDescription = strings.verifiedAccountDescription,
-                        tint = colors.primaryBlue,
-                        modifier = Modifier.size(15.dp)
-                    )
-                }
-            }
+            NameWithBadge(
+                name = user.displayName,
+                isVerified = user.isVerified,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = colors.primaryText,
+                badgeSize = 15.dp,
+                badgeSpacing = 4.dp
+            )
             Spacer(modifier = Modifier.height(2.dp))
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                 Text(

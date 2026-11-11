@@ -30,8 +30,10 @@ import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
 import app.buildx.chat.data.model.VerificationStatusInfo
 import app.buildx.chat.util.AuthValidation
+import app.buildx.chat.util.AvatarImageProcessor
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
+import io.github.jan.supabase.auth.MemoryCodeVerifierCache
 import io.github.jan.supabase.auth.SessionManager
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.Google
@@ -79,9 +81,9 @@ import java.util.UUID
  * Single real backend repository talking to Supabase Auth, PostgREST (RLS-protected),
  * Storage, and the deployed /functions/v1/chat SSE Edge Function.
  */
-class BuildXRepository(private val context: Context) {
+class BuildXRepository(val context: Context) {
 
-    private val prefs = context.getSharedPreferences("buildx_prefs", Context.MODE_PRIVATE)
+    val prefs = context.getSharedPreferences("buildx_prefs", Context.MODE_PRIVATE)
 
     fun getSavedLanguage(): AppLanguage =
         AppLanguage.fromCode(prefs.getString("app_language", AppLanguage.SYSTEM.code))
@@ -145,6 +147,7 @@ class BuildXRepository(private val context: Context) {
             host = "login-callback"
             defaultRedirectUrl = "app.buildx.chat://login-callback"
             sessionManager = SharedPreferencesSessionManager(prefs, json)
+            codeVerifierCache = MemoryCodeVerifierCache()
             autoLoadFromStorage = true
             autoSaveToStorage = true
             alwaysAutoRefresh = true
@@ -394,6 +397,32 @@ class BuildXRepository(private val context: Context) {
             jsonObject["is_following"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
                 ?: jsonObject["following"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
                 ?: false
+        }
+    }
+
+    suspend fun toggleNoteSubscription(targetUserId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject { put("target_user_id", targetUserId) }
+            val response = supabase.postgrest.rpc("toggle_note_subscription", params)
+            val jsonObject = response.decodeAs<JsonObject>()
+            val error = jsonObject["error"]?.jsonPrimitive?.contentOrNull
+            if (!error.isNullOrBlank()) {
+                throw IllegalStateException(error)
+            }
+            jsonObject["subscribed"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+        }
+    }
+
+    suspend fun isSubscribedToNotes(targetUserId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val uid = currentUserId() ?: return@runCatching false
+            val count = supabase.from("note_subscriptions").select {
+                filter {
+                    eq("subscriber_id", uid)
+                    eq("author_id", targetUserId)
+                }
+            }.decodeList<JsonObject>().size
+            count > 0
         }
     }
 
@@ -804,43 +833,11 @@ class BuildXRepository(private val context: Context) {
             }
         }
 
-    suspend fun uploadAvatar(uri: Uri): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun uploadAvatar(jpegBytes: ByteArray): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val uid = currentUserId() ?: error("Not authenticated")
-            val orientation = runCatching {
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    val exif = ExifInterface(stream)
-                    exif.getAttributeInt(
-                        ExifInterface.TAG_ORIENTATION,
-                        ExifInterface.ORIENTATION_NORMAL
-                    )
-                }
-            }.getOrNull() ?: ExifInterface.ORIENTATION_NORMAL
-
-            val rawBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: error("Cannot read avatar image")
-            val decoded = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size)
-                ?: error("Failed to decode avatar bitmap")
-
-            val matrix = Matrix()
-            when (orientation) {
-                ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
-                ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
-                ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
-            }
-            val rotated = if (!matrix.isIdentity) {
-                Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
-            } else decoded
-
-            val minDim = minOf(rotated.width, rotated.height)
-            val cropped = Bitmap.createBitmap(rotated, (rotated.width - minDim) / 2, (rotated.height - minDim) / 2, minDim, minDim)
-            val scaled = if (minDim > 512) {
-                Bitmap.createScaledBitmap(cropped, 512, 512, true)
-            } else cropped
-
-            val stream = ByteArrayOutputStream()
-            scaled.compress(Bitmap.CompressFormat.JPEG, 85, stream)
-            val jpegBytes = stream.toByteArray()
+            val currentProfile = runCatching { ensureUserProfile() }.getOrNull()
+            val previousAvatarUrl = currentProfile?.avatarUrl
 
             val objectPath = "$uid/avatar_${System.currentTimeMillis()}.jpg"
             val bucket = supabase.storage.from("avatars")
@@ -856,8 +853,56 @@ class BuildXRepository(private val context: Context) {
             supabase.from("profiles").update(payload) {
                 filter { eq("id", uid) }
             }
+
+            // Clean up previous avatar object from storage if it belongs to this user
+            if (!previousAvatarUrl.isNullOrBlank() && previousAvatarUrl.contains("/avatars/$uid/")) {
+                runCatching {
+                    val oldFileName = previousAvatarUrl.substringAfter("/avatars/$uid/").substringBefore("?")
+                    if (oldFileName.isNotBlank()) {
+                        bucket.delete("$uid/$oldFileName")
+                    }
+                }
+            }
+
             ensureUserProfile()
             url
+        }
+    }
+
+    suspend fun uploadAvatar(uri: Uri): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val jpegBytes = AvatarImageProcessor.centerCropAndCompress(context, uri)
+                ?: error("Failed to process avatar image")
+            uploadAvatar(jpegBytes).getOrThrow()
+        }
+    }
+
+    suspend fun removeAvatar(): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val uid = currentUserId() ?: error("Not authenticated")
+            val currentProfile = runCatching { ensureUserProfile() }.getOrNull()
+            val previousAvatarUrl = currentProfile?.avatarUrl
+
+            val payload = buildJsonObject {
+                put("avatar_url", JsonNull)
+                put("updated_at", Instant.now().toString())
+            }
+            supabase.from("profiles").update(payload) {
+                filter { eq("id", uid) }
+            }
+
+            // Clean up previous avatar object from storage
+            if (!previousAvatarUrl.isNullOrBlank() && previousAvatarUrl.contains("/avatars/$uid/")) {
+                runCatching {
+                    val oldFileName = previousAvatarUrl.substringAfter("/avatars/$uid/").substringBefore("?")
+                    if (oldFileName.isNotBlank()) {
+                        supabase.storage.from("avatars").delete("$uid/$oldFileName")
+                    }
+                }
+            }
+
+            ensureUserProfile()
+            Unit
         }
     }
 

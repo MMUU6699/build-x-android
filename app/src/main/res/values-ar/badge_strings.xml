@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="verified_account">حساب موثق</string>
+    <string name="verification_title">التوثيق</string>
+    <string name="account_verified_on">تم التوثيق في %1$s</string>
+    <string name="account_verified_since">موثق منذ %1$s</string>
+</resources>
