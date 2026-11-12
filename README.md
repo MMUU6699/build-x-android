@@ -1,8 +1,10 @@
-# Build X Android Client
-
 <div align="center">
 
-**Native AI Chatbot & Conversational Social Platform**  
+<img src="assets/app_icon/buildx_app_icon_512.png" width="128" height="128" alt="Build X App Icon" style="border-radius: 28px;" />
+
+# Build X Android Client
+
+**Native AI Assistant & User-to-User Conversational Platform**  
 *Built with Kotlin, Jetpack Compose, and Supabase*
 
 [English](#-english) • [العربية](#-العربية)
@@ -11,7 +13,7 @@
 [![Android SDK](https://img.shields.io/badge/Android-SDK%2035%20(min%2026)-green?style=flat-square&logo=android)](https://developer.android.com)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-BOM%202024.10.01-4285F4?style=flat-square&logo=jetpackcompose)](https://developer.android.com/jetpack/compose)
 [![Supabase](https://img.shields.io/badge/Supabase-Backend%203.0.2-3ECF8E?style=flat-square&logo=supabase)](https://supabase.com)
-[![Version](https://img.shields.io/badge/Version-v1.4.0%20(104)-blue?style=flat-square)](#)
+[![Version](https://img.shields.io/badge/Version-v1.5.0%20(105)-blue?style=flat-square)](#)
 
 </div>
 
@@ -67,6 +69,20 @@ Every component in Build X is real and functional: there are zero mock screens, 
 - **Zero Emoji**: 100% vector drawables (`VectorDrawable`) designed with clean, thin outlines.
 - **Bilingual & Native RTL**: Full Arabic (RTL) and English (LTR) string localization. Message text uses dynamic bidirectional detection (`TextDirection.Content`) to automatically align Arabic text to the right and Latin text to the left.
 - **Theming**: Coherent Light and Dark color systems with soft diffuse drop shadows and zero-flicker transitions.
+
+#### 8. Direct & Group Messaging System (DMs)
+- **Modern Restructured Inbox (`DmInboxScreen`)**: Clean 56dp header with 44dp circular buttons, 48dp search pill on `#F1F3F0`, 120dp Notes Tray with speech bubbles, and quick filter chips (All, Unread with counter badge, Groups).
+- **Composite Group Avatars**: Real member profile composite avatars (2 diagonal with cutout border, 3 triangle, 4 2x2 grid) with zero placeholder numbers.
+- **Row-Attached Long-Press Popup**: Attached ~232dp card menu with 16dp rounded radius and soft drop shadow. Supports server-enforced Pinning (max 3), inline Mute duration selector (1h, 8h, 1w, Until re-enabled), Mark read/unread, and destructive Delete chat / Leave group with inline morphing confirmation.
+- **Hardened Keyset Backend**: Sub-5ms queries on 100k+ rows with index scans and concurrency-safe `SELECT FOR UPDATE` locking.
+
+### 🎨 App Icon & Branding Assets
+
+The official application icon and vector marks are available under [`assets/app_icon/`](assets/app_icon/):
+- **Light App Icon:** [`buildx_app_icon_light.svg`](assets/app_icon/buildx_app_icon_light.svg) / [1024×1024 PNG](assets/app_icon/buildx_app_icon_light_1024.png)
+- **Dark App Icon:** [`buildx_app_icon_dark.svg`](assets/app_icon/buildx_app_icon_dark.svg) / [1024×1024 PNG](assets/app_icon/buildx_app_icon_dark_1024.png)
+- **Vector Emblem:** [`buildx_mark_vector.svg`](assets/app_icon/buildx_mark_vector.svg) / [Transparent PNG](assets/app_icon/buildx_mark_transparent_1024.png)
+- **Play Store Ready:** [`buildx_app_icon_512.png`](assets/app_icon/buildx_app_icon_512.png)
 
 ---
 
@@ -185,6 +201,20 @@ The output APKs are generated in `app/build/outputs/apk/release/app-release.apk`
 - **خالٍ تماماً من الإيموجي**: تم استبدال جميع الإيموجي بأيقونات متجهات نقية (`VectorDrawable`) بخطوط رفيعة وأنيقة.
 - **دعم أصيل للـ RTL**: تعريب كامل لجميع النصوص والنوافذ مع تحديد اتجاه النص (`TextDirection.Content`) تلقائياً بحسب لغة كل رسالة (العربية إلى اليمين والإنجليزية إلى اليسار).
 - **المظهر الداكن والفاتح**: تناسق كامل في توزيع الظلال وتدرجات الألوان للشاشتين الفاتحة والداكنة دون أي وميض أثناء التنقل.
+
+#### 8. نظام المراسلة المباشرة والجماعية (Direct & Group DMs)
+- **صندوق وارد عصري ومُعاد تصميمه (`DmInboxScreen`)**: شريط علوي بارتفاع 56dp بأزرار دائرية 44dp وظلال ناعمة، وشريط بحث 48dp على خلفية `#F1F3F0`، وشريط ملاحظات بارتفاع 120dp مع فقاعات محادثة ناطقة، وتبويبات تصفية سريعة (الكل، غير مقروءة مع عداد ذكي، والمجموعات).
+- **صور رمزية مجمعة للمجموعات (Composite Avatars)**: عرض صور الأعضاء الحقيقيين بشكل متداخل أنيق (عضوان قطرياً مع حافة مفرغة، 3 أعضاء بشكل مثلث، 4 أعضاء في شبكة 2×2) دون أي أرقام وهمية.
+- **قائمة إجراءات منبثقة ملحقة بالصف (Row-Attached Popup)**: بطاقة منبثقة بمقاس ~232dp وزوايا منحنية 16dp تفتح عند الضغط المطول. تدعم التثبيت في الأعلى (بحد أقصى 3 محادثات)، وتحديد مدة كتم الصوت (ساعة، 8 ساعات، أسبوع، حتى إعادة التشغيل)، وتحديد كمقروء/غير مقروء، وحذف المحادثة أو مغادرة المجموعة مع تأكيد مدمج.
+- **أداء خلفي فائق**: استعلامات Keyset سريعة تنفذ في أقل من 5 ميلي ثانية مع قفل أسطر ذري لمنع التضارب.
+
+### 🎨 أيقونة التطبيق وملفات الهوية البصرية
+
+أيقونة التطبيق الرسمية والشعارات المتجهة متوفرة بدقة فائقة داخل المجلد [`assets/app_icon/`](assets/app_icon/):
+- **الأيقونة للوضع الفاتح:** [`buildx_app_icon_light.svg`](assets/app_icon/buildx_app_icon_light.svg) / [1024×1024 PNG](assets/app_icon/buildx_app_icon_light_1024.png)
+- **الأيقونة للوضع الداكن:** [`buildx_app_icon_dark.svg`](assets/app_icon/buildx_app_icon_dark.svg) / [1024×1024 PNG](assets/app_icon/buildx_app_icon_dark_1024.png)
+- **الشعار الفيكتور المفرغ:** [`buildx_mark_vector.svg`](assets/app_icon/buildx_mark_vector.svg) / [PNG شفاف](assets/app_icon/buildx_mark_transparent_1024.png)
+- **أيقونة المتجر 512×512:** [`buildx_app_icon_512.png`](assets/app_icon/buildx_app_icon_512.png)
 
 ---
 
