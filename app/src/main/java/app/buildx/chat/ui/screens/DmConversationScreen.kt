@@ -12,6 +12,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -73,6 +74,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -455,37 +457,57 @@ private fun DmHeaderBar(
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            HeaderCircleButton(
-                iconRes = R.drawable.ic_back,
-                contentDescription = stringResource(R.string.dm_back),
-                onClick = onBackClick
-            )
-
-            Spacer(modifier = Modifier.width(10.dp))
-
-            // Floating identity capsule
-            Row(
+            // Start Card (46dp Circle)
+            val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+            Box(
                 modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp)
+                    .size(46.dp)
+                    .pressScaleClickable(onClick = onBackClick)
                     .softShadow(
                         color = colors.headerHaloShadowColor,
-                        cornerRadius = 24.dp,
+                        cornerRadius = 23.dp,
                         blurRadius = 14.dp,
                         offsetY = 2.5.dp
                     )
-                    .clip(RoundedCornerShape(24.dp))
+                    .clip(CircleShape)
                     .background(colors.cardBackground)
-                    .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(24.dp))
+                    .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_back),
+                    contentDescription = stringResource(R.string.dm_back),
+                    tint = colors.primaryText,
+                    modifier = Modifier
+                        .size(21.dp)
+                        .then(if (isRtl) Modifier.graphicsLayer(scaleX = -1f) else Modifier)
+                )
+            }
+
+            // Center Identity Capsule Card (46dp Height)
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(46.dp)
                     .pressScaleClickable(onClick = onHeaderClick)
-                    .padding(start = 6.dp, end = 14.dp),
+                    .softShadow(
+                        color = colors.headerHaloShadowColor,
+                        cornerRadius = 23.dp,
+                        blurRadius = 14.dp,
+                        offsetY = 2.5.dp
+                    )
+                    .clip(RoundedCornerShape(23.dp))
+                    .background(colors.cardBackground)
+                    .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(23.dp))
+                    .padding(start = 4.dp, end = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
+                        .size(38.dp)
                         .clip(CircleShape)
                         .background(colors.surfaceMuted)
                 ) {
@@ -518,12 +540,16 @@ private fun DmHeaderBar(
 
                 Spacer(modifier = Modifier.width(10.dp))
 
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.Center
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = title,
                             color = colors.primaryText,
                             fontSize = 15.sp,
+                            lineHeight = 16.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -534,7 +560,7 @@ private fun DmHeaderBar(
                             VerifiedBadge(size = 14.dp)
                         }
                         if (myParticipant?.isMuted == true) {
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_bell_off),
                                 contentDescription = stringResource(R.string.dm_action_mute),
@@ -547,7 +573,8 @@ private fun DmHeaderBar(
                         Text(
                             text = subtitle,
                             color = colors.secondaryText,
-                            fontSize = 11.5.sp,
+                            fontSize = 12.sp,
+                            lineHeight = 13.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -555,13 +582,29 @@ private fun DmHeaderBar(
                 }
             }
 
-            Spacer(modifier = Modifier.width(10.dp))
-
-            HeaderCircleButton(
-                iconRes = R.drawable.ic_more_horizontal,
-                contentDescription = stringResource(R.string.dm_chat_info),
-                onClick = { isMoreMenuOpen = true }
-            )
+            // End Card (46dp Circle with Vertical 3-Dots)
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .pressScaleClickable(onClick = { isMoreMenuOpen = true })
+                    .softShadow(
+                        color = colors.headerHaloShadowColor,
+                        cornerRadius = 23.dp,
+                        blurRadius = 14.dp,
+                        offsetY = 2.5.dp
+                    )
+                    .clip(CircleShape)
+                    .background(colors.cardBackground)
+                    .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_more_vertical),
+                    contentDescription = stringResource(R.string.dm_chat_info),
+                    tint = colors.primaryText,
+                    modifier = Modifier.size(21.dp)
+                )
+            }
         }
 
         if (isMoreMenuOpen) {
@@ -1231,18 +1274,18 @@ private fun DmComposer(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp)
-            .defaultMinSize(minHeight = 52.dp)
+            .defaultMinSize(minHeight = 50.dp)
             .animateContentSize(
                 animationSpec = spring(
                     dampingRatio = Spring.DampingRatioNoBouncy,
                     stiffness = Spring.StiffnessMediumLow
                 )
             )
-            .softShadow(colors.composerShadowColor, cornerRadius = 26.dp, blurRadius = 16.dp, offsetY = 3.dp)
-            .clip(RoundedCornerShape(26.dp))
+            .softShadow(colors.headerHaloShadowColor, cornerRadius = 25.dp, blurRadius = 16.dp, offsetY = 3.dp)
+            .clip(RoundedCornerShape(25.dp))
             .background(colors.cardBackground)
-            .border(1.dp, colors.subtleSurfaceBorder, RoundedCornerShape(26.dp))
-            .padding(horizontal = 6.dp, vertical = 4.dp)
+            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(25.dp))
+            .padding(horizontal = 4.dp, vertical = 4.dp)
     ) {
         // Docked Reply Banner
         if (replyingTo != null) {
@@ -1384,126 +1427,119 @@ private fun DmComposer(
             }
         }
 
-        // Main Input Row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Bottom
-        ) {
-            // Start Icon: 42dp circular touch target with 22dp ic_emoji
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(CircleShape)
-                    .pressScaleClickable { focusRequester.requestFocus() },
-                contentAlignment = Alignment.Center
+        // Main Input Row (pinned LTR so text -> attach -> mic/send flow matches reference)
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom
             ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_emoji),
-                    contentDescription = "Emoji",
-                    tint = colors.secondaryText,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-
-            // Center Expanding Text Field
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 6.dp, vertical = 10.dp),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                if (text.isEmpty()) {
-                    Text(
-                        text = stringResource(R.string.dm_composer_placeholder),
-                        color = colors.secondaryText,
-                        fontSize = 16.5.sp,
-                        fontWeight = FontWeight.Normal,
-                        fontFamily = BuildXFontFamily,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.Start
-                    )
-                }
-                CompositionLocalProvider(
-                    LocalLayoutDirection provides if (isTextRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
+                // Expanding Text Field
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+                    contentAlignment = Alignment.CenterStart
                 ) {
-                    BasicTextField(
-                        value = text,
-                        onValueChange = onTextChange,
-                        minLines = 1,
-                        maxLines = 6,
-                        textStyle = TextStyle(
-                            fontFamily = BuildXFontFamily,
-                            color = colors.primaryText,
-                            fontSize = 16.5.sp,
-                            lineHeight = 22.sp,
+                    if (text.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.dm_composer_placeholder),
+                            color = colors.secondaryText,
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Normal,
-                            textAlign = TextAlign.Start,
-                            textDirection = if (isTextRtl) TextDirection.Rtl else TextDirection.Ltr
-                        ),
-                        cursorBrush = SolidColor(colors.primaryBlue),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 24.dp, max = 136.dp)
-                            .focusRequester(focusRequester)
-                    )
+                            fontFamily = BuildXFontFamily,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = if (isTextRtl) TextAlign.Right else TextAlign.Left
+                        )
+                    }
+                    CompositionLocalProvider(
+                        LocalLayoutDirection provides if (isTextRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
+                    ) {
+                        BasicTextField(
+                            value = text,
+                            onValueChange = onTextChange,
+                            minLines = 1,
+                            maxLines = 6,
+                            textStyle = TextStyle(
+                                fontFamily = BuildXFontFamily,
+                                color = colors.primaryText,
+                                fontSize = 16.sp,
+                                lineHeight = 22.sp,
+                                fontWeight = FontWeight.Normal,
+                                textAlign = TextAlign.Start,
+                                textDirection = if (isTextRtl) TextDirection.Rtl else TextDirection.Ltr
+                            ),
+                            cursorBrush = SolidColor(colors.primaryBlue),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 24.dp, max = 132.dp)
+                                .focusRequester(focusRequester)
+                        )
+                    }
                 }
-            }
 
-            // Paperclip Attachment Button: 42dp touch target with 22dp ic_paperclip
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(CircleShape)
-                    .pressScaleClickable(onClick = onPlusClick),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_paperclip),
-                    contentDescription = "Attach",
-                    tint = colors.secondaryText,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
+                // Paperclip Attachment Button (auto-hides when typing to maximize text field space)
+                AnimatedVisibility(
+                    visible = text.isEmpty(),
+                    enter = fadeIn() + scaleIn(),
+                    exit = fadeOut() + scaleOut()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .padding(bottom = 1.dp)
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .pressScaleClickable(onClick = onPlusClick),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_paperclip),
+                            contentDescription = "Attach",
+                            tint = colors.secondaryText,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
 
-            Spacer(modifier = Modifier.width(2.dp))
+                Spacer(modifier = Modifier.width(2.dp))
 
-            // End Circular Blue Action Button (42dp CircleShape, background(colors.primaryBlue))
-            Box(
-                modifier = Modifier
-                    .padding(end = 4.dp, bottom = 3.dp)
-                    .size(42.dp)
-                    .clip(CircleShape)
-                    .background(colors.primaryBlue)
-                    .pressScaleClickable {
-                        if (canSend) {
-                            onSendClick()
+                // End Circular Blue Action Button (42dp CircleShape, morphs between mic and arrow_up)
+                Box(
+                    modifier = Modifier
+                        .padding(end = 2.dp, bottom = 1.dp)
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(colors.primaryBlue)
+                        .pressScaleClickable {
+                            if (canSend) {
+                                onSendClick()
+                            } else {
+                                onVoiceDictationClick()
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    AnimatedContent(
+                        targetState = canSend,
+                        transitionSpec = {
+                            (scaleIn(tween(180)) + fadeIn(tween(180))) togetherWith (scaleOut(tween(150)) + fadeOut(tween(150)))
+                        },
+                        label = "dm_composer_action"
+                    ) { isSending ->
+                        if (isSending) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_arrow_up),
+                                contentDescription = stringResource(R.string.dm_send),
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
                         } else {
-                            onVoiceDictationClick()
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_mic),
+                                contentDescription = "Voice dictation",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                AnimatedContent(
-                    targetState = canSend,
-                    transitionSpec = {
-                        (scaleIn() + fadeIn()) togetherWith (scaleOut() + fadeOut())
-                    },
-                    label = "dm_composer_action"
-                ) { isSending ->
-                    if (isSending) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_arrow_up),
-                            contentDescription = stringResource(R.string.dm_send),
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    } else {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_mic),
-                            contentDescription = "Voice dictation",
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
                     }
                 }
             }

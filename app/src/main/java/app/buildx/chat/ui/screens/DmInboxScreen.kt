@@ -1226,25 +1226,37 @@ private fun DmConversationAvatar(
     }
 
     val members = item.memberAvatars
-    val fallbackInitial = item.effectiveTitle.firstOrNull()?.uppercase() ?: "G"
+    val firstInitial = members.getOrNull(0)?.displayName?.firstOrNull()?.uppercase()
+        ?: item.effectiveTitle.firstOrNull()?.uppercase()
+        ?: "G"
+    val secondInitial = members.getOrNull(1)?.displayName?.firstOrNull()?.uppercase()
+        ?: item.effectiveTitle.drop(1).firstOrNull()?.uppercase()
+        ?: firstInitial
 
     Box(modifier = modifier) {
         GroupAvatarCircle(
             member = members.getOrNull(0),
-            fallbackInitial = fallbackInitial,
+            fallbackInitial = firstInitial,
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .size(38.dp)
                 .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
         )
-        GroupAvatarCircle(
-            member = members.getOrNull(1),
-            fallbackInitial = fallbackInitial,
+        Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .size(40.dp)
-                .border(2.5.dp, colors.pageBackground, CircleShape)
-        )
+                .size(42.dp)
+                .background(colors.pageBackground, CircleShape)
+                .padding(2.5.dp)
+        ) {
+            GroupAvatarCircle(
+                member = members.getOrNull(1),
+                fallbackInitial = secondInitial,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
+            )
+        }
     }
 }
 

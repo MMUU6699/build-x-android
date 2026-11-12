@@ -1077,6 +1077,7 @@ private fun AddMembersPicker(
 @Composable
 private fun SharedMediaGrid(media: List<DmMessage>) {
     val colors = BuildXTheme.colors
+    var viewingMediaUrl by remember { mutableStateOf<String?>(null) }
 
     if (media.isEmpty()) {
         Text(
@@ -1098,6 +1099,9 @@ private fun SharedMediaGrid(media: List<DmMessage>) {
                             .clip(RoundedCornerShape(12.dp))
                             .background(colors.surfaceMuted)
                             .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(12.dp))
+                            .pressScaleClickable {
+                                viewingMediaUrl = message.attachmentPath
+                            }
                     ) {
                         AsyncImage(
                             model = message.attachmentPath,
@@ -1109,6 +1113,47 @@ private fun SharedMediaGrid(media: List<DmMessage>) {
                 }
                 repeat(3 - rowMedia.size) {
                     Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+
+    if (viewingMediaUrl != null) {
+        Dialog(
+            onDismissRequest = { viewingMediaUrl = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.94f))
+                    .clickable { viewingMediaUrl = null },
+                contentAlignment = Alignment.Center
+            ) {
+                AsyncImage(
+                    model = viewingMediaUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 40.dp, end = 20.dp)
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.2f))
+                        .clickable { viewingMediaUrl = null },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_close),
+                        contentDescription = "Close",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
         }
