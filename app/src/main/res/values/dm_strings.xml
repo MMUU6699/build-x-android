@@ -26,6 +26,8 @@
     <string name="dm_media_photo">Photo</string>
     <string name="dm_message_deleted">Message deleted</string>
     <string name="dm_time_now">now</string>
+    <string name="dm_today">Today</string>
+    <string name="dm_yesterday">Yesterday</string>
 
     <!-- Long Press Menu Actions -->
     <string name="dm_action_pin_to_top">Pin to top</string>
@@ -152,4 +154,19 @@
     <string name="dm_members">Members</string>
     <string name="dm_admin">Admin</string>
     <string name="dm_edited">Edited</string>
+    <string name="dm_typing">typing</string>
+    <string name="dm_scroll_to_bottom">Scroll to bottom</string>
+    <string name="dm_tap_to_retry">Tap to retry</string>
+    <string name="dm_following_since_year">Following since %1$s</string>
+    <string name="dm_search_in_chat">Search</string>
+    <string name="dm_search_chat_hint">Search messages in this chat</string>
+    <string name="dm_no_search_results">No matching messages</string>
+    <string name="dm_see_all">See all</string>
+    <string name="dm_shared_links_files">Links &amp; files</string>
+    <string name="dm_no_shared_links_files">No links or files shared yet</string>
+    <string name="dm_chat_settings">Chat settings</string>
+    <string name="dm_danger_zone">Privacy &amp; safety</string>
+    <string name="dm_remove_member">Remove</string>
+    <string name="dm_remove_member_title">Remove %1$s?</string>
+    <string name="dm_remove_member_body">They will no longer be able to send or read new messages in this group.</string>
 </resources>

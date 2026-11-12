@@ -156,9 +156,10 @@ fun SettingsScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        SettingsSectionTitle(stringResource(R.string.settings_account_section))
 
-        // View profile card (t=62s)
+        // The account surface is deliberately separate: it is an identity
+        // destination, not another preference in a long list.
         GroupedCard(
             modifier = Modifier
                 .fillMaxWidth()
@@ -224,17 +225,8 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(22.dp))
+        SettingsSectionTitle(stringResource(R.string.settings_experience_section))
 
-        Text(
-            text = strings.appSettingsSection,
-            color = colors.secondaryText,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp)
-        )
-
-        // Grouped App settings card
         GroupedCard(
             modifier = Modifier
                 .fillMaxWidth()
@@ -266,8 +258,17 @@ fun SettingsScreen(
                     AppLanguage.ARABIC -> strings.languageArabic
                 },
                 onClick = onAppLanguageClick,
-                showDivider = true
+                showDivider = false
             )
+        }
+
+        SettingsSectionTitle(stringResource(R.string.settings_support_safety_section))
+
+        GroupedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
             SettingsRow(
                 iconRes = R.drawable.ic_help,
                 title = strings.helpAndSupport,
@@ -287,18 +288,20 @@ fun SettingsScreen(
                 showDivider = true
             )
             SettingsRow(
-                iconRes = R.drawable.ic_info,
-                title = strings.appInfo,
-                subtitle = "v$versionName ($versionCode)",
-                onClick = onAppInfoClick,
-                showDivider = true
-            )
-            SettingsRow(
                 iconRes = R.drawable.ic_shield,
                 title = strings.legalAndSafety,
                 onClick = onLegalSafetyClick,
-                showDivider = true
+                showDivider = false
             )
+        }
+
+        SettingsSectionTitle(stringResource(R.string.settings_buildx_section))
+
+        GroupedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
             SettingsRow(
                 iconRes = R.drawable.ic_verified_badge,
                 title = if (profile?.isVerified == true) {
@@ -309,6 +312,13 @@ fun SettingsScreen(
                 subtitle = if (profile?.isVerified == true) strings.verifiedAccountDescription else null,
                 onClick = onRequestVerificationClick,
                 iconTint = Color.Unspecified,
+                showDivider = true
+            )
+            SettingsRow(
+                iconRes = R.drawable.ic_info,
+                title = strings.appInfo,
+                subtitle = "v$versionName ($versionCode)",
+                onClick = onAppInfoClick,
                 showDivider = false
             )
         }
@@ -345,6 +355,18 @@ fun SettingsScreen(
                 .padding(horizontal = 24.dp)
         )
     }
+}
+
+@Composable
+private fun SettingsSectionTitle(title: String) {
+    val colors = BuildXTheme.colors
+    Text(
+        text = title,
+        color = colors.secondaryText,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 22.dp, bottom = 8.dp)
+    )
 }
 
 /**

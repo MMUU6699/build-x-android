@@ -69,6 +69,7 @@ import app.buildx.chat.ui.screens.AppLanguageScreen
 import app.buildx.chat.ui.screens.AuthScreen
 import app.buildx.chat.ui.screens.BlockedAccountsScreen
 import app.buildx.chat.ui.screens.ChatAndDrawerScreen
+import app.buildx.chat.ui.chat.ChatInfoScreen
 import app.buildx.chat.ui.screens.DmInboxScreen
 import app.buildx.chat.ui.screens.DmConversationScreen
 import app.buildx.chat.ui.screens.NewMessageOrGroupSheet
@@ -1001,12 +1002,22 @@ fun BuildXRoot(
 
                     composable("dm/{conversationId}") { backStackEntry ->
                         val conversationId = backStackEntry.arguments?.getString("conversationId") ?: ""
+                        val jumpToMessageId by backStackEntry.savedStateHandle
+                            .getStateFlow<String?>("jump_to_message_id", null)
+                            .collectAsState()
                         LaunchedEffect(conversationId) {
-                            viewModel.enterDmRoom(conversationId)
+                            if (uiState.activeDmDetail?.conversation?.id != conversationId) {
+                                viewModel.enterDmRoom(conversationId)
+                            }
                         }
                         DisposableEffect(conversationId) {
                             onDispose {
-                                viewModel.leaveDmRoom()
+                                val stillInBackStack = runCatching {
+                                    navController.getBackStackEntry("dm/{conversationId}").id == backStackEntry.id
+                                }.getOrDefault(false)
+                                if (!stillInBackStack) {
+                                    viewModel.leaveDmRoom()
+                                }
                             }
                         }
                         DmConversationScreen(
@@ -1018,6 +1029,9 @@ fun BuildXRoot(
                             },
                             onProfileClick = { handle -> navController.navigate("profile/$handle") },
                             onSendMessage = { viewModel.sendDmMessage(conversationId) },
+                            onRetryFailedMessage = { msg -> viewModel.retryFailedDmMessage(conversationId, msg) },
+                            onLoadOlderMessages = { viewModel.loadOlderDmMessages(conversationId) },
+                            onConsumeJustSent = { tempId -> viewModel.consumeJustSentAnimation(tempId) },
                             onComposerTextChange = { text -> viewModel.onDmComposerTextChanged(text) },
                             onAddStagedAttachment = { att -> viewModel.addDmStagedAttachment(att) },
                             onRemoveStagedAttachment = { att -> viewModel.removeDmStagedAttachment(att) },
@@ -1087,6 +1101,93 @@ fun BuildXRoot(
                             },
                             onSearchPeopleForGroup = { query ->
                                 viewModel.searchPeopleForGroup(query)
+                            },
+                            onOpenChatInfo = {
+                                navController.navigate("dm/$conversationId/info")
+                            },
+                            jumpToMessageId = jumpToMessageId,
+                            onConsumeJumpToMessage = {
+                                backStackEntry.savedStateHandle["jump_to_message_id"] = null
+                            }
+                        )
+                    }
+
+                    composable(
+                        route = "dm/{conversationId}/info",
+                        enterTransition = {
+                            slideIntoContainer(
+                                towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                animationSpec = tween(260, easing = FastOutSlowInEasing)
+                            ) + fadeIn(animationSpec = tween(200))
+                        },
+                        popExitTransition = {
+                            slideOutOfContainer(
+                                towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                animationSpec = tween(240, easing = FastOutSlowInEasing)
+                            ) + fadeOut(animationSpec = tween(180))
+                        }
+                    ) { backStackEntry ->
+                        val conversationId = backStackEntry.arguments?.getString("conversationId") ?: ""
+                        LaunchedEffect(conversationId) {
+                            if (uiState.activeDmDetail?.conversation?.id != conversationId) {
+                                viewModel.loadConversationInfo(conversationId)
+                            }
+                        }
+                        ChatInfoScreen(
+                            detail = uiState.activeDmDetail,
+                            currentUserId = viewModel.currentUserId().orEmpty(),
+                            messages = uiState.dmMessages,
+                            isGroupAvatarUploading = uiState.isGroupAvatarUploading,
+                            isAddingGroupMembers = uiState.isAddingGroupMembers,
+                            memberCandidates = uiState.dmSearchPeopleResults,
+                            isSearchingMembers = uiState.isDmSearchPeopleLoading,
+                            isSubmittingReport = uiState.isSubmittingReport,
+                            reportError = uiState.reportError,
+                            isBlocking = uiState.isBlocking,
+                            onBackClick = { navController.popBackStack() },
+                            onViewProfile = { handle -> navController.navigate("profile/$handle") },
+                            onJumpToMessage = { messageId ->
+                                navController.previousBackStackEntry
+                                    ?.savedStateHandle
+                                    ?.set("jump_to_message_id", messageId)
+                                navController.popBackStack()
+                            },
+                            onSearchMembers = { query -> viewModel.searchPeopleForGroup(query) },
+                            onToggleMute = { viewModel.toggleMuteDmConversation(conversationId) },
+                            onTogglePin = { viewModel.togglePinDmConversation(conversationId) },
+                            onUpdateGroupAvatar = { uri -> viewModel.updateGroupAvatar(conversationId, uri) },
+                            onRenameGroup = { title -> viewModel.updateGroupTitle(conversationId, title) },
+                            onAddMembers = { ids -> viewModel.addGroupMembers(conversationId, ids) },
+                            onRemoveMember = { targetUserId ->
+                                viewModel.removeGroupMember(conversationId, targetUserId)
+                            },
+                            onLeaveGroup = {
+                                viewModel.leaveGroup(conversationId)
+                                viewModel.leaveDmRoom()
+                                navController.popBackStack("dm/{conversationId}", inclusive = true)
+                            },
+                            onClearHistory = {
+                                viewModel.deleteConversationForMe(conversationId)
+                                viewModel.leaveDmRoom()
+                                navController.popBackStack("dm/{conversationId}", inclusive = true)
+                            },
+                            onReport = { reason, details ->
+                                val peerId = uiState.activeDmDetail?.peerIntro?.id
+                                if (peerId != null) {
+                                    viewModel.submitReport(peerId, reason, details) {
+                                        viewModel.showSnackbar("Report submitted")
+                                    }
+                                }
+                            },
+                            onBlock = {
+                                val peerId = uiState.activeDmDetail?.peerIntro?.id
+                                val handle = uiState.activeDmDetail?.peerIntro?.handle
+                                if (peerId != null) {
+                                    viewModel.blockUser(peerId, handle) {
+                                        viewModel.leaveDmRoom()
+                                        navController.popBackStack("dm/{conversationId}", inclusive = true)
+                                    }
+                                }
                             }
                         )
                     }

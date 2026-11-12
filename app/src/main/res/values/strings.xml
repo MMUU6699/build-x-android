@@ -36,6 +36,10 @@
     <string name="settings_title">Settings</string>
     <string name="view_profile">View profile</string>
     <string name="app_settings_section">App settings</string>
+    <string name="settings_account_section">Account</string>
+    <string name="settings_experience_section">Experience</string>
+    <string name="settings_support_safety_section">Support &amp; safety</string>
+    <string name="settings_buildx_section">Build X</string>
     <string name="app_appearance">App appearance</string>
     <string name="appearance_automatic">Automatic</string>
     <string name="appearance_light">Light</string>

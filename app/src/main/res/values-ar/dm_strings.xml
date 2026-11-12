@@ -26,6 +26,8 @@
     <string name="dm_media_photo">صورة</string>
     <string name="dm_message_deleted">تم حذف الرسالة</string>
     <string name="dm_time_now">الآن</string>
+    <string name="dm_today">اليوم</string>
+    <string name="dm_yesterday">أمس</string>
 
     <!-- Long Press Menu Actions -->
     <string name="dm_action_pin_to_top">تثبيت في الأعلى</string>
@@ -152,4 +154,19 @@
     <string name="dm_members">الأعضاء</string>
     <string name="dm_admin">مشرف</string>
     <string name="dm_edited">تم التعديل</string>
+    <string name="dm_typing">يكتب</string>
+    <string name="dm_scroll_to_bottom">الانتقال للأسفل</string>
+    <string name="dm_tap_to_retry">اضغط لإعادة المحاولة</string>
+    <string name="dm_following_since_year">تتابعه منذ %1$s</string>
+    <string name="dm_search_in_chat">بحث</string>
+    <string name="dm_search_chat_hint">ابحث في رسائل هذه المحادثة</string>
+    <string name="dm_no_search_results">لا توجد رسائل مطابقة</string>
+    <string name="dm_see_all">عرض الكل</string>
+    <string name="dm_shared_links_files">الروابط والملفات</string>
+    <string name="dm_no_shared_links_files">لا توجد روابط أو ملفات مشاركة بعد</string>
+    <string name="dm_chat_settings">إعدادات المحادثة</string>
+    <string name="dm_danger_zone">الخصوصية والأمان</string>
+    <string name="dm_remove_member">إزالة</string>
+    <string name="dm_remove_member_title">إزالة %1$s؟</string>
+    <string name="dm_remove_member_body">لن يتمكن بعد الآن من إرسال أو قراءة رسائل جديدة في هذه المجموعة.</string>
 </resources>

@@ -1,9 +1,17 @@
 package app.buildx.chat
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import app.buildx.chat.data.model.AppAppearance
@@ -15,11 +23,14 @@ import app.buildx.chat.data.model.DmMessage
 import app.buildx.chat.data.model.DmParticipant
 import app.buildx.chat.data.model.DmPeerIntro
 import app.buildx.chat.data.model.DmPeerSummary
+import app.buildx.chat.data.model.DmSendStatus
 import app.buildx.chat.data.model.FeedNoteItem
 import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
-import app.buildx.chat.ui.screens.DmChatInfoSheet
+import app.buildx.chat.ui.chat.ChatComposer
+import app.buildx.chat.ui.chat.ChatInfoScreen
+import app.buildx.chat.ui.chat.toChatColors
 import app.buildx.chat.ui.screens.DmConversationScreen
 import app.buildx.chat.ui.screens.DmInboxScreen
 import app.buildx.chat.ui.theme.BuildXTheme
@@ -35,6 +46,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
+import java.time.LocalDate
 
 /**
  * Direct-message visual regression suite.
@@ -429,11 +441,13 @@ class DmScreenshotTest {
         captureScreen("dm_inbox_dark.png")
     }
 
+    private val fixedToday: LocalDate = LocalDate.of(2026, 11, 12)
+
     @androidx.compose.runtime.Composable
-    private fun ConversationScreen(state: BuildXUiState) {
+    private fun ConversationScreen(state: BuildXUiState, conversationId: String = "conv-direct") {
         DmConversationScreen(
             uiState = state,
-            conversationId = "conv-direct",
+            conversationId = conversationId,
             onBackClick = {},
             onProfileClick = {},
             onSendMessage = {},
@@ -448,7 +462,8 @@ class DmScreenshotTest {
             onTogglePinMessage = {},
             onTogglePinConversation = {},
             onToggleMuteConversation = {},
-            onReportMessage = {}
+            onReportMessage = {},
+            todayOverride = fixedToday
         )
     }
 
@@ -484,25 +499,7 @@ class DmScreenshotTest {
         composeRule.setContent {
             BuildXTheme(appearance = AppAppearance.LIGHT) {
                 Box(modifier = Modifier.fillMaxSize().background(BuildXTheme.colors.pageBackground)) {
-                    DmConversationScreen(
-                        uiState = state,
-                        conversationId = "conv-group",
-                        onBackClick = {},
-                        onProfileClick = {},
-                        onSendMessage = {},
-                        onComposerTextChange = {},
-                        onAddStagedAttachment = { _: StagedAttachment -> },
-                        onRemoveStagedAttachment = { _: StagedAttachment -> },
-                        onReplyToMessage = {},
-                        onCancelReply = {},
-                        onEditMessage = {},
-                        onCancelEdit = {},
-                        onDeleteMessage = {},
-                        onTogglePinMessage = {},
-                        onTogglePinConversation = {},
-                        onToggleMuteConversation = {},
-                        onReportMessage = {}
-                    )
+                    ConversationScreen(state, conversationId = "conv-group")
                 }
             }
         }
@@ -510,10 +507,9 @@ class DmScreenshotTest {
     }
 
     @androidx.compose.runtime.Composable
-    private fun InfoSheet(detail: DmConversationDetail, isDirect: Boolean, messages: List<DmMessage>) {
-        DmChatInfoSheet(
+    private fun InfoScreen(detail: DmConversationDetail, messages: List<DmMessage>) {
+        ChatInfoScreen(
             detail = detail,
-            isDirect = isDirect,
             currentUserId = meId,
             messages = messages,
             isGroupAvatarUploading = false,
@@ -523,18 +519,20 @@ class DmScreenshotTest {
             isSubmittingReport = false,
             reportError = null,
             isBlocking = false,
-            onSearchMembers = {},
+            onBackClick = {},
             onViewProfile = {},
+            onJumpToMessage = {},
+            onSearchMembers = {},
             onToggleMute = {},
             onTogglePin = {},
             onUpdateGroupAvatar = {},
             onRenameGroup = {},
             onAddMembers = {},
+            onRemoveMember = {},
             onLeaveGroup = {},
             onClearHistory = {},
             onReport = { _: ReportReason, _: String? -> },
-            onBlock = {},
-            onDismiss = {}
+            onBlock = {}
         )
     }
 
@@ -543,7 +541,7 @@ class DmScreenshotTest {
         composeRule.setContent {
             BuildXTheme(appearance = AppAppearance.LIGHT) {
                 Box(modifier = Modifier.fillMaxSize().background(BuildXTheme.colors.pageBackground)) {
-                    InfoSheet(directDetail, true, directMessages)
+                    InfoScreen(directDetail, directMessages)
                 }
             }
         }
@@ -555,7 +553,7 @@ class DmScreenshotTest {
         composeRule.setContent {
             BuildXTheme(appearance = AppAppearance.DARK) {
                 Box(modifier = Modifier.fillMaxSize().background(BuildXTheme.colors.pageBackground)) {
-                    InfoSheet(directDetail, true, directMessages)
+                    InfoScreen(directDetail, directMessages)
                 }
             }
         }
@@ -567,7 +565,7 @@ class DmScreenshotTest {
         composeRule.setContent {
             BuildXTheme(appearance = AppAppearance.LIGHT) {
                 Box(modifier = Modifier.fillMaxSize().background(BuildXTheme.colors.pageBackground)) {
-                    InfoSheet(groupDetail, false, groupMessages)
+                    InfoScreen(groupDetail, groupMessages)
                 }
             }
         }
@@ -579,10 +577,232 @@ class DmScreenshotTest {
         composeRule.setContent {
             BuildXTheme(appearance = AppAppearance.DARK) {
                 Box(modifier = Modifier.fillMaxSize().background(BuildXTheme.colors.pageBackground)) {
-                    InfoSheet(groupDetail, false, groupMessages)
+                    InfoScreen(groupDetail, groupMessages)
                 }
             }
         }
         captureScreen("dm_info_group_dark.png")
+    }
+
+    private fun matrixMessages(): List<DmMessage> = listOf(
+        // Yesterday messages across midnight + grouped
+        DmMessage(
+            id = "mx-1",
+            conversationId = "conv-direct",
+            senderId = "user-sara",
+            senderDisplayName = "Sara Ahmed",
+            content = "هلا",
+            createdAt = "2026-11-11T23:54:00Z"
+        ),
+        DmMessage(
+            id = "mx-2",
+            conversationId = "conv-direct",
+            senderId = meId,
+            senderDisplayName = "Voxin",
+            content = "هلا",
+            createdAt = "2026-11-11T23:55:00Z"
+        ),
+        // Today after midnight
+        DmMessage(
+            id = "mx-3",
+            conversationId = "conv-direct",
+            senderId = "user-sara",
+            senderDisplayName = "Sara Ahmed",
+            content = "Hi",
+            createdAt = "2026-11-12T00:05:00Z"
+        ),
+        DmMessage(
+            id = "mx-4",
+            conversationId = "conv-direct",
+            senderId = "user-sara",
+            senderDisplayName = "Sara Ahmed",
+            content = "مرحبا، هذه رسالة عربية طويلة نسبيا لنتأكد أن التاريخ والحالة ينتقلان لسطر جديد عند امتلاء العرض بدون أي تداخل.",
+            createdAt = "2026-11-12T00:05:30Z"
+        ),
+        DmMessage(
+            id = "mx-5",
+            conversationId = "conv-direct",
+            senderId = "user-sara",
+            senderDisplayName = "Sara Ahmed",
+            content = "Check https://buildx.chat/docs/spec/v2?tab=layout#matrix",
+            createdAt = "2026-11-12T00:06:00Z"
+        ),
+        DmMessage(
+            id = "mx-6",
+            conversationId = "conv-direct",
+            senderId = meId,
+            senderDisplayName = "Voxin",
+            content = "Mixed Arabic + English: تحديث نظام الدردشة Build X v2 جاهز للمراجعة.",
+            createdAt = "2026-11-12T09:10:00Z"
+        ),
+        DmMessage(
+            id = "mx-6b",
+            conversationId = "conv-direct",
+            senderId = "user-sara",
+            senderDisplayName = "Sara Ahmed",
+            content = "\uD83C\uDF89\uD83D\uDD25",
+            createdAt = "2026-11-12T09:10:10Z"
+        ),
+        DmMessage(
+            id = "mx-7",
+            conversationId = "conv-direct",
+            senderId = meId,
+            senderDisplayName = "Voxin",
+            content = "Just near wrap threshold width line check here!",
+            createdAt = "2026-11-12T09:10:25Z"
+        ),
+        DmMessage(
+            id = "mx-8",
+            conversationId = "conv-direct",
+            senderId = meId,
+            senderDisplayName = "Voxin",
+            content = "This message was removed.",
+            deletedAt = "2026-11-12T09:11:00Z",
+            createdAt = "2026-11-12T09:10:40Z"
+        ),
+        DmMessage(
+            id = "mx-9",
+            conversationId = "conv-direct",
+            senderId = meId,
+            senderDisplayName = "Voxin",
+            content = "Still sending this packet...",
+            createdAt = "2026-11-12T09:15:00Z",
+            localSendStatus = DmSendStatus.SENDING
+        ),
+        DmMessage(
+            id = "mx-10",
+            conversationId = "conv-direct",
+            senderId = meId,
+            senderDisplayName = "Voxin",
+            content = "Offline retry state",
+            createdAt = "2026-11-12T09:16:00Z",
+            localSendStatus = DmSendStatus.FAILED
+        )
+    )
+
+    @Test
+    fun capture_DmMatrix_Light_Ltr() {
+        val state = chatState(directDetail, matrixMessages())
+        composeRule.setContent {
+            BuildXTheme(appearance = AppAppearance.LIGHT) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    Box(modifier = Modifier.fillMaxSize().background(BuildXTheme.colors.pageBackground)) {
+                        ConversationScreen(state)
+                    }
+                }
+            }
+        }
+        captureScreen("dm_matrix_light_ltr.png")
+    }
+
+    @Test
+    fun capture_DmMatrix_Dark_Rtl() {
+        val state = chatState(directDetail, matrixMessages())
+        composeRule.setContent {
+            BuildXTheme(appearance = AppAppearance.DARK) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Box(modifier = Modifier.fillMaxSize().background(BuildXTheme.colors.pageBackground)) {
+                        ConversationScreen(state)
+                    }
+                }
+            }
+        }
+        captureScreen("dm_matrix_dark_rtl.png")
+    }
+
+    @Test
+    fun capture_DmPeerIntro_Light() {
+        val shortMessages = listOf(
+            DmMessage(
+                id = "pi-1",
+                conversationId = "conv-direct",
+                senderId = "user-sara",
+                senderDisplayName = "Sara Ahmed",
+                content = "هلا",
+                createdAt = "2026-11-12T09:16:00Z"
+            )
+        )
+        val detailNoPin = directDetail.copy(
+            conversation = directDetail.conversation?.copy(pinnedMessageId = null),
+            pinnedMessage = null
+        )
+        val state = chatState(detailNoPin, shortMessages)
+        composeRule.setContent {
+            BuildXTheme(appearance = AppAppearance.LIGHT) {
+                Box(modifier = Modifier.fillMaxSize().background(BuildXTheme.colors.pageBackground)) {
+                    ConversationScreen(state)
+                }
+            }
+        }
+        captureScreen("dm_peer_intro_light.png")
+    }
+
+    @Test
+    fun capture_DmComposerStates() {
+        composeRule.setContent {
+            BuildXTheme(appearance = AppAppearance.LIGHT) {
+                val chatColors = BuildXTheme.colors.toChatColors()
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(chatColors.pageBackground)
+                        .padding(vertical = 32.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp)
+                ) {
+                    // 1. Empty placeholder state (mic visible)
+                    ChatComposer(
+                        text = "",
+                        onTextChange = {},
+                        stagedAttachments = emptyList(),
+                        onRemoveAttachment = {},
+                        replyingTo = null,
+                        onCancelReply = {},
+                        editing = null,
+                        onCancelEdit = {},
+                        onAttachClick = {},
+                        onSendClick = {},
+                        onVoiceDictationClick = {},
+                        chatColors = chatColors,
+                        reduceMotion = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    // 2. Single-line Arabic state (send visible)
+                    ChatComposer(
+                        text = "هلا",
+                        onTextChange = {},
+                        stagedAttachments = emptyList(),
+                        onRemoveAttachment = {},
+                        replyingTo = null,
+                        onCancelReply = {},
+                        editing = null,
+                        onCancelEdit = {},
+                        onAttachClick = {},
+                        onSendClick = {},
+                        onVoiceDictationClick = {},
+                        chatColors = chatColors,
+                        reduceMotion = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    // 3. Multiline (6+ lines) expanding composer state
+                    ChatComposer(
+                        text = "Line 1: Checking multiline height growth.\nLine 2: Border stays 1dp.\nLine 3: Buttons keep aligned on baseline.\nLine 4: Mixed Arabic مرحبا بكم.\nLine 5: Smooth cursor & padding.\nLine 6: Max 6 lines before scroll.\nLine 7: Scrollable overflow line.",
+                        onTextChange = {},
+                        stagedAttachments = emptyList(),
+                        onRemoveAttachment = {},
+                        replyingTo = null,
+                        onCancelReply = {},
+                        editing = null,
+                        onCancelEdit = {},
+                        onAttachClick = {},
+                        onSendClick = {},
+                        onVoiceDictationClick = {},
+                        chatColors = chatColors,
+                        reduceMotion = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+        captureScreen("dm_composer_states.png")
     }
 }
