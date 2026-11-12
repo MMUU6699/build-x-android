@@ -1390,13 +1390,15 @@ class BuildXRepository(val context: Context) {
 
     suspend fun getDmInbox(
         filter: String = "all",
+        search: String = "",
         cursorPinned: String? = null,
         cursorActivity: String? = null,
         limit: Int = 40
     ): Result<List<DmInboxItem>> = withContext(Dispatchers.IO) {
         runCatching {
             val params = buildJsonObject {
-                put("p_filter", filter.lowercase())
+                put("p_filter", filter.lowercase().ifBlank { "all" })
+                put("p_search", search.trim())
                 if (cursorPinned != null) put("p_cursor_pinned", cursorPinned)
                 if (cursorActivity != null) put("p_cursor_activity", cursorActivity)
                 put("p_limit", limit)

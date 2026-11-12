@@ -1961,10 +1961,13 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(snackbarMessage = null) }
     }
 
+    private var isDmVoiceActive: Boolean = false
+
     /**
      * S11 Voice Dictation via Android SpeechRecognizer.
      */
-    fun startVoiceDictation() {
+    fun startVoiceDictation(isDm: Boolean = false) {
+        isDmVoiceActive = isDm
         val context = getApplication<Application>().applicationContext
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             showSnackbar("Speech recognition is not available on this device.")
@@ -2001,12 +2004,21 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val transcript = matches?.firstOrNull().orEmpty()
                 _uiState.update { s ->
-                    val combined = if (s.composerText.isBlank()) transcript else "${s.composerText} $transcript"
-                    s.copy(
-                        isVoiceListening = false,
-                        voicePartialTranscript = transcript,
-                        composerText = combined.trim()
-                    )
+                    if (isDmVoiceActive) {
+                        val combined = if (s.dmComposerText.isBlank()) transcript else "${s.dmComposerText} $transcript"
+                        s.copy(
+                            isVoiceListening = false,
+                            voicePartialTranscript = transcript,
+                            dmComposerText = combined.trim()
+                        )
+                    } else {
+                        val combined = if (s.composerText.isBlank()) transcript else "${s.composerText} $transcript"
+                        s.copy(
+                            isVoiceListening = false,
+                            voicePartialTranscript = transcript,
+                            composerText = combined.trim()
+                        )
+                    }
                 }
             }
             override fun onPartialResults(partialResults: Bundle?) {
@@ -2038,20 +2050,34 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         val partial = _uiState.value.voicePartialTranscript.trim()
         stopVoiceDictationInternal()
         _uiState.update { s ->
-            val nextText = if (partial.isNotEmpty() && !s.composerText.contains(partial)) {
-                if (s.composerText.isBlank()) partial else "${s.composerText} $partial"
+            if (isDmVoiceActive) {
+                val nextText = if (partial.isNotEmpty() && !s.dmComposerText.contains(partial)) {
+                    if (s.dmComposerText.isBlank()) partial else "${s.dmComposerText} $partial"
+                } else {
+                    s.dmComposerText
+                }
+                s.copy(
+                    isVoiceListening = false,
+                    voicePartialTranscript = "",
+                    dmComposerText = nextText.trim()
+                )
             } else {
-                s.composerText
+                val nextText = if (partial.isNotEmpty() && !s.composerText.contains(partial)) {
+                    if (s.composerText.isBlank()) partial else "${s.composerText} $partial"
+                } else {
+                    s.composerText
+                }
+                s.copy(
+                    isVoiceListening = false,
+                    voicePartialTranscript = "",
+                    composerText = nextText.trim()
+                )
             }
-            s.copy(
-                isVoiceListening = false,
-                voicePartialTranscript = "",
-                composerText = nextText.trim()
-            )
         }
     }
 
     fun cancelVoiceDictation() {
+        isDmVoiceActive = false
         stopVoiceDictationInternal()
         _uiState.update {
             it.copy(
@@ -2579,19 +2605,34 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     table = "dm_participants"
                     filter("user_id", FilterOperator.EQ, uid)
                 }
+                val msgFlow = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                    table = "dm_messages"
+                }
+                val convFlow = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                    table = "dm_conversations"
+                }
                 dmInboxChannel = channel
                 channel.subscribe()
-                partFlow.collect {
-                    loadDmInbox()
+                launch {
+                    partFlow.collect { loadDmInbox() }
+                }
+                launch {
+                    msgFlow.collect { loadDmInbox() }
+                }
+                launch {
+                    convFlow.collect { loadDmInbox() }
                 }
             } catch (_: Exception) {}
         }
     }
 
-    fun loadDmInbox(search: String = uiState.value.dmSearchQuery) {
+    fun loadDmInbox(
+        filter: String = uiState.value.selectedDmFilterTab.name.lowercase(),
+        search: String = uiState.value.dmSearchQuery
+    ) {
         viewModelScope.launch {
             _uiState.update { it.copy(isDmInboxLoading = true) }
-            repository.getDmInbox(search).fold(
+            repository.getDmInbox(filter = filter, search = search).fold(
                 onSuccess = { items ->
                     val unread = items.sumOf { it.unreadCount }
                     _uiState.update {
@@ -2611,11 +2652,12 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     fun selectDmFilterTab(tab: DmFilterTab) {
         _uiState.update { it.copy(selectedDmFilterTab = tab) }
+        loadDmInbox(filter = tab.name.lowercase())
     }
 
     fun onDmSearchQueryChanged(query: String) {
         _uiState.update { it.copy(dmSearchQuery = query) }
-        loadDmInbox(query)
+        loadDmInbox(search = query)
         if (query.trim().length >= 2) {
             viewModelScope.launch {
                 _uiState.update { it.copy(isDmSearchPeopleLoading = true) }
@@ -2636,7 +2678,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     fun leaveOrDeleteDmConversation(conversationId: String) {
         viewModelScope.launch {
             _uiState.update { state ->
-                val updated = state.dmInboxItems.filterNot { item -> item.id == conversationId }
+                val updated = state.dmInboxItems.filterNot { item -> item.effectiveId == conversationId }
                 state.copy(
                     dmInboxItems = updated,
                     totalUnreadDmCount = updated.count { it.unreadCount > 0 || it.isMarkedUnread }
@@ -2653,7 +2695,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _uiState.update { state ->
                 val updated = state.dmInboxItems.map { item ->
-                    if (item.id == conversationId) item.copy(unreadCount = maxOf(1, item.unreadCount), isMarkedUnread = true) else item
+                    if (item.effectiveId == conversationId) item.copy(unreadCount = maxOf(1, item.unreadCount), isMarkedUnread = true) else item
                 }
                 state.copy(
                     dmInboxItems = updated,
@@ -2669,11 +2711,11 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     fun markDmRead(conversationId: String) {
         viewModelScope.launch {
-            val conv = _uiState.value.dmInboxItems.firstOrNull { it.id == conversationId }
+            val conv = _uiState.value.dmInboxItems.firstOrNull { it.effectiveId == conversationId }
             val lastMsgId = conv?.lastMessage?.id
             _uiState.update { state ->
                 val updated = state.dmInboxItems.map { item ->
-                    if (item.id == conversationId) item.copy(unreadCount = 0, isMarkedUnread = false) else item
+                    if (item.effectiveId == conversationId) item.copy(unreadCount = 0, isMarkedUnread = false) else item
                 }
                 state.copy(
                     dmInboxItems = updated,
@@ -3025,6 +3067,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                             }
                         )
                     }
+                    loadDmInbox()
                 },
                 onFailure = {
                     _uiState.update {
@@ -3080,6 +3123,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                             }
                         )
                     }
+                    loadDmInbox()
                 },
                 onFailure = { err ->
                     showSnackbar(mapError(err))
@@ -3103,7 +3147,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             var newMuted = false
             _uiState.update { state ->
                 val updatedList = state.dmInboxItems.map { item ->
-                    if (item.id == conversationId) {
+                    if (item.effectiveId == conversationId) {
                         newMuted = !item.isMuted
                         item.copy(isMuted = newMuted)
                     } else item
@@ -3217,7 +3261,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { state ->
                 state.copy(
                     dmInboxItems = state.dmInboxItems.map { item ->
-                        if (item.id == conversationId) item.copy(title = title) else item
+                        if (item.effectiveId == conversationId) item.copy(title = title) else item
                     }
                 )
             }

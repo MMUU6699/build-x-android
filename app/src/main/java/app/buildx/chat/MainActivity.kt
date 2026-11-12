@@ -254,7 +254,8 @@ fun BuildXRoot(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            viewModel.startVoiceDictation()
+            val inDm = navController.currentDestination?.route?.startsWith("dm/") == true
+            viewModel.startVoiceDictation(isDm = inDm)
         } else {
             viewModel.showSnackbar("Microphone permission is required for voice dictation.")
         }
@@ -952,7 +953,7 @@ fun BuildXRoot(
                             onToggleMuteConversation = { convId -> viewModel.toggleMuteDmConversation(convId) },
                             onSelectFilterTab = { tab -> viewModel.selectDmFilterTab(tab) },
                             onToggleReadUnreadConversation = { convId ->
-                                val conv = uiState.dmInboxItems.firstOrNull { it.id == convId }
+                                val conv = uiState.dmInboxItems.firstOrNull { it.effectiveId == convId || it.id == convId }
                                 if ((conv?.unreadCount ?: 0) > 0) {
                                     viewModel.markDmRead(convId)
                                 } else {
@@ -1020,7 +1021,20 @@ fun BuildXRoot(
                                 viewModel.submitReport(msg.senderId, ReportReason.SPAM, "Reported message: ${msg.id}") {
                                     viewModel.showSnackbar("Report submitted")
                                 }
-                            }
+                            },
+                            onVoiceDictationClick = {
+                                if (ContextCompat.checkSelfPermission(
+                                        context,
+                                        Manifest.permission.RECORD_AUDIO
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    viewModel.startVoiceDictation(isDm = true)
+                                } else {
+                                    recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            },
+                            onCancelVoiceDictation = { viewModel.cancelVoiceDictation() },
+                            onConfirmVoiceTranscript = { viewModel.confirmVoiceTranscript() }
                         )
                     }
                 }
