@@ -44,6 +44,7 @@ import app.buildx.chat.data.model.DmLastMessageSummary
 import app.buildx.chat.data.model.DmPeerSummary
 import app.buildx.chat.data.model.DmConversationMetadata
 import kotlinx.serialization.json.add
+import kotlinx.serialization.json.decodeFromJsonElement
 import app.buildx.chat.util.AuthValidation
 import app.buildx.chat.util.AvatarImageProcessor
 import io.github.jan.supabase.SupabaseClient
@@ -1387,15 +1388,27 @@ class BuildXRepository(val context: Context) {
         }
     }
 
-    suspend fun getDmInbox(search: String = "", limit: Int = 40, offset: Int = 0): Result<List<DmInboxItem>> = withContext(Dispatchers.IO) {
+    suspend fun getDmInbox(
+        filter: String = "all",
+        cursorPinned: String? = null,
+        cursorActivity: String? = null,
+        limit: Int = 40
+    ): Result<List<DmInboxItem>> = withContext(Dispatchers.IO) {
         runCatching {
             val params = buildJsonObject {
-                put("p_search", search)
+                put("p_filter", filter.lowercase())
+                if (cursorPinned != null) put("p_cursor_pinned", cursorPinned)
+                if (cursorActivity != null) put("p_cursor_activity", cursorActivity)
                 put("p_limit", limit)
-                put("p_offset", offset)
             }
             val response = supabase.postgrest.rpc("get_dm_inbox", params)
-            json.decodeFromString<List<DmInboxItem>>(response.data)
+            val element = json.parseToJsonElement(response.data)
+            val convsElement = if (element is JsonObject) {
+                element["conversations"] ?: JsonArray(emptyList())
+            } else {
+                element
+            }
+            json.decodeFromJsonElement<List<DmInboxItem>>(convsElement)
         }
     }
 
@@ -1540,44 +1553,79 @@ class BuildXRepository(val context: Context) {
         }
     }
 
-    suspend fun toggleMuteDmConversation(conversationId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+    suspend fun setConversationMute(conversationId: String, until: String? = null): Result<Boolean> = withContext(Dispatchers.IO) {
         runCatching {
             val params = buildJsonObject {
                 put("p_conversation_id", conversationId)
+                if (until != null) {
+                    put("p_until", until)
+                }
             }
-            val response = supabase.postgrest.rpc("toggle_mute_dm_conversation", params)
+            val response = supabase.postgrest.rpc("set_conversation_mute", params)
             val obj = json.decodeFromString<JsonObject>(response.data)
             val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
             if (!success) {
-                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to mute conversation")
+                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to set mute")
             }
             obj["is_muted"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
         }
     }
 
-    suspend fun togglePinDmConversation(conversationId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+    suspend fun toggleMuteDmConversation(conversationId: String, isCurrentlyMuted: Boolean = false): Result<Boolean> = withContext(Dispatchers.IO) {
+        if (isCurrentlyMuted) {
+            setConversationMute(conversationId, null)
+        } else {
+            setConversationMute(conversationId, "infinity")
+        }
+    }
+
+    suspend fun setConversationPin(conversationId: String, pinned: Boolean): Result<Boolean> = withContext(Dispatchers.IO) {
         runCatching {
             val params = buildJsonObject {
                 put("p_conversation_id", conversationId)
+                put("p_pinned", pinned)
             }
-            val response = supabase.postgrest.rpc("toggle_pin_dm_conversation", params)
+            val response = supabase.postgrest.rpc("set_conversation_pin", params)
             val obj = json.decodeFromString<JsonObject>(response.data)
             val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
             if (!success) {
-                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to pin conversation")
+                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to set pin")
             }
             obj["is_pinned"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
         }
     }
 
-    suspend fun leaveOrDeleteDmConversation(conversationId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+    suspend fun togglePinDmConversation(conversationId: String, isCurrentlyPinned: Boolean = false): Result<Boolean> = withContext(Dispatchers.IO) {
+        setConversationPin(conversationId, !isCurrentlyPinned)
+    }
+
+    suspend fun deleteConversationForMe(conversationId: String): Result<Boolean> = withContext(Dispatchers.IO) {
         runCatching {
             val params = buildJsonObject {
                 put("p_conversation_id", conversationId)
             }
-            val response = supabase.postgrest.rpc("leave_or_delete_dm_conversation", params)
+            val response = supabase.postgrest.rpc("delete_conversation_for_me", params)
             val obj = json.decodeFromString<JsonObject>(response.data)
             obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
+        }
+    }
+
+    suspend fun leaveGroup(conversationId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_conversation_id", conversationId)
+            }
+            val response = supabase.postgrest.rpc("leave_group", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
+        }
+    }
+
+    suspend fun leaveOrDeleteDmConversation(conversationId: String, isGroup: Boolean = false): Result<Boolean> = withContext(Dispatchers.IO) {
+        if (isGroup) {
+            leaveGroup(conversationId)
+        } else {
+            deleteConversationForMe(conversationId)
         }
     }
 
@@ -1586,7 +1634,7 @@ class BuildXRepository(val context: Context) {
             val params = buildJsonObject {
                 put("p_conversation_id", conversationId)
             }
-            val response = supabase.postgrest.rpc("mark_dm_unread", params)
+            val response = supabase.postgrest.rpc("mark_conversation_unread", params)
             val obj = json.decodeFromString<JsonObject>(response.data)
             obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
         }

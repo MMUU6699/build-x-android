@@ -970,6 +970,18 @@ fun BuildXRoot(
                             onRenameGroup = { convId, newTitle ->
                                 viewModel.updateGroupTitle(convId, newTitle)
                             },
+                            onSetConversationPin = { convId, pin ->
+                                viewModel.setConversationPin(convId, pin)
+                            },
+                            onSetConversationMute = { convId, duration ->
+                                viewModel.setConversationMute(convId, duration)
+                            },
+                            onDeleteConversationForMe = { convId ->
+                                viewModel.deleteConversationForMe(convId)
+                            },
+                            onLeaveGroup = { convId ->
+                                viewModel.leaveGroup(convId)
+                            },
                             currentUserId = viewModel.currentUserId()
                         )
                     }

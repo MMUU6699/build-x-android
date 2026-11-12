@@ -314,24 +314,40 @@ data class DmLastMessageSummary(
 
 @Serializable
 data class DmInboxItem(
-    val id: String,
+    @SerialName("conversation_id") val conversationId: String? = null,
+    val id: String = conversationId ?: "",
     val kind: String = "direct",
     val title: String? = null,
+    @SerialName("display_name") val displayName: String? = null,
+    val handle: String? = null,
     @SerialName("avatar_url") val avatarUrl: String? = null,
     val status: String = "active",
+    @SerialName("is_verified") val isVerified: Boolean = false,
     @SerialName("is_muted") val isMuted: Boolean = false,
+    @SerialName("muted_until") val mutedUntil: String? = null,
     @SerialName("is_pinned") val isPinned: Boolean = false,
+    @SerialName("pinned_at") val pinnedAt: String? = null,
     @SerialName("last_read_at") val lastReadAt: String? = null,
     @SerialName("last_read_message_id") val lastReadMessageId: String? = null,
     @SerialName("unread_count") val unreadCount: Int = 0,
+    @SerialName("last_message_id") val lastMessageId: String? = null,
     @SerialName("last_message_text") val lastMessageText: String? = null,
+    @SerialName("last_message_type") val lastMessageType: String? = null,
+    @SerialName("last_message_sender_id") val lastMessageSenderId: String? = null,
+    @SerialName("sender_first_name") val senderFirstName: String? = null,
     @SerialName("last_message_at") val lastMessageAt: String? = null,
+    @SerialName("last_activity_at") val lastActivityAt: String? = null,
     @SerialName("last_message") val lastMessage: DmLastMessageSummary? = null,
     val peer: DmPeerSummary? = null,
     @SerialName("member_count") val memberCount: Int? = null,
     @SerialName("member_avatars") val memberAvatars: List<DmMemberAvatar> = emptyList(),
     @SerialName("is_marked_unread") val isMarkedUnread: Boolean = false
-)
+) {
+    val effectiveId: String get() = conversationId ?: id
+    val effectiveTitle: String get() = displayName ?: title ?: peer?.displayName ?: "Chat"
+    val effectiveAvatarUrl: String? get() = avatarUrl ?: peer?.avatarUrl
+    val effectiveIsVerified: Boolean get() = isVerified || peer?.isVerified == true
+}
 
 @Serializable
 data class DmParticipant(

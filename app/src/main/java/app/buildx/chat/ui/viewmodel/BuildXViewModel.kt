@@ -3118,24 +3118,97 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun togglePinDmConversation(conversationId: String) {
+        val current = _uiState.value.dmInboxItems.firstOrNull { it.effectiveId == conversationId }
+        setConversationPin(conversationId, !(current?.isPinned ?: false))
+    }
+
+    fun setConversationPin(conversationId: String, pin: Boolean) {
+        val currentPinnedCount = _uiState.value.dmInboxItems.count { it.isPinned }
+        if (pin && currentPinnedCount >= 3) {
+            showSnackbar("You can pin up to 3 conversations")
+            return
+        }
         viewModelScope.launch {
-            var newPinned = false
             _uiState.update { state ->
                 val updatedList = state.dmInboxItems.map { item ->
-                    if (item.id == conversationId) {
-                        newPinned = !item.isPinned
-                        item.copy(isPinned = newPinned)
+                    if (item.effectiveId == conversationId) {
+                        item.copy(isPinned = pin, pinnedAt = if (pin) java.time.Instant.now().toString() else null)
                     } else item
                 }.sortedWith(
                     compareByDescending<DmInboxItem> { it.isPinned }
-                        .thenByDescending { it.lastMessageAt ?: "" }
+                        .thenByDescending { it.pinnedAt ?: "" }
+                        .thenByDescending { it.lastActivityAt ?: it.lastMessageAt ?: "" }
                 )
                 state.copy(dmInboxItems = updatedList)
             }
-            showSnackbar(if (newPinned) "Conversation pinned" else "Conversation unpinned")
-            repository.togglePinDmConversation(conversationId).onFailure {
-                loadDmInbox()
+            repository.setConversationPin(conversationId, pin).fold(
+                onSuccess = {
+                    showSnackbar(if (pin) "Conversation pinned" else "Conversation unpinned")
+                },
+                onFailure = { err ->
+                    if (err.message?.contains("PIN_LIMIT_REACHED") == true) {
+                        showSnackbar("You can pin up to 3 conversations")
+                    } else {
+                        showSnackbar("Could not update pin status")
+                    }
+                    loadDmInbox()
+                }
+            )
+        }
+    }
+
+    fun setConversationMute(conversationId: String, duration: String?) {
+        val untilIso = when (duration) {
+            "1h" -> java.time.Instant.now().plus(java.time.Duration.ofHours(1)).toString()
+            "8h" -> java.time.Instant.now().plus(java.time.Duration.ofHours(8)).toString()
+            "1w" -> java.time.Instant.now().plus(java.time.Duration.ofDays(7)).toString()
+            "infinity" -> "infinity"
+            else -> null
+        }
+        val isMuted = untilIso != null
+        viewModelScope.launch {
+            _uiState.update { state ->
+                val updated = state.dmInboxItems.map { item ->
+                    if (item.effectiveId == conversationId) {
+                        item.copy(isMuted = isMuted, mutedUntil = untilIso)
+                    } else item
+                }
+                state.copy(dmInboxItems = updated)
             }
+            repository.setConversationMute(conversationId, untilIso).fold(
+                onSuccess = {
+                    showSnackbar(if (isMuted) "Notifications muted" else "Notifications unmuted")
+                },
+                onFailure = {
+                    loadDmInbox()
+                }
+            )
+        }
+    }
+
+    fun deleteConversationForMe(conversationId: String) {
+        viewModelScope.launch {
+            _uiState.update { state ->
+                val updated = state.dmInboxItems.filterNot { it.effectiveId == conversationId }
+                state.copy(dmInboxItems = updated)
+            }
+            repository.deleteConversationForMe(conversationId).fold(
+                onSuccess = { showSnackbar("Chat deleted") },
+                onFailure = { loadDmInbox() }
+            )
+        }
+    }
+
+    fun leaveGroup(conversationId: String) {
+        viewModelScope.launch {
+            _uiState.update { state ->
+                val updated = state.dmInboxItems.filterNot { it.effectiveId == conversationId }
+                state.copy(dmInboxItems = updated)
+            }
+            repository.leaveGroup(conversationId).fold(
+                onSuccess = { showSnackbar("Left group") },
+                onFailure = { loadDmInbox() }
+            )
         }
     }
 

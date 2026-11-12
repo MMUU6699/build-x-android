@@ -1,28 +1,98 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="dm_nav_messages">الرسائل</string>
-    <string name="dm_search_placeholder">البحث في المحادثات…</string>
+    <string name="dm_compose_message">إنشاء رسالة</string>
+    <string name="dm_back">رجوع</string>
+    <string name="dm_search_hint">البحث في المحادثات</string>
+    <string name="dm_no_search_results_title">لم يتم العثور على نتائج</string>
+    <string name="dm_no_search_results_subtitle">جرب اسم أو كلمة مفتاحية أخرى</string>
+
+    <!-- Notes Strip -->
     <string name="dm_notes_tray_title">الملاحظات</string>
-    <string name="dm_leave_a_note">ملاحظة...</string>
-    <string name="dm_reply_to_note">الرد على ملاحظة %1$s…</string>
-    <string name="dm_reply_to_note_title">الرد على الملاحظة</string>
-    <string name="dm_replied_to_note">قام بالرد على ملاحظة</string>
-    <string name="dm_empty_inbox_title">لا توجد رسائل بعد</string>
+    <string name="dm_your_note">ملاحظتك</string>
+    <string name="dm_share_a_note">شارك ملاحظة</string>
+    <string name="dm_leave_a_note">ملاحظة</string>
+    <string name="dm_reply_to_note">الرد على ملاحظة %1$s</string>
+    <string name="dm_replied_to_note">رد على ملاحظة</string>
+
+    <!-- Filter Chips -->
+    <string name="dm_filter_all">الكل</string>
+    <string name="dm_filter_unread">غير مقروءة</string>
+    <string name="dm_filter_groups">المجموعات</string>
+
+    <!-- Conversation Row Previews -->
+    <string name="dm_no_messages_yet">لا توجد رسائل بعد</string>
+    <string name="dm_you_prefix">أنت: </string>
+    <string name="dm_media_photo">صورة</string>
+    <string name="dm_message_deleted">تم حذف الرسالة</string>
+    <string name="dm_time_now">الآن</string>
+
+    <!-- Long Press Menu Actions -->
+    <string name="dm_action_pin_to_top">تثبيت في الأعلى</string>
+    <string name="dm_action_unpin">إلغاء التثبيت</string>
+    <string name="dm_action_mute">كتم الصوت</string>
+    <string name="dm_action_unmute">إلغاء كتم الصوت</string>
+    <string name="dm_action_mark_unread">تحديد كغير مقروءة</string>
+    <string name="dm_action_mark_read">تحديد كمقروءة</string>
+    <string name="dm_action_view_profile">عرض الملف الشخصي</string>
+    <string name="dm_action_delete_chat">حذف المحادثة</string>
+    <string name="dm_action_group_info">معلومات المجموعة</string>
+    <string name="dm_action_leave_group">مغادرة المجموعة</string>
+
+    <!-- Mute Durations -->
+    <string name="dm_mute_notifications_title">كتم الإشعارات</string>
+    <string name="dm_mute_1_hour">ساعة واحدة</string>
+    <string name="dm_mute_8_hours">8 ساعات</string>
+    <string name="dm_mute_1_week">أسبوع واحد</string>
+    <string name="dm_mute_until_turned_on">حتى أقوم بإعادة تشغيلها</string>
+
+    <!-- Confirmations inside popup -->
+    <string name="dm_confirm_delete_title">حذف هذه المحادثة؟</string>
+    <string name="dm_confirm_delete_body">سيتم حذف الرسائل من جانبك فقط. سيحتفظ الطرف الآخر بنسخته.</string>
+    <string name="dm_confirm_delete_action">حذف</string>
+    <string name="dm_confirm_cancel">إلغاء</string>
+
+    <string name="dm_confirm_leave_group_title">مغادرة هذه المجموعة؟</string>
+    <string name="dm_confirm_leave_group_body">ستتوقف عن استلام الرسائل. سيرى الأعضاء الآخرون أنك غادرت.</string>
+    <string name="dm_confirm_leave_admin_note">سيصبح العضو الأقدم في الانضمام هو المشرف.</string>
+    <string name="dm_confirm_leave_last_member_title">حذف المجموعة نهائياً؟</string>
+    <string name="dm_confirm_leave_last_member_body">سيؤدي هذا إلى حذف المجموعة للجميع لأنك آخر عضو فيها.</string>
+    <string name="dm_confirm_leave_action">مغادرة</string>
+    <string name="dm_confirm_delete_group_action">حذف المجموعة</string>
+
+    <!-- Feedback & Limits -->
+    <string name="dm_pin_limit_reached">يمكنك تثبيت ما يصل إلى 3 محادثات</string>
+    <string name="dm_chat_deleted">تم حذف المحادثة</string>
+    <string name="dm_left_group">تمت مغادرة المجموعة</string>
+    <string name="dm_conv_pinned">تم تثبيت المحادثة</string>
+    <string name="dm_conv_unpinned">تم إلغاء تثبيت المحادثة</string>
+    <string name="dm_conv_muted">تم كتم الإشعارات</string>
+    <string name="dm_conv_unmuted">تم إلغاء كتم الإشعارات</string>
+
+    <!-- Empty States -->
+    <string name="dm_empty_inbox_title">لا توجد محادثات بعد</string>
     <string name="dm_empty_inbox_subtitle">تواصل ودردش مع الأشخاص الذين تتابعهم.</string>
+    <string name="dm_start_a_chat">بدء محادثة</string>
+    <string name="dm_empty_unread_title">لا توجد رسائل غير مقروءة</string>
+    <string name="dm_empty_unread_subtitle">لقد قرأت جميع الرسائل</string>
+    <string name="dm_empty_groups_title">لا توجد مجموعات</string>
+    <string name="dm_empty_groups_subtitle">أنشئ مجموعة للدردشة مع عدة أشخاص في نفس الوقت</string>
+    <string name="dm_create_a_group">إنشاء مجموعة</string>
+    <string name="dm_show_all_chats">عرض جميع المحادثات</string>
+    <string name="dm_retry">إعادة المحاولة</string>
+
+    <!-- Existing Details -->
     <string name="dm_new_chat">رسالة جديدة</string>
     <string name="dm_new_group">مجموعة جديدة</string>
     <string name="dm_create_group">إنشاء مجموعة</string>
     <string name="dm_group_name">اسم المجموعة</string>
-    <string name="dm_group_name_hint">اختر اسماً للمجموعة…</string>
+    <string name="dm_group_name_hint">أدخل اسم المجموعة</string>
     <string name="dm_select_members">تحديد الأعضاء</string>
-    <string name="dm_pinned_conversations">المثبتة</string>
-    <string name="dm_all_conversations">كافة الرسائل</string>
-    <string name="dm_view_profile">عرض الملف الشخصي</string>
-    <string name="dm_followers_posts">%1$s متابع • %2$s منشور</string>
+    <string name="dm_followers_posts">%1$s متابع · %2$s منشور</string>
     <string name="dm_followers_only">%1$s متابع</string>
-    <string name="dm_followed_since">تتابع هذا الحساب منذ %1$s</string>
-    <string name="dm_not_following">لا توجد متابعة متبادلة</string>
-    <string name="dm_composer_placeholder">رسالة…</string>
+    <string name="dm_followed_since">أنت تتابع هذا الحساب منذ %1$s</string>
+    <string name="dm_not_following">لا تتابعان بعضكما البعض</string>
+    <string name="dm_composer_placeholder">رسالة</string>
     <string name="dm_replying_to">الرد على %1$s</string>
     <string name="dm_editing_message">تعديل الرسالة</string>
     <string name="dm_pinned_message">رسالة مثبتة</string>
@@ -41,28 +111,13 @@
     <string name="dm_action_forward">إعادة توجيه</string>
     <string name="dm_action_report">إبلاغ</string>
     <string name="dm_replied_to">رد %1$s على %2$s</string>
-    <string name="dm_message_deleted">تم حذف الرسالة</string>
     <string name="dm_media_attachment">صورة</string>
-    <string name="dm_sending">جارٍ الإرسال…</string>
+    <string name="dm_sending">جار الإرسال</string>
     <string name="dm_failed_to_send">تعذر الإرسال. اضغط لإعادة المحاولة.</string>
     <string name="dm_members_count">%1$d أعضاء</string>
     <string name="dm_you">أنت</string>
     <string name="dm_send">إرسال</string>
-    <string name="dm_filter_all">الكل</string>
-    <string name="dm_filter_unread">غير المقروءة</string>
-    <string name="dm_filter_groups">المجموعات</string>
-    <string name="dm_filter_requests">الطلبات</string>
-    <string name="dm_mark_read">تحديد كمقروء</string>
-    <string name="dm_mark_unread">تحديد كغير مقروء</string>
-    <string name="dm_tap_to_chat">اضغط لبدء المحادثة</string>
-    <string name="dm_group_members_format">مجموعة · %1$d أعضاء</string>
-    <string name="dm_message_unsent">تم إلغاء إرسال الرسالة</string>
-    <string name="dm_sent_attachment">أرسل مرفقاً</string>
-    <string name="dm_mode_direct">رسالة جديدة</string>
-    <string name="dm_mode_group">مجموعة جديدة</string>
-    <string name="dm_search_people">بحث عن أشخاص…</string>
-    <string name="dm_shared_ago">تمت المشاركة منذ %1$s</string>
-    <string name="dm_delete_or_leave">حذف المحادثة</string>
+    <string name="dm_search_people">البحث عن أشخاص</string>
     <string name="dm_people_header">الأشخاص</string>
     <string name="dm_conversations_header">المحادثات</string>
     <string name="dm_group_info">معلومات المجموعة والأعضاء</string>
@@ -70,22 +125,17 @@
     <string name="dm_rename_group">إعادة تسمية المجموعة</string>
     <string name="dm_save">حفظ</string>
     <string name="dm_cancel">إلغاء</string>
-    <string name="dm_delete_conv_title">حذف المحادثة؟</string>
-    <string name="dm_delete_conv_message">سيتم حذف هذه المحادثة من صندوق الرسائل الخاص بك.</string>
-    <string name="dm_leave_group_title">مغادرة وحذف المجموعة؟</string>
-    <string name="dm_leave_group_message">ستغادر هذه المجموعة وسيتم حذفها من صندوق الرسائل الخاص بك.</string>
-    <string name="dm_empty_unread_title">لا توجد رسائل غير مقروءة</string>
-    <string name="dm_empty_unread_subtitle">لقد قرأت جميع الرسائل!</string>
-    <string name="dm_empty_groups_title">لا توجد مجموعات بعد</string>
-    <string name="dm_empty_groups_subtitle">أنشئ مجموعة للدردشة مع عدة أشخاص في وقت واحد.</string>
-    <string name="dm_empty_requests_title">لا توجد طلبات مراسلة</string>
-    <string name="dm_empty_requests_subtitle">الرسائل من الأشخاص الذين لا تتابعهم ستظهر هنا.</string>
-    <string name="dm_show_all_chats">عرض كافة المحادثات</string>
-    <string name="dm_create_a_group">إنشاء مجموعة</string>
-    <string name="dm_start_a_conversation">ابدأ محادثة جديدة</string>
-    <string name="dm_you_prefix">أنت: </string>
-    <string name="dm_conv_pinned">تم تثبيت المحادثة</string>
-    <string name="dm_conv_unpinned">تم إلغاء تثبيت المحادثة</string>
-    <string name="dm_conv_muted">تم كتم المحادثة</string>
-    <string name="dm_conv_unmuted">تم إلغاء كتم المحادثة</string>
+
+    <!-- Legacy / Cross-Screen Compatibility -->
+    <string name="dm_pinned_conversations">مثبتة</string>
+    <string name="dm_group_members_format">%1$d أعضاء</string>
+    <string name="dm_mark_read">تحديد كمقروءة</string>
+    <string name="dm_mark_unread">تحديد كغير مقروءة</string>
+    <string name="dm_view_profile">عرض الملف الشخصي</string>
+    <string name="dm_leave_group_title">مغادرة هذه المجموعة؟</string>
+    <string name="dm_delete_conv_title">حذف هذه المحادثة؟</string>
+    <string name="dm_leave_group_message">ستتوقف عن استلام الرسائل من هذه المجموعة.</string>
+    <string name="dm_delete_conv_message">سيتم حذف هذه المحادثة من صندوق الوارد لديك.</string>
+    <string name="dm_mode_direct">مباشر</string>
+    <string name="dm_mode_group">مجموعة</string>
 </resources>
