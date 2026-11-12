@@ -21,12 +21,14 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -80,6 +82,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import app.buildx.chat.R
@@ -91,6 +94,7 @@ import app.buildx.chat.data.model.PersonSearchResult
 import app.buildx.chat.ui.components.BubblePopupPositionProvider
 import app.buildx.chat.ui.components.HeaderCircleButton
 import app.buildx.chat.ui.components.VerifiedBadge
+import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.isRtlText
 import app.buildx.chat.ui.theme.softShadow
@@ -116,6 +120,7 @@ fun DmInboxScreen(
     onCreateGroupClick: () -> Unit,
     onTogglePinConversation: (String) -> Unit,
     onToggleMuteConversation: (String) -> Unit,
+    modifier: Modifier = Modifier,
     onSelectFilterTab: (DmFilterTab) -> Unit = {},
     onToggleReadUnreadConversation: (String) -> Unit = {},
     onDeleteOrLeaveConversation: (String) -> Unit = {},
@@ -125,8 +130,11 @@ fun DmInboxScreen(
     onSetConversationMute: (String, String?) -> Unit = { id, _ -> onToggleMuteConversation(id) },
     onDeleteConversationForMe: (String) -> Unit = { id -> onDeleteOrLeaveConversation(id) },
     onLeaveGroup: (String) -> Unit = { id -> onDeleteOrLeaveConversation(id) },
-    currentUserId: String? = null,
-    modifier: Modifier = Modifier
+    onLoadGroupDetail: (String) -> Unit = {},
+    onUpdateGroupAvatar: (String, android.net.Uri) -> Unit = { _, _ -> },
+    onAddGroupMembers: (String, List<String>) -> Unit = { _, _ -> },
+    onSearchGroupMembers: (String) -> Unit = {},
+    currentUserId: String? = null
 ) {
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
@@ -136,6 +144,7 @@ fun DmInboxScreen(
     var activePopupItem by remember { mutableStateOf<DmInboxItem?>(null) }
     var activeRowBounds by remember { mutableStateOf<IntRect?>(null) }
     var selectedGroupInfoItem by remember { mutableStateOf<DmInboxItem?>(null) }
+    var selectedReplyNote by remember { mutableStateOf<FeedNoteItem?>(null) }
 
     // Text selection styling
     val customTextSelectionColors = remember(colors.primaryBlue) {
@@ -279,13 +288,7 @@ fun DmInboxScreen(
                         friendsNotes = friendsNotes,
                         currentUserId = currentUserId,
                         onOpenNoteSheet = onOpenNoteSheet,
-                        onNoteClick = { note ->
-                            if (!note.author.handle.isNullOrBlank()) {
-                                onOpenProfile(note.author.handle)
-                            } else {
-                                onOpenDirectChatWithUser(note.userId)
-                            }
-                        }
+                        onNoteClick = { note -> selectedReplyNote = note }
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -454,7 +457,10 @@ fun DmInboxScreen(
                                 val handle = item.handle
                                 if (!handle.isNullOrBlank()) onOpenProfile(handle)
                             },
-                            onGroupInfo = { selectedGroupInfoItem = item },
+                            onGroupInfo = {
+                                selectedGroupInfoItem = item
+                                onLoadGroupDetail(item.effectiveId)
+                            },
                             onDeleteChat = { onDeleteConversationForMe(item.effectiveId) },
                             onLeaveGroup = { onLeaveGroup(item.effectiveId) },
                             onDismiss = {
@@ -466,20 +472,74 @@ fun DmInboxScreen(
                 }
             }
 
-            // 7. Group Info Sheet
+            // 7. Chat Info Sheet (group management)
             selectedGroupInfoItem?.let { groupItem ->
-                GroupInfoSheet(
-                    item = groupItem,
-                    participants = emptyList(),
-                    isLoadingParticipants = false,
-                    onRenameGroup = { newTitle -> onRenameGroup(groupItem.effectiveId, newTitle) },
-                    onAddMembersClick = { onCreateGroupClick() },
-                    onLeaveGroupClick = {
+                val groupDetail = uiState.activeDmDetail?.takeIf {
+                    it.conversation?.id == groupItem.effectiveId
+                }
+                DmChatInfoSheet(
+                    detail = groupDetail ?: app.buildx.chat.data.model.DmConversationDetail(
+                        conversation = app.buildx.chat.data.model.DmConversationMetadata(
+                            id = groupItem.effectiveId,
+                            kind = "group",
+                            title = groupItem.title
+                        )
+                    ),
+                    isDirect = false,
+                    currentUserId = currentUserId ?: "",
+                    messages = if (groupDetail != null) uiState.dmMessages else emptyList(),
+                    isGroupAvatarUploading = uiState.isGroupAvatarUploading,
+                    isAddingGroupMembers = uiState.isAddingGroupMembers,
+                    memberCandidates = uiState.dmSearchPeopleResults,
+                    isSearchingMembers = uiState.isDmSearchPeopleLoading,
+                    isSubmittingReport = false,
+                    reportError = null,
+                    isBlocking = false,
+                    onSearchMembers = onSearchGroupMembers,
+                    onViewProfile = onOpenProfile,
+                    onToggleMute = { onToggleMuteConversation(groupItem.effectiveId) },
+                    onTogglePin = {
+                        onSetConversationPin(groupItem.effectiveId, !groupItem.isPinned)
+                    },
+                    onUpdateGroupAvatar = { uri ->
+                        onUpdateGroupAvatar(groupItem.effectiveId, uri)
+                    },
+                    onRenameGroup = { newTitle ->
+                        onRenameGroup(groupItem.effectiveId, newTitle)
+                    },
+                    onAddMembers = { ids ->
+                        onAddGroupMembers(groupItem.effectiveId, ids)
+                    },
+                    onLeaveGroup = {
                         onLeaveGroup(groupItem.effectiveId)
                         selectedGroupInfoItem = null
                     },
-                    onOpenProfile = onOpenProfile,
+                    onClearHistory = {
+                        onDeleteConversationForMe(groupItem.effectiveId)
+                        selectedGroupInfoItem = null
+                    },
+                    onReport = { _, _ -> },
+                    onBlock = {},
                     onDismiss = { selectedGroupInfoItem = null }
+                )
+            }
+
+            // 8. Friend Note Reply Sheet
+            selectedReplyNote?.let { note ->
+                DmNoteReplySheet(
+                    note = note,
+                    onViewProfile = {
+                        val handle = note.author.handle
+                        if (!handle.isNullOrBlank()) {
+                            selectedReplyNote = null
+                            onOpenProfile(handle)
+                        }
+                    },
+                    onSendReply = { replyText ->
+                        selectedReplyNote = null
+                        onReplyToNote(note, replyText)
+                    },
+                    onDismiss = { selectedReplyNote = null }
                 )
             }
         }
@@ -546,7 +606,9 @@ private fun DmFilterChip(
 }
 
 /**
- * Notes Strip (120dp fixed height, 84dp items, 64dp avatar, 18dp radius bubble with 2 tail dots)
+ * Notes Strip: a 124dp rail of 88dp cells. Each cell stacks a floating thought
+ * bubble over a 68dp avatar. The bubble and its two tail dots draw above the
+ * avatar rim (zIndex) so the note reads as a single speech balloon.
  */
 @Composable
 private fun DmNotesStrip(
@@ -556,139 +618,256 @@ private fun DmNotesStrip(
     onOpenNoteSheet: () -> Unit,
     onNoteClick: (FeedNoteItem) -> Unit
 ) {
-    val colors = BuildXTheme.colors
-
     LazyRow(
         modifier = Modifier
             .fillMaxWidth()
-            .height(120.dp),
+            .height(124.dp),
         contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // First item: "Your note"
         item(key = "own_note_slot") {
-            Box(
-                modifier = Modifier
-                    .width(84.dp)
-                    .height(116.dp)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onOpenNoteSheet
-                    ),
-                contentAlignment = Alignment.TopCenter
-            ) {
-                // Thought bubble floating on top (max 84dp width, 18dp radius, fill #F1F3F0, hairline)
-                if (ownNote != null && ownNote.content.isNotBlank()) {
-                    ThoughtBubbleCard(
-                        content = ownNote.content,
-                        modifier = Modifier.align(Alignment.TopCenter)
-                    )
-                } else {
-                    ThoughtBubbleCard(
-                        content = stringResource(R.string.dm_share_a_note),
-                        modifier = Modifier.align(Alignment.TopCenter)
-                    )
-                }
+            NoteStripCell(
+                avatarUrl = ownNote?.author?.avatarUrl,
+                label = stringResource(R.string.dm_your_note),
+                bubbleText = ownNote?.content?.takeIf { it.isNotBlank() }
+                    ?: stringResource(R.string.dm_share_a_note),
+                showAddBadge = true,
+                isVerified = false,
+                onClick = onOpenNoteSheet
+            )
+        }
 
-                // 64dp Avatar Circle anchored at bottom
-                Box(
+        items(friendsNotes, key = { it.id }) { note ->
+            NoteStripCell(
+                avatarUrl = note.author.avatarUrl,
+                label = note.author.displayName ?: note.author.handle ?: "",
+                bubbleText = note.content,
+                showAddBadge = false,
+                isVerified = note.author.isVerified,
+                onClick = { onNoteClick(note) }
+            )
+        }
+    }
+}
+
+/**
+ * A single 88x124dp note cell: 68dp avatar 22dp above the baseline, the thought
+ * bubble floating over its top rim, and an always-on "+" affordance for the
+ * viewer's own note.
+ */
+@Composable
+private fun NoteStripCell(
+    avatarUrl: String?,
+    label: String,
+    bubbleText: String,
+    showAddBadge: Boolean,
+    isVerified: Boolean,
+    onClick: () -> Unit
+) {
+    val colors = BuildXTheme.colors
+
+    Box(
+        modifier = Modifier
+            .width(88.dp)
+            .height(124.dp)
+            .pressScaleClickable(onClick = onClick),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 22.dp)
+                .size(68.dp)
+                .clip(CircleShape)
+                .background(colors.surfaceMuted)
+                .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
+        ) {
+            if (!avatarUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = avatarUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_user),
+                    contentDescription = null,
+                    tint = colors.secondaryText,
                     modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 20.dp)
-                        .size(64.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(CircleShape)
-                            .background(colors.surfaceMuted)
-                            .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
-                    ) {
-                        if (!ownNote?.author?.avatarUrl.isNullOrBlank()) {
-                            AsyncImage(
-                                model = ownNote?.author?.avatarUrl,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_user),
-                                contentDescription = null,
-                                tint = colors.secondaryText,
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .align(Alignment.Center)
-                            )
-                        }
-                    }
-
-                    // Offset + badge when no active note
-                    if (ownNote == null || ownNote.content.isBlank()) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .offset(x = 3.dp, y = 3.dp)
-                                .size(24.dp)
-                                .clip(CircleShape)
-                                .background(colors.pageBackground)
-                                .padding(2.dp)
-                                .clip(CircleShape)
-                                .background(colors.primaryText),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_plus),
-                                contentDescription = null,
-                                tint = colors.pageBackground,
-                                modifier = Modifier.size(13.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Label below: "Your note" (12sp, gray)
-                Text(
-                    text = stringResource(R.string.dm_your_note),
-                    color = colors.secondaryText,
-                    fontSize = 11.5.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
+                        .size(32.dp)
+                        .align(Alignment.Center)
                 )
             }
         }
 
-        // Friends active notes
-        items(friendsNotes, key = { it.id }) { note ->
+        ThoughtBubbleCard(
+            content = bubbleText,
+            modifier = Modifier.align(Alignment.TopCenter)
+        )
+
+        if (showAddBadge) {
             Box(
                 modifier = Modifier
-                    .width(84.dp)
-                    .height(116.dp)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { onNoteClick(note) }
-                    ),
-                contentAlignment = Alignment.TopCenter
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 6.dp, bottom = 20.dp)
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(colors.pageBackground)
+                    .padding(2.dp)
+                    .clip(CircleShape)
+                    .background(colors.primaryText),
+                contentAlignment = Alignment.Center
             ) {
-                // Floating bubble
-                ThoughtBubbleCard(
-                    content = note.content,
-                    modifier = Modifier.align(Alignment.TopCenter)
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_plus),
+                    contentDescription = null,
+                    tint = colors.pageBackground,
+                    modifier = Modifier.size(13.dp)
                 )
+            }
+        }
 
-                // 64dp Avatar Circle
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = label,
+                color = colors.secondaryText,
+                fontSize = 11.5.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f, fill = false)
+            )
+            if (isVerified) {
+                Spacer(modifier = Modifier.width(3.dp))
+                VerifiedBadge(size = 12.dp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThoughtBubbleCard(
+    content: String,
+    modifier: Modifier = Modifier
+) {
+    val colors = BuildXTheme.colors
+
+    Column(
+        modifier = modifier.zIndex(1f),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .widthIn(min = 48.dp, max = 92.dp)
+                .softShadow(
+                    color = colors.headerHaloShadowColor,
+                    cornerRadius = 16.dp,
+                    blurRadius = 12.dp,
+                    offsetY = 2.5.dp
+                )
+                .clip(RoundedCornerShape(16.dp))
+                .background(colors.cardBackground)
+                .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
+                .padding(horizontal = 8.dp, vertical = 5.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = content,
+                color = colors.primaryText,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                lineHeight = 14.5.sp
+            )
+        }
+
+        // Two visible tail dots bridging the bubble into the avatar rim.
+        Spacer(modifier = Modifier.height(1.dp))
+        Box(
+            modifier = Modifier
+                .size(6.5.dp)
+                .clip(CircleShape)
+                .background(colors.cardBackground)
+                .border(0.6.dp, colors.subtleSurfaceBorder, CircleShape)
+        )
+        Spacer(modifier = Modifier.height(1.dp))
+        Box(
+            modifier = Modifier
+                .size(4.dp)
+                .clip(CircleShape)
+                .background(colors.cardBackground)
+        )
+    }
+}
+
+/**
+ * Bottom sheet shown when a friend's note is tapped: author identity, a
+ * "View profile" pill, the note itself, and a reply composer that starts a
+ * direct conversation through [onSendReply].
+ */
+@Composable
+private fun DmNoteReplySheet(
+    note: FeedNoteItem,
+    onViewProfile: () -> Unit,
+    onSendReply: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
+    var replyText by remember(note.id) { mutableStateOf("") }
+    val canSend = replyText.trim().isNotEmpty()
+    val authorName = note.author.displayName ?: note.author.handle ?: ""
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colors.scrimColor)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss
+            ),
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
+                .background(colors.cardBackground)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+                .imePadding()
+                .padding(horizontal = 20.dp, vertical = 18.dp)
+                .navigationBarsPadding()
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(36.dp)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(colors.grabHandle)
+                    .align(Alignment.CenterHorizontally)
+            )
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 20.dp)
-                        .size(64.dp)
+                        .size(48.dp)
                         .clip(CircleShape)
                         .background(colors.surfaceMuted)
                         .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
@@ -706,88 +885,145 @@ private fun DmNotesStrip(
                             contentDescription = null,
                             tint = colors.secondaryText,
                             modifier = Modifier
-                                .size(32.dp)
+                                .size(24.dp)
                                 .align(Alignment.Center)
                         )
                     }
                 }
 
-                // Label below with inline verified badge
-                Row(
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = authorName,
+                            color = colors.primaryText,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (note.author.isVerified) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            VerifiedBadge(size = 14.dp)
+                        }
+                    }
+                    if (!note.author.handle.isNullOrBlank()) {
+                        Text(
+                            text = "@${note.author.handle}",
+                            color = colors.secondaryText,
+                            fontSize = 12.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Box(
                     modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(colors.surfaceMuted)
+                        .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(999.dp))
+                        .pressScaleClickable(onClick = onViewProfile)
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Text(
-                        text = note.author.displayName ?: note.author.handle ?: "",
-                        color = colors.secondaryText,
-                        fontSize = 11.5.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.weight(1f, fill = false)
+                        text = stringResource(R.string.dm_view_profile),
+                        color = colors.primaryText,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.SemiBold
                     )
-                    if (note.author.isVerified) {
-                        Spacer(modifier = Modifier.width(3.dp))
-                        VerifiedBadge(size = 12.dp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Box(
+                modifier = Modifier
+                    .widthIn(min = 48.dp, max = 320.dp)
+                    .softShadow(
+                        color = colors.headerHaloShadowColor,
+                        cornerRadius = 18.dp,
+                        blurRadius = 12.dp,
+                        offsetY = 2.5.dp
+                    )
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(colors.surfaceMuted)
+                    .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(18.dp))
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                Text(
+                    text = note.content,
+                    color = colors.primaryText,
+                    fontSize = 14.5.sp,
+                    lineHeight = 20.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(colors.surfaceMuted)
+                    .border(1.dp, colors.subtleSurfaceBorder, RoundedCornerShape(26.dp))
+                    .padding(start = 18.dp, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    if (replyText.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.dm_reply_to_note, authorName),
+                            color = colors.secondaryText,
+                            fontSize = 14.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
+                    BasicTextField(
+                        value = replyText,
+                        onValueChange = { replyText = it },
+                        maxLines = 3,
+                        textStyle = TextStyle(
+                            color = colors.primaryText,
+                            fontSize = 14.5.sp,
+                            lineHeight = 20.sp,
+                            textAlign = if (isRtlText(replyText, strings.isRtl)) TextAlign.Right else TextAlign.Left
+                        ),
+                        cursorBrush = SolidColor(colors.primaryBlue),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (canSend) colors.primaryBlue else colors.primaryBlue.copy(alpha = 0.35f)
+                        )
+                        .pressScaleClickable(enabled = canSend) {
+                            onSendReply(replyText.trim())
+                            replyText = ""
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_arrow_up),
+                        contentDescription = stringResource(R.string.dm_send),
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun ThoughtBubbleCard(
-    content: String,
-    modifier: Modifier = Modifier
-) {
-    val colors = BuildXTheme.colors
-
-    Column(
-        modifier = modifier.width(84.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .softShadow(colors.composerShadowColor, cornerRadius = 18.dp, blurRadius = 8.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(colors.surfaceMuted)
-                .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(18.dp))
-                .padding(horizontal = 8.dp, vertical = 5.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = content,
-                color = colors.primaryText,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                lineHeight = 15.sp
-            )
-        }
-
-        // 2 Tail Dots pointing to avatar rim (5dp and 3dp)
-        Spacer(modifier = Modifier.height(1.dp))
-        Box(
-            modifier = Modifier
-                .size(5.dp)
-                .clip(CircleShape)
-                .background(colors.surfaceMuted)
-                .border(0.6.dp, colors.subtleSurfaceBorder, CircleShape)
-        )
-        Spacer(modifier = Modifier.height(1.dp))
-        Box(
-            modifier = Modifier
-                .size(3.dp)
-                .clip(CircleShape)
-                .background(colors.surfaceMuted)
-        )
     }
 }
 
@@ -799,8 +1035,8 @@ private fun DmConversationRow(
     item: DmInboxItem,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    highlightQuery: String = "",
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    highlightQuery: String = ""
 ) {
     val colors = BuildXTheme.colors
     val isUnread = item.unreadCount > 0 || item.isMarkedUnread
@@ -946,9 +1182,11 @@ private fun DmConversationRow(
 }
 
 /**
- * 56dp Avatar component:
- * Direct: Single 56dp clean circle.
- * Group: Composite 2-4 member avatars clipped inside 56dp circle, or group initial on token fill.
+ * 56dp avatar component:
+ * Direct conversations (or groups with a custom photo) render a single clipped
+ * circle. Groups without a photo render two overlapping member circles inside an
+ * unclipped 56dp box: a 38dp back circle at TopStart and a 40dp front circle at
+ * BottomEnd separated by a 2.5dp page-background cutout.
  */
 @Composable
 private fun DmConversationAvatar(
@@ -957,19 +1195,18 @@ private fun DmConversationAvatar(
 ) {
     val colors = BuildXTheme.colors
     val isGroup = item.kind == "group"
+    val photo = item.avatarUrl
 
-    Box(
-        modifier = modifier
-            .clip(CircleShape)
-            .background(colors.surfaceMuted)
-            .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
-    ) {
-        if (!isGroup) {
-            // Direct 1:1 Avatar
-            val avatarUrl = item.effectiveAvatarUrl
-            if (!avatarUrl.isNullOrBlank()) {
+    if (!isGroup || !photo.isNullOrBlank()) {
+        Box(
+            modifier = modifier
+                .clip(CircleShape)
+                .background(colors.surfaceMuted)
+                .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
+        ) {
+            if (!photo.isNullOrBlank()) {
                 AsyncImage(
-                    model = avatarUrl,
+                    model = photo,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
@@ -984,116 +1221,59 @@ private fun DmConversationAvatar(
                         .align(Alignment.Center)
                 )
             }
-        } else {
-            // Group Avatar
-            val groupPhoto = item.avatarUrl
-            if (!groupPhoto.isNullOrBlank()) {
-                AsyncImage(
-                    model = groupPhoto,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                val members = item.memberAvatars
-                when {
-                    members.size >= 4 -> {
-                        // 4 Members: 2x2 grid
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            Row(modifier = Modifier.weight(1f)) {
-                                MemberAvatarTile(members[0], Modifier.weight(1f))
-                                MemberAvatarTile(members[1], Modifier.weight(1f))
-                            }
-                            Row(modifier = Modifier.weight(1f)) {
-                                MemberAvatarTile(members[2], Modifier.weight(1f))
-                                MemberAvatarTile(members[3], Modifier.weight(1f))
-                            }
-                        }
-                    }
-                    members.size == 3 -> {
-                        // 3 Members: Triangle
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                MemberAvatarTile(members[0], Modifier.fillMaxSize())
-                            }
-                            Row(modifier = Modifier.weight(1f)) {
-                                MemberAvatarTile(members[1], Modifier.weight(1f))
-                                MemberAvatarTile(members[2], Modifier.weight(1f))
-                            }
-                        }
-                    }
-                    members.size == 2 -> {
-                        // 2 Members: Diagonal pair
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            // Member 1 (Top Start)
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .align(Alignment.TopStart)
-                                    .clip(CircleShape)
-                            ) {
-                                MemberAvatarTile(members[0], Modifier.fillMaxSize())
-                            }
-                            // Member 2 (Bottom End with cutout border)
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .align(Alignment.BottomEnd)
-                                    .border(2.dp, colors.pageBackground, CircleShape)
-                                    .clip(CircleShape)
-                            ) {
-                                MemberAvatarTile(members[1], Modifier.fillMaxSize())
-                            }
-                        }
-                    }
-                    else -> {
-                        // Fallback: Group initial on tinted token color
-                        val initial = item.effectiveTitle.firstOrNull()?.uppercase() ?: "G"
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(colors.primaryBlue.copy(alpha = 0.12f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = initial,
-                                color = colors.primaryBlue,
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-            }
         }
+        return
+    }
+
+    val members = item.memberAvatars
+    val fallbackInitial = item.effectiveTitle.firstOrNull()?.uppercase() ?: "G"
+
+    Box(modifier = modifier) {
+        GroupAvatarCircle(
+            member = members.getOrNull(0),
+            fallbackInitial = fallbackInitial,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .size(38.dp)
+                .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
+        )
+        GroupAvatarCircle(
+            member = members.getOrNull(1),
+            fallbackInitial = fallbackInitial,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .size(40.dp)
+                .border(2.5.dp, colors.pageBackground, CircleShape)
+        )
     }
 }
 
 @Composable
-private fun MemberAvatarTile(
-    member: DmMemberAvatar,
+private fun GroupAvatarCircle(
+    member: DmMemberAvatar?,
+    fallbackInitial: String,
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
     Box(
         modifier = modifier
-            .fillMaxSize()
+            .clip(CircleShape)
             .background(colors.surfaceMuted),
         contentAlignment = Alignment.Center
     ) {
-        if (!member.avatarUrl.isNullOrBlank()) {
+        if (!member?.avatarUrl.isNullOrBlank()) {
             AsyncImage(
-                model = member.avatarUrl,
+                model = member?.avatarUrl,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            val initial = member.displayName.firstOrNull()?.uppercase() ?: "U"
+            val initial = member?.displayName?.firstOrNull()?.uppercase() ?: fallbackInitial
             Text(
                 text = initial,
                 color = colors.primaryText,
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold
             )
         }

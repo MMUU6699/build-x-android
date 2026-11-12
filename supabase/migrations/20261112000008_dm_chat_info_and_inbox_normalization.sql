@@ -1,19 +1,22 @@
--- Migration: 20261112000007_fix_dm_inbox_and_constraints.sql
--- Description: Drop conflicting overloaded get_dm_inbox functions, update dm_participants_status_check to allow 'hidden',
--- and create the canonical unified get_dm_inbox function supporting filter, search, keyset pagination, block-filtering,
--- composite avatars, and safe defaults.
+-- Migration: 20261112000008_dm_chat_info_and_inbox_normalization.sql
+-- Description:
+--   1. Re-assert the canonical get_dm_inbox contract with the exact filter
+--      normalization requested by the client: only 'unread', 'groups' and
+--      'requests' are meaningful; every other value (including '' and NULL)
+--      resolves to 'all'. This makes the inbox resilient to a blank p_filter.
+--   2. Add the peer's bio to get_dm_conversation_detail's peer_intro object so
+--      the new Chat Info sheet can show a real bio snippet.
+--   3. Keep EXECUTE restricted to authenticated callers (the function is a
+--      SECURITY DEFINER app-owned RPC).
+--
+-- Rollback:
+--   Recreate get_dm_inbox with the previous COALESCE(NULLIF(...)) normalization
+--   and get_dm_conversation_detail without the 'bio' key. Both previous bodies
+--   are in 20261112000006 / 20261112000007.
 
--- 1. Drop ALL older overloaded versions of get_dm_inbox
-DROP FUNCTION IF EXISTS public.get_dm_inbox(text, int, int);
-DROP FUNCTION IF EXISTS public.get_dm_inbox(text, timestamptz, timestamptz, int);
-DROP FUNCTION IF EXISTS public.get_dm_inbox(text, text, timestamptz, timestamptz, int);
-
--- 2. Update status CHECK constraint on dm_participants to allow 'hidden'
-ALTER TABLE public.dm_participants DROP CONSTRAINT IF EXISTS dm_participants_status_check;
-ALTER TABLE public.dm_participants ADD CONSTRAINT dm_participants_status_check
-  CHECK (status IN ('active', 'request', 'left', 'hidden'));
-
--- 3. Create canonical get_dm_inbox function
+-- ---------------------------------------------------------------------------
+-- 1. get_dm_inbox: normalize unknown filters to 'all'
+-- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.get_dm_inbox(
     p_filter text DEFAULT 'all',
     p_search text DEFAULT '',
@@ -29,8 +32,12 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
     v_user_id uuid := auth.uid();
-    v_filter text := COALESCE(NULLIF(lower(trim(p_filter)), ''), 'all');
-    v_search text := trim(COALESCE(p_search, ''));
+    v_filter text := CASE
+        WHEN lower(trim(coalesce(p_filter, ''))) IN ('unread', 'groups', 'requests')
+            THEN lower(trim(p_filter))
+        ELSE 'all'
+    END;
+    v_search text := trim(coalesce(p_search, ''));
     v_result jsonb;
 BEGIN
     IF v_user_id IS NULL THEN
@@ -38,7 +45,7 @@ BEGIN
     END IF;
 
     WITH caller_parts AS (
-        SELECT 
+        SELECT
             p.conversation_id,
             p.role,
             p.status,
@@ -56,7 +63,7 @@ BEGIN
           AND p.status != 'left'
     ),
     valid_convs AS (
-        SELECT 
+        SELECT
             cp.*,
             c.kind,
             c.title,
@@ -67,27 +74,24 @@ BEGIN
             c.last_message_type,
             c.last_message_at,
             c.created_at AS conv_created_at,
-            -- Direct peer id
-            CASE 
+            CASE
                 WHEN c.kind != 'group' THEN (
-                    SELECT p2.user_id 
-                    FROM public.dm_participants p2 
-                    WHERE p2.conversation_id = c.id AND p2.user_id != v_user_id 
+                    SELECT p2.user_id
+                    FROM public.dm_participants p2
+                    WHERE p2.conversation_id = c.id AND p2.user_id != v_user_id
                     LIMIT 1
                 )
                 ELSE NULL
             END AS peer_user_id
         FROM caller_parts cp
         JOIN public.dm_conversations c ON c.id = cp.conversation_id
-        -- Hide cleared conversation if no newer message arrived
         WHERE (cp.status != 'hidden' OR (c.last_message_at IS NOT NULL AND c.last_message_at > cp.cleared_before))
     ),
     filtered_convs AS (
         SELECT vc.*
         FROM valid_convs vc
-        -- Exclude blocked users in direct chats
         WHERE (
-            vc.peer_user_id IS NULL 
+            vc.peer_user_id IS NULL
             OR NOT EXISTS (
                 SELECT 1 FROM public.blocks b
                 WHERE (b.blocker_id = v_user_id AND b.blocked_id = vc.peer_user_id)
@@ -96,23 +100,20 @@ BEGIN
         )
     ),
     enriched_convs AS (
-        SELECT 
+        SELECT
             fc.*,
-            -- Peer profile for 1:1
             prof.display_name AS peer_display_name,
             prof.handle AS peer_handle,
             prof.avatar_url AS peer_avatar_url,
             prof.is_verified AS peer_is_verified,
-            -- Sender first name for preview prefix
             COALESCE(
-                CASE 
+                CASE
                     WHEN fc.last_message_sender_id = v_user_id THEN 'You'
                     ELSE split_part(sender_prof.display_name, ' ', 1)
                 END,
                 'User'
             ) AS sender_first_name,
-            -- Unread count calculation
-            CASE 
+            CASE
                 WHEN fc.marked_unread THEN GREATEST(1, (
                     SELECT count(*)::int
                     FROM public.dm_messages m
@@ -132,17 +133,15 @@ BEGIN
                       AND m.deleted_at IS NULL
                 )
             END AS unread_count,
-            -- Group member count
-            CASE 
+            CASE
                 WHEN fc.kind = 'group' THEN (
-                    SELECT count(*)::int 
-                    FROM public.dm_participants gp 
+                    SELECT count(*)::int
+                    FROM public.dm_participants gp
                     WHERE gp.conversation_id = fc.conversation_id AND gp.status = 'active'
                 )
                 ELSE 2
             END AS member_count,
-            -- Up to 4 member avatars for group chats
-            CASE 
+            CASE
                 WHEN fc.kind = 'group' THEN (
                     SELECT jsonb_agg(
                         jsonb_build_object(
@@ -172,6 +171,7 @@ BEGIN
         FROM enriched_convs ec
         WHERE (
             v_filter = 'all'
+            OR v_filter = 'requests'
             OR (v_filter = 'unread' AND ec.unread_count > 0)
             OR (v_filter = 'groups' AND ec.kind = 'group')
         )
@@ -187,7 +187,7 @@ BEGIN
         SELECT *
         FROM tab_filtered tf
         WHERE (
-            p_cursor_activity IS NULL 
+            p_cursor_activity IS NULL
             OR (tf.is_pinned = false AND tf.last_activity_at < p_cursor_activity)
             OR (tf.is_pinned = true AND (p_cursor_pinned IS NULL OR tf.pinned_at < p_cursor_pinned))
         )
@@ -232,5 +232,112 @@ BEGIN
 END;
 $$;
 
+REVOKE ALL ON FUNCTION public.get_dm_inbox(text, text, timestamptz, timestamptz, int) FROM public, anon;
 GRANT EXECUTE ON FUNCTION public.get_dm_inbox(text, text, timestamptz, timestamptz, int) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.get_dm_inbox(text, text, timestamptz, timestamptz, int) TO anon;
+
+-- ---------------------------------------------------------------------------
+-- 2. get_dm_conversation_detail: expose peer bio for the Chat Info sheet
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.get_dm_conversation_detail(p_conversation_id uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_caller uuid := auth.uid();
+    v_conv record;
+    v_pinned_obj jsonb := NULL;
+    v_participants jsonb;
+    v_peer_intro jsonb := NULL;
+    v_peer_id uuid;
+BEGIN
+    IF v_caller IS NULL THEN
+        RAISE EXCEPTION 'NOT_AUTHENTICATED';
+    END IF;
+
+    IF NOT public._is_dm_participant(p_conversation_id, v_caller) THEN
+        RETURN jsonb_build_object('success', false, 'error', 'NOT_A_PARTICIPANT');
+    END IF;
+
+    SELECT * INTO v_conv FROM public.dm_conversations WHERE id = p_conversation_id;
+    IF v_conv.id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'CONVERSATION_NOT_FOUND');
+    END IF;
+
+    IF v_conv.pinned_message_id IS NOT NULL THEN
+        SELECT jsonb_build_object(
+            'id', pm.id,
+            'sender_id', pm.sender_id,
+            'sender_display_name', pr.display_name,
+            'content', pm.content,
+            'attachment_mime', pm.attachment_mime,
+            'created_at', pm.created_at
+        ) INTO v_pinned_obj
+        FROM public.dm_messages pm
+        JOIN public.profiles pr ON pr.id = pm.sender_id
+        WHERE pm.id = v_conv.pinned_message_id AND pm.deleted_at IS NULL;
+    END IF;
+
+    SELECT coalesce(jsonb_agg(
+        jsonb_build_object(
+            'user_id', p.user_id,
+            'username', pr.username,
+            'handle', pr.handle,
+            'display_name', pr.display_name,
+            'avatar_url', pr.avatar_url,
+            'is_verified', pr.is_verified,
+            'role', p.role,
+            'status', p.status,
+            'is_muted', p.is_muted,
+            'is_pinned', p.is_pinned,
+            'last_read_at', p.last_read_at,
+            'last_read_message_id', p.last_read_message_id
+        )
+    ), '[]'::jsonb) INTO v_participants
+    FROM public.dm_participants p
+    JOIN public.profiles pr ON pr.id = p.user_id
+    WHERE p.conversation_id = p_conversation_id;
+
+    IF v_conv.kind = 'direct' THEN
+        v_peer_id := CASE WHEN v_conv.direct_user1_id = v_caller THEN v_conv.direct_user2_id ELSE v_conv.direct_user1_id END;
+
+        SELECT jsonb_build_object(
+            'id', pr.id,
+            'username', pr.username,
+            'handle', pr.handle,
+            'display_name', pr.display_name,
+            'avatar_url', pr.avatar_url,
+            'is_verified', pr.is_verified,
+            'bio', pr.bio,
+            'followers_count', pr.followers_count,
+            'following_count', pr.following_count,
+            'posts_count', COALESCE((SELECT count(*)::int FROM public.attachments a WHERE a.user_id = pr.id), 0),
+            'following_since', (SELECT created_at FROM public.follows WHERE follower_id = v_caller AND following_id = pr.id),
+            'created_at', pr.created_at
+        ) INTO v_peer_intro
+        FROM public.profiles pr
+        WHERE pr.id = v_peer_id;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'conversation', jsonb_build_object(
+            'id', v_conv.id,
+            'kind', v_conv.kind,
+            'title', v_conv.title,
+            'avatar_url', v_conv.avatar_url,
+            'pinned_message_id', v_conv.pinned_message_id,
+            'created_by', v_conv.created_by,
+            'created_at', v_conv.created_at
+        ),
+        'pinned_message', v_pinned_obj,
+        'participants', v_participants,
+        'peer_intro', v_peer_intro
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.get_dm_conversation_detail(uuid) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.get_dm_conversation_detail(uuid) TO authenticated;

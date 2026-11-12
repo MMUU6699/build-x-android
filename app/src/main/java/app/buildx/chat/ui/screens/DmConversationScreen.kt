@@ -3,12 +3,15 @@ package app.buildx.chat.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -30,6 +33,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -42,6 +46,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -75,6 +80,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
@@ -83,18 +89,23 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import app.buildx.chat.R
 import app.buildx.chat.data.model.DmMessage
 import app.buildx.chat.data.model.DmParticipant
 import app.buildx.chat.data.model.DmPeerIntro
 import app.buildx.chat.data.model.DmSendStatus
+import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.ui.components.ActionMenuItem
 import app.buildx.chat.ui.components.ActionMenuPopup
 import app.buildx.chat.ui.components.AttachmentSheetContent
+import app.buildx.chat.ui.components.BubblePopupPositionProvider
 import app.buildx.chat.ui.components.HeaderCircleButton
 import app.buildx.chat.ui.components.VerifiedBadge
 import app.buildx.chat.ui.components.VoiceDictationBar
+import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.isRtlText
@@ -122,12 +133,20 @@ fun DmConversationScreen(
     onTogglePinConversation: () -> Unit,
     onToggleMuteConversation: () -> Unit,
     onReportMessage: (DmMessage) -> Unit,
+    modifier: Modifier = Modifier,
     onVoiceDictationClick: () -> Unit = {},
     onCancelVoiceDictation: () -> Unit = {},
     onConfirmVoiceTranscript: () -> Unit = {},
-    modifier: Modifier = Modifier
+    onLoadRecentImages: () -> Unit = {},
+    onUpdateGroupAvatar: (android.net.Uri) -> Unit = {},
+    onRenameGroup: (String) -> Unit = {},
+    onAddGroupMembers: (List<String>) -> Unit = {},
+    onLeaveGroup: () -> Unit = {},
+    onClearHistory: () -> Unit = {},
+    onBlockUser: () -> Unit = {},
+    onReportUser: (ReportReason, String?) -> Unit = { _, _ -> },
+    onSearchPeopleForGroup: (String) -> Unit = {}
 ) {
-    val context = LocalContext.current
     val colors = BuildXTheme.colors
     val listState = rememberLazyListState()
 
@@ -139,7 +158,7 @@ fun DmConversationScreen(
 
     var isAttachmentSheetOpen by remember { mutableStateOf(false) }
     var activeMenuMessage by remember { mutableStateOf<DmMessage?>(null) }
-    var isMoreOptionsMenuOpen by remember { mutableStateOf(false) }
+    var isChatInfoSheetOpen by remember { mutableStateOf(false) }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -179,13 +198,17 @@ fun DmConversationScreen(
             DmHeaderBar(
                 detail = detail,
                 isDirect = isDirect,
+                currentUserId = currentUserId,
                 onBackClick = onBackClick,
-                onHeaderClick = {
-                    if (isDirect && peerIntro?.handle != null) {
+                onHeaderClick = { isChatInfoSheetOpen = true },
+                onViewProfileClick = {
+                    if (isDirect && !peerIntro?.handle.isNullOrBlank()) {
                         onProfileClick(peerIntro.handle)
                     }
                 },
-                onMoreClick = { isMoreOptionsMenuOpen = true }
+                onTogglePinConversation = onTogglePinConversation,
+                onToggleMuteConversation = onToggleMuteConversation,
+                onOpenInfoClick = { isChatInfoSheetOpen = true }
             )
 
             // Pinned Message Banner
@@ -249,7 +272,29 @@ fun DmConversationScreen(
                                     message = message,
                                     isOwn = isOwn,
                                     seenParticipants = seenParticipants,
-                                    onLongClick = { activeMenuMessage = message }
+                                    isMenuOpen = activeMenuMessage?.id == message.id,
+                                    onLongClick = { activeMenuMessage = message },
+                                    onDismissMenu = { activeMenuMessage = null },
+                                    onReplyClick = {
+                                        onReplyToMessage(message)
+                                        activeMenuMessage = null
+                                    },
+                                    onEditClick = {
+                                        onEditMessage(message)
+                                        activeMenuMessage = null
+                                    },
+                                    onDeleteClick = {
+                                        onDeleteMessage(message.id)
+                                        activeMenuMessage = null
+                                    },
+                                    onTogglePinClick = {
+                                        onTogglePinMessage(message.id)
+                                        activeMenuMessage = null
+                                    },
+                                    onReportClick = {
+                                        onReportMessage(message)
+                                        activeMenuMessage = null
+                                    }
                                 )
                             }
                         }
@@ -278,155 +323,49 @@ fun DmConversationScreen(
                     onCancelReply = onCancelReply,
                     editing = uiState.dmEditingMessage,
                     onCancelEdit = onCancelEdit,
-                    onPlusClick = { isAttachmentSheetOpen = true },
+                    onPlusClick = {
+                        isAttachmentSheetOpen = true
+                        onLoadRecentImages()
+                    },
                     onSendClick = onSendMessage,
                     onVoiceDictationClick = onVoiceDictationClick
                 )
             }
         }
 
-        // Action Menu Popup on message long-press
-        activeMenuMessage?.let { msg ->
-            val isOwn = msg.senderId == currentUserId
-            val isDeleted = msg.deletedAt != null
-
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(colors.scrimColor)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { activeMenuMessage = null }
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                val menuItems = mutableListOf<ActionMenuItem>()
-
-                if (!isDeleted) {
-                    menuItems.add(
-                        ActionMenuItem(
-                            label = stringResource(R.string.dm_action_reply),
-                            iconRes = R.drawable.ic_reply,
-                            onClick = {
-                                onReplyToMessage(msg)
-                                activeMenuMessage = null
-                            }
-                        )
-                    )
-                    if (msg.content.isNotBlank()) {
-                        menuItems.add(
-                            ActionMenuItem(
-                                label = stringResource(R.string.dm_action_copy),
-                                iconRes = R.drawable.ic_copy,
-                                onClick = {
-                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    cm.setPrimaryClip(ClipData.newPlainText("message", msg.content))
-                                    activeMenuMessage = null
-                                }
-                            )
-                        )
-                    }
-                    if (isOwn && msg.messageType == "text") {
-                        menuItems.add(
-                            ActionMenuItem(
-                                label = stringResource(R.string.dm_action_edit),
-                                iconRes = R.drawable.ic_pencil,
-                                onClick = {
-                                    onEditMessage(msg)
-                                    activeMenuMessage = null
-                                }
-                            )
-                        )
-                    }
-                    menuItems.add(
-                        ActionMenuItem(
-                            label = stringResource(R.string.dm_pin_message),
-                            iconRes = R.drawable.ic_pin,
-                            onClick = {
-                                onTogglePinMessage(msg.id)
-                                activeMenuMessage = null
-                            }
-                        )
-                    )
-                }
-
-                if (isOwn && !isDeleted) {
-                    menuItems.add(
-                        ActionMenuItem(
-                            label = stringResource(R.string.dm_action_delete),
-                            iconRes = R.drawable.ic_trash,
-                            isDestructive = true,
-                            onClick = {
-                                onDeleteMessage(msg.id)
-                                activeMenuMessage = null
-                            }
-                        )
-                    )
-                }
-
-                if (!isOwn) {
-                    menuItems.add(
-                        ActionMenuItem(
-                            label = stringResource(R.string.dm_action_report),
-                            iconRes = R.drawable.ic_flag,
-                            isDestructive = true,
-                            onClick = {
-                                onReportMessage(msg)
-                                activeMenuMessage = null
-                            }
-                        )
-                    )
-                }
-
-                ActionMenuPopup(items = menuItems)
-            }
-        }
-
-        // More Options Popup Menu
-        if (isMoreOptionsMenuOpen) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(colors.scrimColor)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { isMoreOptionsMenuOpen = false }
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                ActionMenuPopup(
-                    items = listOf(
-                        ActionMenuItem(
-                            label = stringResource(R.string.dm_pin_chat),
-                            iconRes = R.drawable.ic_pin,
-                            onClick = {
-                                onTogglePinConversation()
-                                isMoreOptionsMenuOpen = false
-                            }
-                        ),
-                        ActionMenuItem(
-                            label = stringResource(R.string.dm_mute_chat),
-                            iconRes = R.drawable.ic_volume_off,
-                            onClick = {
-                                onToggleMuteConversation()
-                                isMoreOptionsMenuOpen = false
-                            }
-                        ),
-                        ActionMenuItem(
-                            label = stringResource(R.string.dm_view_profile),
-                            iconRes = R.drawable.ic_user,
-                            onClick = {
-                                isMoreOptionsMenuOpen = false
-                                if (isDirect && peerIntro?.handle != null) {
-                                    onProfileClick(peerIntro.handle)
-                                }
-                            }
-                        )
-                    )
-                )
-            }
+        // Chat Info Sheet (1-on-1 identity or group management)
+        if (isChatInfoSheetOpen && detail != null) {
+            DmChatInfoSheet(
+                detail = detail,
+                isDirect = isDirect,
+                currentUserId = currentUserId,
+                messages = uiState.dmMessages,
+                isGroupAvatarUploading = uiState.isGroupAvatarUploading,
+                isAddingGroupMembers = uiState.isAddingGroupMembers,
+                memberCandidates = uiState.dmSearchPeopleResults,
+                isSearchingMembers = uiState.isDmSearchPeopleLoading,
+                isSubmittingReport = uiState.isSubmittingReport,
+                reportError = uiState.reportError,
+                isBlocking = uiState.isBlocking,
+                onSearchMembers = onSearchPeopleForGroup,
+                onViewProfile = { handle -> onProfileClick(handle) },
+                onToggleMute = onToggleMuteConversation,
+                onTogglePin = onTogglePinConversation,
+                onUpdateGroupAvatar = onUpdateGroupAvatar,
+                onRenameGroup = onRenameGroup,
+                onAddMembers = onAddGroupMembers,
+                onLeaveGroup = {
+                    isChatInfoSheetOpen = false
+                    onLeaveGroup()
+                },
+                onClearHistory = {
+                    isChatInfoSheetOpen = false
+                    onClearHistory()
+                },
+                onReport = onReportUser,
+                onBlock = onBlockUser,
+                onDismiss = { isChatInfoSheetOpen = false }
+            )
         }
 
         // Attachment Sheet
@@ -479,63 +418,138 @@ fun DmConversationScreen(
 private fun DmHeaderBar(
     detail: app.buildx.chat.data.model.DmConversationDetail?,
     isDirect: Boolean,
+    currentUserId: String,
     onBackClick: () -> Unit,
     onHeaderClick: () -> Unit,
-    onMoreClick: () -> Unit
+    onViewProfileClick: () -> Unit,
+    onTogglePinConversation: () -> Unit,
+    onToggleMuteConversation: () -> Unit,
+    onOpenInfoClick: () -> Unit
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
     val conversation = detail?.conversation
     val peerIntro = detail?.peerIntro
+    val myParticipant = detail?.participants?.firstOrNull { it.userId == currentUserId }
 
     val avatarUrl = if (isDirect) peerIntro?.avatarUrl else conversation?.avatarUrl
-    val title = if (isDirect) peerIntro?.displayName ?: peerIntro?.handle ?: "" else conversation?.title ?: ""
+    val title = if (isDirect) {
+        peerIntro?.displayName ?: peerIntro?.handle ?: ""
+    } else {
+        conversation?.title ?: ""
+    }
     val isVerified = isDirect && peerIntro?.isVerified == true
+    val subtitle = if (isDirect) {
+        peerIntro?.handle?.takeIf { it.isNotBlank() }?.let { "@$it" } ?: ""
+    } else {
+        val activeCount = detail?.participants?.count { it.status == "active" } ?: 0
+        stringResource(R.string.dm_members_count, activeCount)
+    }
 
-    Row(
+    var isMoreMenuOpen by remember { mutableStateOf(false) }
+
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
-        HeaderCircleButton(
-            iconRes = R.drawable.ic_back,
-            contentDescription = "Back",
-            onClick = onBackClick
-        )
-
-        Spacer(modifier = Modifier.width(10.dp))
-
-        // Center Identity
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .weight(1f)
-                .clickable(onClick = onHeaderClick)
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
+            HeaderCircleButton(
+                iconRes = R.drawable.ic_back,
+                contentDescription = stringResource(R.string.dm_back),
+                onClick = onBackClick
+            )
+
+            Spacer(modifier = Modifier.width(10.dp))
+
+            // Floating identity capsule
+            Row(
                 modifier = Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-            ) {
-                if (!avatarUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = avatarUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
+                    .weight(1f)
+                    .height(48.dp)
+                    .softShadow(
+                        color = colors.headerHaloShadowColor,
+                        cornerRadius = 24.dp,
+                        blurRadius = 14.dp,
+                        offsetY = 2.5.dp
                     )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(colors.surfaceMuted),
-                        contentAlignment = Alignment.Center
-                    ) {
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(colors.cardBackground)
+                    .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(24.dp))
+                    .pressScaleClickable(onClick = onHeaderClick)
+                    .padding(start = 6.dp, end = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(colors.surfaceMuted)
+                ) {
+                    if (!avatarUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = avatarUrl,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else if (!isDirect) {
+                        Text(
+                            text = title.firstOrNull()?.uppercase() ?: "",
+                            color = colors.primaryText,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    } else {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_user),
                             contentDescription = null,
                             tint = colors.secondaryText,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier
+                                .size(18.dp)
+                                .align(Alignment.Center)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = title,
+                            color = colors.primaryText,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (isVerified) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            VerifiedBadge(size = 14.dp)
+                        }
+                        if (myParticipant?.isMuted == true) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_bell_off),
+                                contentDescription = stringResource(R.string.dm_action_mute),
+                                tint = colors.secondaryText,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
+                    }
+                    if (subtitle.isNotBlank()) {
+                        Text(
+                            text = subtitle,
+                            color = colors.secondaryText,
+                            fontSize = 11.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -543,44 +557,77 @@ private fun DmHeaderBar(
 
             Spacer(modifier = Modifier.width(10.dp))
 
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = title,
-                        color = colors.primaryText,
-                        fontSize = 15.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (isVerified) {
-                        Spacer(modifier = Modifier.width(4.dp))
-                        VerifiedBadge(size = 14.dp)
-                    }
-                }
+            HeaderCircleButton(
+                iconRes = R.drawable.ic_more_horizontal,
+                contentDescription = stringResource(R.string.dm_chat_info),
+                onClick = { isMoreMenuOpen = true }
+            )
+        }
 
-                if (isDirect && !peerIntro?.handle.isNullOrBlank()) {
-                    Text(
-                        text = "@${peerIntro?.handle}",
-                        color = colors.secondaryText,
-                        fontSize = 12.sp,
-                        maxLines = 1
-                    )
-                } else if (!isDirect) {
-                    Text(
-                        text = stringResource(R.string.dm_members_count, detail?.participants?.size ?: 0),
-                        color = colors.secondaryText,
-                        fontSize = 12.sp
+        if (isMoreMenuOpen) {
+            Popup(
+                alignment = Alignment.TopEnd,
+                onDismissRequest = { isMoreMenuOpen = false },
+                properties = PopupProperties(focusable = true)
+            ) {
+                Box(modifier = Modifier.padding(top = 60.dp, end = 16.dp)) {
+                    ActionMenuPopup(
+                        items = buildList {
+                            add(
+                                ActionMenuItem(
+                                    label = if (myParticipant?.isPinned == true) {
+                                        stringResource(R.string.dm_unpin_chat)
+                                    } else {
+                                        stringResource(R.string.dm_pin_chat)
+                                    },
+                                    iconRes = R.drawable.ic_pin,
+                                    onClick = {
+                                        isMoreMenuOpen = false
+                                        onTogglePinConversation()
+                                    }
+                                )
+                            )
+                            add(
+                                ActionMenuItem(
+                                    label = if (myParticipant?.isMuted == true) {
+                                        stringResource(R.string.dm_unmute_chat)
+                                    } else {
+                                        stringResource(R.string.dm_mute_chat)
+                                    },
+                                    iconRes = R.drawable.ic_bell_off,
+                                    onClick = {
+                                        isMoreMenuOpen = false
+                                        onToggleMuteConversation()
+                                    }
+                                )
+                            )
+                            add(
+                                ActionMenuItem(
+                                    label = stringResource(R.string.dm_chat_info),
+                                    iconRes = R.drawable.ic_info,
+                                    onClick = {
+                                        isMoreMenuOpen = false
+                                        onOpenInfoClick()
+                                    }
+                                )
+                            )
+                            if (isDirect) {
+                                add(
+                                    ActionMenuItem(
+                                        label = stringResource(R.string.dm_view_profile),
+                                        iconRes = R.drawable.ic_user,
+                                        onClick = {
+                                            isMoreMenuOpen = false
+                                            onViewProfileClick()
+                                        }
+                                    )
+                                )
+                            }
+                        }
                     )
                 }
             }
         }
-
-        HeaderCircleButton(
-            iconRes = R.drawable.ic_more_horizontal,
-            contentDescription = "Options",
-            onClick = onMoreClick
-        )
     }
 }
 
@@ -828,10 +875,107 @@ private fun DmMessageBubbleRow(
     message: DmMessage,
     isOwn: Boolean,
     seenParticipants: List<DmParticipant>,
-    onLongClick: () -> Unit
+    isMenuOpen: Boolean,
+    onLongClick: () -> Unit,
+    onDismissMenu: () -> Unit,
+    onReplyClick: () -> Unit,
+    onEditClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+    onTogglePinClick: () -> Unit,
+    onReportClick: () -> Unit
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
+    val context = LocalContext.current
     val isDeleted = message.deletedAt != null
+    val hasAttachment = !message.attachmentPath.isNullOrBlank() && !isDeleted
+    val isRtl = remember(message.content, strings.isRtl) {
+        isRtlText(message.content, strings.isRtl)
+    }
+    val bubbleShape = if (isOwn) {
+        RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 4.dp)
+    } else {
+        RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 4.dp)
+    }
+
+    val menuItems: List<ActionMenuItem> = if (!isMenuOpen) {
+        emptyList()
+    } else {
+        buildList {
+            if (!isDeleted) {
+                add(
+                    ActionMenuItem(
+                        label = stringResource(R.string.dm_action_reply),
+                        iconRes = R.drawable.ic_reply,
+                        onClick = onReplyClick
+                    )
+                )
+                if (message.content.isNotBlank()) {
+                    add(
+                        ActionMenuItem(
+                            label = stringResource(R.string.dm_action_copy),
+                            iconRes = R.drawable.ic_copy,
+                            onClick = {
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("message", message.content))
+                                onDismissMenu()
+                            }
+                        )
+                    )
+                }
+                if (isOwn && message.messageType == "text") {
+                    add(
+                        ActionMenuItem(
+                            label = stringResource(R.string.dm_action_edit),
+                            iconRes = R.drawable.ic_pencil,
+                            onClick = onEditClick
+                        )
+                    )
+                }
+                add(
+                    ActionMenuItem(
+                        label = stringResource(R.string.dm_pin_message),
+                        iconRes = R.drawable.ic_pin,
+                        onClick = onTogglePinClick
+                    )
+                )
+                add(
+                    ActionMenuItem(
+                        label = stringResource(R.string.dm_action_forward),
+                        iconRes = R.drawable.ic_forward,
+                        onClick = {
+                            val share = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, message.content)
+                            }
+                            context.startActivity(Intent.createChooser(share, null))
+                            onDismissMenu()
+                        }
+                    )
+                )
+            }
+            if (isOwn && !isDeleted) {
+                add(
+                    ActionMenuItem(
+                        label = stringResource(R.string.dm_action_delete),
+                        iconRes = R.drawable.ic_trash,
+                        isDestructive = true,
+                        onClick = onDeleteClick
+                    )
+                )
+            }
+            if (!isOwn) {
+                add(
+                    ActionMenuItem(
+                        label = stringResource(R.string.dm_action_report),
+                        iconRes = R.drawable.ic_flag,
+                        isDestructive = true,
+                        onClick = onReportClick
+                    )
+                )
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -846,34 +990,39 @@ private fun DmMessageBubbleRow(
                 message.senderDisplayName ?: "User",
                 message.replyTo.senderDisplayName ?: "User"
             )
-            Text(
-                text = replyLabel,
-                color = colors.secondaryText,
-                fontSize = 11.5.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-            )
-
-            // Quoted bubble snippet
-            Box(
+            Column(
                 modifier = Modifier
-                    .padding(bottom = 3.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(colors.surfaceMuted.copy(alpha = 0.65f))
-                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                    .widthIn(max = 285.dp)
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
             ) {
                 Text(
-                    text = message.replyTo.content.ifBlank { stringResource(R.string.dm_media_attachment) },
+                    text = replyLabel,
                     color = colors.secondaryText,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium
                 )
+
+                Box(
+                    modifier = Modifier
+                        .padding(top = 2.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(colors.surfaceMuted.copy(alpha = 0.65f))
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = message.replyTo.content.ifBlank { stringResource(R.string.dm_media_attachment) },
+                        color = colors.secondaryText,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         } else if (message.messageType == "note_reply" && !message.noteSnapshotText.isNullOrBlank() && !isDeleted) {
             // Note Reply pill
             Box(
                 modifier = Modifier
+                    .widthIn(max = 285.dp)
                     .padding(bottom = 3.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(colors.surfaceMuted)
@@ -888,52 +1037,98 @@ private fun DmMessageBubbleRow(
             }
         }
 
-        // Main Bubble
-        Box(
-            modifier = Modifier
-                .clickable(onClick = onLongClick)
-                .clip(
-                    if (isOwn) {
-                        RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 4.dp)
-                    } else {
-                        RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 4.dp)
-                    }
-                )
-                .background(if (isOwn) colors.primaryBlue else colors.surfaceMuted)
-                .padding(horizontal = 14.dp, vertical = 9.dp)
-        ) {
-            Column {
-                if (isDeleted) {
-                    Text(
-                        text = stringResource(R.string.dm_message_deleted),
-                        color = if (isOwn) Color.White.copy(alpha = 0.65f) else colors.secondaryText,
-                        fontSize = 13.5.sp,
-                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+        // Image attachment: its own card, no blue bubble padding around it.
+        if (hasAttachment) {
+            Box(
+                modifier = Modifier
+                    .widthIn(max = 250.dp)
+                    .heightIn(min = 120.dp, max = 280.dp)
+                    .softShadow(
+                        color = colors.headerHaloShadowColor,
+                        cornerRadius = 18.dp,
+                        blurRadius = 10.dp,
+                        offsetY = 2.dp
                     )
-                } else {
-                    if (!message.attachmentPath.isNullOrBlank()) {
-                        AsyncImage(
-                            model = message.attachmentPath,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxWidth(0.72f)
-                                .heightIn(max = 220.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                        )
-                        if (message.content.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(6.dp))
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(colors.surfaceMuted)
+                    .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(18.dp))
+                    .clickable(onClick = onLongClick)
+            ) {
+                AsyncImage(
+                    model = message.attachmentPath,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                if (isMenuOpen && message.content.isBlank()) {
+                    DmMessageActionPopup(items = menuItems, onDismiss = onDismissMenu)
+                }
+            }
+
+            if (message.content.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+        }
+
+        // Text bubble
+        if (isDeleted || message.content.isNotBlank()) {
+            Box(
+                modifier = Modifier
+                    .widthIn(max = 285.dp)
+                    .clickable(onClick = onLongClick)
+                    .clip(bubbleShape)
+                    .background(
+                        when {
+                            isDeleted -> colors.surfaceMuted.copy(alpha = 0.45f)
+                            isOwn -> colors.primaryBlue
+                            else -> colors.surfaceMuted
                         }
+                    )
+                    .then(
+                        if (isDeleted) {
+                            Modifier.border(0.8.dp, colors.subtleSurfaceBorder, bubbleShape)
+                        } else {
+                            Modifier
+                        }
+                    )
+                    .padding(horizontal = 14.dp, vertical = 9.dp)
+            ) {
+                Column {
+                    CompositionLocalProvider(
+                        LocalLayoutDirection provides if (isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
+                    ) {
+                        Text(
+                            text = if (isDeleted) {
+                                stringResource(R.string.dm_message_deleted)
+                            } else {
+                                message.content
+                            },
+                            color = when {
+                                isDeleted -> colors.secondaryText
+                                isOwn -> Color.White
+                                else -> colors.primaryText
+                            },
+                            fontSize = if (isDeleted) 13.sp else 14.5.sp,
+                            lineHeight = if (isDeleted) 17.sp else 20.sp,
+                            fontStyle = if (isDeleted) FontStyle.Italic else FontStyle.Normal,
+                            textAlign = TextAlign.Start
+                        )
                     }
 
-                    if (message.content.isNotBlank()) {
+                    if (!isDeleted && message.editedAt != null) {
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = message.content,
-                            color = if (isOwn) Color.White else colors.primaryText,
-                            fontSize = 14.5.sp,
-                            fontWeight = FontWeight.Normal
+                            text = stringResource(R.string.dm_edited),
+                            color = if (isOwn) Color.White.copy(alpha = 0.72f) else colors.secondaryText,
+                            fontSize = 10.5.sp,
+                            modifier = Modifier.align(Alignment.End)
                         )
                     }
+                }
+
+                if (isMenuOpen && (isDeleted || message.content.isNotBlank())) {
+                    DmMessageActionPopup(items = menuItems, onDismiss = onDismissMenu)
                 }
             }
         }
@@ -949,7 +1144,7 @@ private fun DmMessageBubbleRow(
         } else if (message.localSendStatus == DmSendStatus.FAILED) {
             Text(
                 text = stringResource(R.string.dm_failed_to_send),
-                color = Color.Red,
+                color = colors.destructiveRed,
                 fontSize = 10.sp,
                 modifier = Modifier.padding(top = 2.dp, end = 4.dp)
             )
@@ -990,6 +1185,24 @@ private fun DmMessageBubbleRow(
     }
 }
 
+/**
+ * Anchored message action menu. Rendered as a child of the bubble/card so
+ * [BubblePopupPositionProvider] receives that surface's bounds as its anchor.
+ */
+@Composable
+private fun DmMessageActionPopup(
+    items: List<ActionMenuItem>,
+    onDismiss: () -> Unit
+) {
+    val strings = BuildXTheme.strings
+    Popup(
+        popupPositionProvider = remember(strings.isRtl) { BubblePopupPositionProvider(strings.isRtl) },
+        onDismissRequest = onDismiss
+    ) {
+        ActionMenuPopup(items = items)
+    }
+}
+
 @Composable
 private fun DmComposer(
     text: String,
@@ -1018,11 +1231,17 @@ private fun DmComposer(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp)
-            .animateContentSize()
+            .defaultMinSize(minHeight = 52.dp)
+            .animateContentSize(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            )
             .softShadow(colors.composerShadowColor, cornerRadius = 26.dp, blurRadius = 16.dp, offsetY = 3.dp)
             .clip(RoundedCornerShape(26.dp))
             .background(colors.cardBackground)
-            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(26.dp))
+            .border(1.dp, colors.subtleSurfaceBorder, RoundedCornerShape(26.dp))
             .padding(horizontal = 6.dp, vertical = 4.dp)
     ) {
         // Docked Reply Banner
@@ -1170,12 +1389,12 @@ private fun DmComposer(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Bottom
         ) {
-            // Start Icon: 40dp circular touch target with 22dp ic_emoji
+            // Start Icon: 42dp circular touch target with 22dp ic_emoji
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(42.dp)
                     .clip(CircleShape)
-                    .clickable { focusRequester.requestFocus() },
+                    .pressScaleClickable { focusRequester.requestFocus() },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -1197,7 +1416,7 @@ private fun DmComposer(
                     Text(
                         text = stringResource(R.string.dm_composer_placeholder),
                         color = colors.secondaryText,
-                        fontSize = 16.sp,
+                        fontSize = 16.5.sp,
                         fontWeight = FontWeight.Normal,
                         fontFamily = BuildXFontFamily,
                         modifier = Modifier.fillMaxWidth(),
@@ -1215,7 +1434,7 @@ private fun DmComposer(
                         textStyle = TextStyle(
                             fontFamily = BuildXFontFamily,
                             color = colors.primaryText,
-                            fontSize = 16.sp,
+                            fontSize = 16.5.sp,
                             lineHeight = 22.sp,
                             fontWeight = FontWeight.Normal,
                             textAlign = TextAlign.Start,
@@ -1230,12 +1449,12 @@ private fun DmComposer(
                 }
             }
 
-            // Paperclip Attachment Button: 40dp touch target with 22dp ic_paperclip
+            // Paperclip Attachment Button: 42dp touch target with 22dp ic_paperclip
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(42.dp)
                     .clip(CircleShape)
-                    .clickable(onClick = onPlusClick),
+                    .pressScaleClickable(onClick = onPlusClick),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -1255,7 +1474,7 @@ private fun DmComposer(
                     .size(42.dp)
                     .clip(CircleShape)
                     .background(colors.primaryBlue)
-                    .clickable {
+                    .pressScaleClickable {
                         if (canSend) {
                             onSendClick()
                         } else {

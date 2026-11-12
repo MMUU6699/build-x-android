@@ -138,4 +138,18 @@
     <string name="dm_delete_conv_message">سيتم حذف هذه المحادثة من صندوق الوارد لديك.</string>
     <string name="dm_mode_direct">مباشر</string>
     <string name="dm_mode_group">مجموعة</string>
+
+    <!-- Chat Info Sheet -->
+    <string name="dm_chat_info">معلومات المحادثة</string>
+    <string name="dm_shared_media">الوسائط المشتركة</string>
+    <string name="dm_no_shared_media">لا توجد وسائط مشتركة بعد</string>
+    <string name="dm_clear_history">مسح السجل</string>
+    <string name="dm_clear_history_title">مسح هذه المحادثة؟</string>
+    <string name="dm_clear_history_body">ستُحذف الرسائل من جانبك فقط، وسيحتفظ الطرف الآخر بنسخته.</string>
+    <string name="dm_report_user">الإبلاغ عن %1$s</string>
+    <string name="dm_block_user">حظر %1$s</string>
+    <string name="dm_change_group_photo">تغيير صورة المجموعة</string>
+    <string name="dm_members">الأعضاء</string>
+    <string name="dm_admin">مشرف</string>
+    <string name="dm_edited">تم التعديل</string>
 </resources>

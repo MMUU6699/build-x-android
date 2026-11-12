@@ -1011,6 +1011,26 @@ class BuildXRepository(val context: Context) {
         }
     }
 
+    /**
+     * Uploads a group conversation photo and returns its public URL.
+     * Unlike [uploadAvatar] this never mutates the caller's profile row; the
+     * URL is applied to the conversation through update_group_info.
+     */
+    suspend fun uploadGroupAvatar(conversationId: String, uri: Uri): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val uid = currentUserId() ?: error("Not authenticated")
+            val jpegBytes = AvatarImageProcessor.centerCropAndCompress(context, uri)
+                ?: error("Failed to process group photo")
+            val safeConvId = conversationId.replace(Regex("[^a-zA-Z0-9-]"), "_")
+            val objectPath = "$uid/group_${safeConvId}_${System.currentTimeMillis()}.jpg"
+            val bucket = supabase.storage.from("avatars")
+            bucket.upload(objectPath, jpegBytes) {
+                upsert = true
+            }
+            bucket.publicUrl(objectPath) + "?v=${System.currentTimeMillis()}"
+        }
+    }
+
     suspend fun removeAvatar(): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val uid = currentUserId() ?: error("Not authenticated")

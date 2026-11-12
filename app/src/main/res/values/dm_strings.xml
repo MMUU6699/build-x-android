@@ -138,4 +138,18 @@
     <string name="dm_delete_conv_message">This chat will be deleted from your inbox.</string>
     <string name="dm_mode_direct">Direct</string>
     <string name="dm_mode_group">Group</string>
+
+    <!-- Chat Info Sheet -->
+    <string name="dm_chat_info">Chat info</string>
+    <string name="dm_shared_media">Shared media</string>
+    <string name="dm_no_shared_media">No shared media yet</string>
+    <string name="dm_clear_history">Clear history</string>
+    <string name="dm_clear_history_title">Clear this chat?</string>
+    <string name="dm_clear_history_body">This removes the messages for you only. The other person keeps their copy.</string>
+    <string name="dm_report_user">Report %1$s</string>
+    <string name="dm_block_user">Block %1$s</string>
+    <string name="dm_change_group_photo">Change group photo</string>
+    <string name="dm_members">Members</string>
+    <string name="dm_admin">Admin</string>
+    <string name="dm_edited">Edited</string>
 </resources>

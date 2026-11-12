@@ -189,7 +189,9 @@ data class BuildXUiState(
     val isCreateGroupSheetOpen: Boolean = false,
     val groupCreationSelectedUserIds: Set<String> = emptySet(),
     val groupCreationTitle: String = "",
-    val isCreatingGroup: Boolean = false
+    val isCreatingGroup: Boolean = false,
+    val isGroupAvatarUploading: Boolean = false,
+    val isAddingGroupMembers: Boolean = false
 )
 
 class BuildXViewModel(application: Application) : AndroidViewModel(application) {
@@ -2675,6 +2677,39 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Loads the conversation detail (and its media history) without entering the
+     * room, so the inbox's Chat Info sheet can show real participants and media.
+     */
+    fun loadConversationInfo(conversationId: String) {
+        viewModelScope.launch {
+            repository.getDmConversationDetail(conversationId).onSuccess { detail ->
+                _uiState.update { it.copy(activeDmDetail = detail) }
+            }
+            repository.getDmMessages(conversationId).onSuccess { msgs ->
+                _uiState.update { it.copy(dmMessages = msgs) }
+            }
+        }
+    }
+
+    /**
+     * Search used by the group add-members picker. Unlike the inbox search this
+     * also runs for a blank query so the picker can show suggestions immediately.
+     */
+    fun searchPeopleForGroup(query: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isDmSearchPeopleLoading = true) }
+            repository.searchPeople(query.trim()).fold(
+                onSuccess = { people ->
+                    _uiState.update { it.copy(dmSearchPeopleResults = people, isDmSearchPeopleLoading = false) }
+                },
+                onFailure = {
+                    _uiState.update { it.copy(isDmSearchPeopleLoading = false) }
+                }
+            )
+        }
+    }
+
     fun leaveOrDeleteDmConversation(conversationId: String) {
         viewModelScope.launch {
             _uiState.update { state ->
@@ -3269,6 +3304,87 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 onSuccess = { showSnackbar("Group name updated") },
                 onFailure = { err -> showSnackbar(mapError(err)); loadDmInbox() }
             )
+        }
+    }
+
+    /**
+     * Uploads and applies a new group conversation photo, then refreshes both
+     * the open conversation detail and the inbox row so the new image appears
+     * immediately everywhere.
+     */
+    fun updateGroupAvatar(conversationId: String, uri: Uri) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isGroupAvatarUploading = true) }
+            val currentTitle = _uiState.value.activeDmDetail?.conversation?.title
+                ?: _uiState.value.dmInboxItems.firstOrNull { it.effectiveId == conversationId }?.title
+                ?: ""
+            repository.uploadGroupAvatar(conversationId, uri).fold(
+                onSuccess = { url ->
+                    repository.updateGroupInfo(conversationId, currentTitle, url).fold(
+                        onSuccess = {
+                            _uiState.update { state ->
+                                state.copy(
+                                    isGroupAvatarUploading = false,
+                                    activeDmDetail = state.activeDmDetail?.copy(
+                                        conversation = state.activeDmDetail?.conversation?.copy(avatarUrl = url)
+                                    ),
+                                    dmInboxItems = state.dmInboxItems.map { item ->
+                                        if (item.effectiveId == conversationId) item.copy(avatarUrl = url) else item
+                                    }
+                                )
+                            }
+                        },
+                        onFailure = { err ->
+                            _uiState.update { it.copy(isGroupAvatarUploading = false) }
+                            showSnackbar(mapError(err))
+                        }
+                    )
+                },
+                onFailure = { err ->
+                    _uiState.update { it.copy(isGroupAvatarUploading = false) }
+                    showSnackbar(mapError(err))
+                }
+            )
+        }
+    }
+
+    /**
+     * Adds members to a group and refreshes the open conversation detail so the
+     * participant list updates immediately.
+     */
+    fun addGroupMembers(conversationId: String, memberIds: List<String>) {
+        if (memberIds.isEmpty()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isAddingGroupMembers = true) }
+            repository.addGroupMembers(conversationId, memberIds).fold(
+                onSuccess = {
+                    repository.getDmConversationDetail(conversationId).onSuccess { detail ->
+                        _uiState.update {
+                            it.copy(
+                                activeDmDetail = detail,
+                                isAddingGroupMembers = false
+                            )
+                        }
+                    }.onFailure {
+                        _uiState.update { it.copy(isAddingGroupMembers = false) }
+                    }
+                    loadDmInbox()
+                },
+                onFailure = { err ->
+                    _uiState.update { it.copy(isAddingGroupMembers = false) }
+                    showSnackbar(mapError(err))
+                }
+            )
+        }
+    }
+
+    /**
+     * Lazily loads the most recent device photos for the DM attachment sheet.
+     */
+    fun loadRecentDeviceImagesForDm() {
+        viewModelScope.launch {
+            val recent = repository.queryRecentDeviceImages(limit = 12)
+            _uiState.update { it.copy(recentDeviceImages = recent) }
         }
     }
 

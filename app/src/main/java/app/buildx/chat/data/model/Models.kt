@@ -373,6 +373,7 @@ data class DmPeerIntro(
     @SerialName("display_name") val displayName: String? = null,
     @SerialName("avatar_url") val avatarUrl: String? = null,
     @SerialName("is_verified") val isVerified: Boolean = false,
+    val bio: String? = null,
     @SerialName("followers_count") val followersCount: Int = 0,
     @SerialName("following_count") val followingCount: Int = 0,
     @SerialName("posts_count") val postsCount: Int = 0,

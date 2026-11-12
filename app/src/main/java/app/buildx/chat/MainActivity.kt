@@ -983,6 +983,18 @@ fun BuildXRoot(
                             onLeaveGroup = { convId ->
                                 viewModel.leaveGroup(convId)
                             },
+                            onLoadGroupDetail = { convId ->
+                                viewModel.loadConversationInfo(convId)
+                            },
+                            onUpdateGroupAvatar = { convId, uri ->
+                                viewModel.updateGroupAvatar(convId, uri)
+                            },
+                            onAddGroupMembers = { convId, ids ->
+                                viewModel.addGroupMembers(convId, ids)
+                            },
+                            onSearchGroupMembers = { query ->
+                                viewModel.searchPeopleForGroup(query)
+                            },
                             currentUserId = viewModel.currentUserId()
                         )
                     }
@@ -1034,7 +1046,48 @@ fun BuildXRoot(
                                 }
                             },
                             onCancelVoiceDictation = { viewModel.cancelVoiceDictation() },
-                            onConfirmVoiceTranscript = { viewModel.confirmVoiceTranscript() }
+                            onConfirmVoiceTranscript = { viewModel.confirmVoiceTranscript() },
+                            onLoadRecentImages = { viewModel.loadRecentDeviceImagesForDm() },
+                            onUpdateGroupAvatar = { uri ->
+                                viewModel.updateGroupAvatar(conversationId, uri)
+                            },
+                            onRenameGroup = { title ->
+                                viewModel.updateGroupTitle(conversationId, title)
+                            },
+                            onAddGroupMembers = { ids ->
+                                viewModel.addGroupMembers(conversationId, ids)
+                            },
+                            onLeaveGroup = {
+                                viewModel.leaveGroup(conversationId)
+                                viewModel.leaveDmRoom()
+                                navController.popBackStack()
+                            },
+                            onClearHistory = {
+                                viewModel.deleteConversationForMe(conversationId)
+                                viewModel.leaveDmRoom()
+                                navController.popBackStack()
+                            },
+                            onBlockUser = {
+                                val peerId = uiState.activeDmDetail?.peerIntro?.id
+                                val handle = uiState.activeDmDetail?.peerIntro?.handle
+                                if (peerId != null) {
+                                    viewModel.blockUser(peerId, handle) {
+                                        viewModel.leaveDmRoom()
+                                        navController.popBackStack()
+                                    }
+                                }
+                            },
+                            onReportUser = { reason, details ->
+                                val peerId = uiState.activeDmDetail?.peerIntro?.id
+                                if (peerId != null) {
+                                    viewModel.submitReport(peerId, reason, details) {
+                                        viewModel.showSnackbar("Report submitted")
+                                    }
+                                }
+                            },
+                            onSearchPeopleForGroup = { query ->
+                                viewModel.searchPeopleForGroup(query)
+                            }
                         )
                     }
                 }
