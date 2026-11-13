@@ -1,6 +1,8 @@
 package app.buildx.chat.ui.chat
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -9,6 +11,8 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,6 +38,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -46,6 +52,7 @@ import app.buildx.chat.ui.components.ActionMenuItem
 import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.softShadow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -80,9 +87,13 @@ fun ChatMessageList(
     scrollToBottomFabBottomOffset: Dp = bottomContentPadding + 8.dp,
     jumpToMessageId: String? = null,
     onConsumeJumpToMessage: () -> Unit = {},
-    todayOverride: java.time.LocalDate? = null
+    todayOverride: java.time.LocalDate? = null,
+    onImageClick: (DmMessage) -> Unit = onMessageTap,
+    onMessageLongPress: (DmMessage) -> Unit = onMessageTap,
+    highlightedMessageId: String? = null
 ) {
     val coroutineScope = rememberCoroutineScope()
+    var transientHighlightId by remember { mutableStateOf<String?>(null) }
 
     val isAtBottom by remember {
         derivedStateOf {
@@ -143,14 +154,16 @@ fun ChatMessageList(
         }
     }
 
-    // Smoothly scroll to bottom when the user sends a message
+    // Scroll to bottom only when user isn't already pinned at bottom so item placement and send lift don't fight
     LaunchedEffect(justSentClientTempIds) {
         if (justSentClientTempIds.isNotEmpty() && items.isNotEmpty()) {
-            listState.animateScrollToItem(0)
+            if (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 24) {
+                listState.animateScrollToItem(0)
+            }
         }
     }
 
-    // Jump to a specific message requested by in-chat Search
+    // Jump to a specific message requested by in-chat Search or quoted reply tap
     LaunchedEffect(jumpToMessageId, items.size) {
         if (!jumpToMessageId.isNullOrBlank() && items.isNotEmpty()) {
             val targetIdx = items.indexOfFirst {
@@ -158,12 +171,48 @@ fun ChatMessageList(
             }
             if (targetIdx >= 0) {
                 listState.animateScrollToItem(targetIdx)
+                transientHighlightId = jumpToMessageId
                 onConsumeJumpToMessage()
             }
         }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    LaunchedEffect(transientHighlightId) {
+        val currentTarget = transientHighlightId ?: return@LaunchedEffect
+        delay(950L)
+        if (transientHighlightId == currentTarget) {
+            transientHighlightId = null
+        }
+    }
+
+    val hasActiveMenu = activeMenuMessageId != null
+    val menuBackdropColor by animateColorAsState(
+        targetValue = if (hasActiveMenu) BuildXTheme.colors.scrimColor else Color.Transparent,
+        animationSpec = tween(if (reduceMotion) 0 else 150),
+        label = "message_list_menu_scrim"
+    )
+    val nonMessageDimAlpha by animateFloatAsState(
+        targetValue = if (hasActiveMenu) 0.42f else 1f,
+        animationSpec = tween(if (reduceMotion) 0 else 150),
+        label = "non_message_dim_alpha"
+    )
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(menuBackdropColor)
+            .then(
+                if (hasActiveMenu) {
+                    Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onDismissMenu
+                    )
+                } else {
+                    Modifier
+                }
+            )
+    ) {
         if (isLoadingInitial && items.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -202,7 +251,7 @@ fun ChatMessageList(
                         Modifier
                     } else {
                         Modifier.animateItem(
-                            fadeInSpec = null,
+                            fadeInSpec = if (item is ChatListItem.MessageItem) null else tween(160),
                             placementSpec = spring(
                                 dampingRatio = ChatMotion.ItemPlacementDamping,
                                 stiffness = ChatMotion.ItemPlacementStiffness
@@ -232,6 +281,8 @@ fun ChatMessageList(
                                     newlyReceivedKeys = newlyReceivedKeys - item.stableKey
                                 },
                                 onBubbleTap = { onMessageTap(item.message) },
+                                onBubbleLongPress = { onMessageLongPress(item.message) },
+                                onImageClick = { onImageClick(item.message) },
                                 onRetryClick = { onRetryFailedMessage(item.message) },
                                 onReplyPreviewClick = { targetId ->
                                     val targetIdx = items.indexOfFirst {
@@ -240,11 +291,14 @@ fun ChatMessageList(
                                     if (targetIdx >= 0) {
                                         coroutineScope.launch {
                                             listState.animateScrollToItem(targetIdx)
+                                            transientHighlightId = targetId
                                         }
                                     }
                                 },
                                 onDismissMenu = onDismissMenu,
                                 onSwipeToReply = { onSwipeToReply(item.message) },
+                                isHighlighted = item.message.id == highlightedMessageId || item.message.id == transientHighlightId,
+                                isDimmed = hasActiveMenu,
                                 modifier = placementModifier
                             )
                         }
@@ -253,7 +307,7 @@ fun ChatMessageList(
                             ChatDateSeparatorChip(
                                 createdAtIso = item.createdAtIso,
                                 chatColors = chatColors,
-                                modifier = placementModifier,
+                                modifier = placementModifier.graphicsLayer { alpha = nonMessageDimAlpha },
                                 todayOverride = todayOverride
                             )
                         }
@@ -265,7 +319,7 @@ fun ChatMessageList(
                                 onViewProfileClick = {
                                     item.intro.handle?.takeIf { it.isNotBlank() }?.let(onViewProfileClick)
                                 },
-                                modifier = placementModifier
+                                modifier = placementModifier.graphicsLayer { alpha = nonMessageDimAlpha }
                             )
                         }
                     }

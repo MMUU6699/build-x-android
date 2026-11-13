@@ -21,10 +21,22 @@ data class UserProfile(
     @SerialName("theme_mode") val appearance: String = "automatic",
     @SerialName("country_code") val countryCode: String? = null,
     @SerialName("locale") val locale: String? = null,
+    @SerialName("default_wallpaper_id") val defaultWallpaperId: String = "default",
+    @SerialName("default_wallpaper_custom_url") val defaultWallpaperCustomUrl: String? = null,
+    @SerialName("default_wallpaper_dim") val defaultWallpaperDim: Float = 0f,
+    @SerialName("default_wallpaper_blur") val defaultWallpaperBlur: Boolean = false,
     @SerialName("created_at") val createdAt: String? = null
 ) {
     val effectiveUsername: String
         get() = username.ifBlank { handle.ifBlank { "user" } }
+
+    val defaultWallpaper: ChatWallpaperConfig
+        get() = ChatWallpaperConfig(
+            wallpaperId = defaultWallpaperId,
+            customUrl = defaultWallpaperCustomUrl,
+            dim = defaultWallpaperDim.coerceIn(0f, 0.70f),
+            blur = defaultWallpaperBlur
+        )
 }
 
 @Serializable
@@ -34,7 +46,10 @@ data class PublicNote(
     val content: String = "",
     @SerialName("created_at") val createdAt: String = "",
     @SerialName("expires_at") val expiresAt: String = "",
-    @SerialName("is_active") val isActive: Boolean = true
+    @SerialName("is_active") val isActive: Boolean = true,
+    @SerialName("likes_count") val likesCount: Int = 0,
+    @SerialName("is_liked_by_me") val isLikedByMe: Boolean = false,
+    val likers: List<DmPeerSummary> = emptyList()
 )
 
 @Serializable
@@ -389,7 +404,11 @@ data class DmConversationMetadata(
     @SerialName("avatar_url") val avatarUrl: String? = null,
     @SerialName("pinned_message_id") val pinnedMessageId: String? = null,
     @SerialName("created_by") val createdBy: String? = null,
-    @SerialName("created_at") val createdAt: String? = null
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("wallpaper_id") val wallpaperId: String = "default",
+    @SerialName("wallpaper_custom_url") val wallpaperCustomUrl: String? = null,
+    @SerialName("wallpaper_dim") val wallpaperDim: Float = 0f,
+    @SerialName("wallpaper_blur") val wallpaperBlur: Boolean = false
 )
 
 @Serializable
@@ -399,8 +418,32 @@ data class DmConversationDetail(
     @SerialName("pinned_message") val pinnedMessage: DmMessage? = null,
     val participants: List<DmParticipant> = emptyList(),
     @SerialName("peer_intro") val peerIntro: DmPeerIntro? = null,
+    @SerialName("wallpaper_id") val wallpaperId: String = "default",
+    @SerialName("wallpaper_custom_url") val wallpaperCustomUrl: String? = null,
+    @SerialName("wallpaper_dim") val wallpaperDim: Float = 0f,
+    @SerialName("wallpaper_blur") val wallpaperBlur: Boolean = false,
     val error: String? = null
-)
+) {
+    val resolvedWallpaper: ChatWallpaperConfig
+        get() {
+            val convId = conversation?.wallpaperId?.takeIf { it.isNotBlank() }
+            val effectiveId = wallpaperId.takeIf { it.isNotBlank() && it != "default" }
+                ?: convId
+                ?: wallpaperId.ifBlank { "default" }
+            val effectiveCustom = customUrlOrNull(wallpaperCustomUrl)
+                ?: customUrlOrNull(conversation?.wallpaperCustomUrl)
+            val effectiveDim = if (wallpaperDim > 0f) wallpaperDim else (conversation?.wallpaperDim ?: 0f)
+            val effectiveBlur = wallpaperBlur || (conversation?.wallpaperBlur == true)
+            return ChatWallpaperConfig(
+                wallpaperId = effectiveId,
+                customUrl = effectiveCustom,
+                dim = effectiveDim.coerceIn(0f, 0.70f),
+                blur = effectiveBlur
+            )
+        }
+
+    private fun customUrlOrNull(value: String?): String? = value?.takeIf { it.isNotBlank() }
+}
 
 @Serializable
 data class DmReplyPreview(
@@ -437,15 +480,56 @@ data class DmMessage(
     val localSendStatus: DmSendStatus = DmSendStatus.SENT
 )
 
+enum class WallpaperCategory {
+    SIGNATURE,
+    ROMANCE,
+    CINEMA,
+    NATURE,
+    ABSTRACT,
+    PATTERNS
+}
+
+@Serializable
+data class ChatWallpaperConfig(
+    @SerialName("wallpaper_id") val wallpaperId: String = "default",
+    @SerialName("wallpaper_custom_url") val customUrl: String? = null,
+    @SerialName("wallpaper_dim") val dim: Float = 0f,
+    @SerialName("wallpaper_blur") val blur: Boolean = false
+) {
+    val normalizedId: String
+        get() = wallpaperId.trim().lowercase().ifBlank { "default" }
+
+    val isDefault: Boolean
+        get() = normalizedId == "default" && customUrl.isNullOrBlank() && dim <= 0.001f
+
+    val isCustom: Boolean
+        get() = normalizedId == "custom" && !customUrl.isNullOrBlank()
+}
+
 @Serializable
 data class FeedNoteItem(
     val id: String,
+    @SerialName("note_id") val noteId: String? = null,
     @SerialName("user_id") val userId: String,
     val content: String,
     @SerialName("created_at") val createdAt: String,
     @SerialName("expires_at") val expiresAt: String,
     @SerialName("is_own") val isOwn: Boolean = false,
+    @SerialName("likes_count") val likesCount: Int = 0,
+    @SerialName("is_liked_by_me") val isLikedByMe: Boolean = false,
     val author: DmPeerSummary
+) {
+    val effectiveNoteId: String
+        get() = noteId?.takeIf { it.isNotBlank() } ?: id
+}
+
+@Serializable
+data class NoteLikeToggleResult(
+    val success: Boolean = false,
+    @SerialName("note_id") val noteId: String? = null,
+    val liked: Boolean = false,
+    @SerialName("likes_count") val likesCount: Int = 0,
+    val error: String? = null
 )
 
 

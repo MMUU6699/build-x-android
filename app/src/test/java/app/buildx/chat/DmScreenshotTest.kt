@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import app.buildx.chat.data.model.AppAppearance
+import app.buildx.chat.data.model.ChatWallpaperConfig
 import app.buildx.chat.data.model.DmConversationDetail
 import app.buildx.chat.data.model.DmConversationMetadata
 import app.buildx.chat.data.model.DmInboxItem
@@ -30,9 +31,11 @@ import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
 import app.buildx.chat.ui.chat.ChatComposer
 import app.buildx.chat.ui.chat.ChatInfoScreen
+import app.buildx.chat.ui.chat.ChatWallpaperPickerScreen
 import app.buildx.chat.ui.chat.toChatColors
 import app.buildx.chat.ui.screens.DmConversationScreen
 import app.buildx.chat.ui.screens.DmInboxScreen
+import app.buildx.chat.ui.screens.DmNoteReplySheet
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.viewmodel.BuildXUiState
 import app.buildx.chat.ui.viewmodel.DmFilterTab
@@ -804,5 +807,112 @@ class DmScreenshotTest {
             }
         }
         captureScreen("dm_composer_states.png")
+    }
+
+    @Test
+    fun capture_DmNoteReplySheet_Light() {
+        val sampleNote = note(
+            id = "note-sara-1",
+            author = saraSummary,
+            content = "Coffee by the sea before coding"
+        ).copy(
+            likesCount = 14,
+            isLikedByMe = true
+        )
+        composeRule.setContent {
+            BuildXTheme(appearance = AppAppearance.LIGHT) {
+                DmNoteReplySheet(
+                    note = sampleNote,
+                    onViewProfile = {},
+                    onToggleLike = {},
+                    onSendReply = {},
+                    onDismiss = {}
+                )
+            }
+        }
+        captureScreen("dm_note_reply_light.png")
+    }
+
+    @Test
+    fun capture_DmNoteReplySheet_Dark() {
+        val sampleNote = note(
+            id = "note-sara-2",
+            author = saraSummary,
+            content = "Hoola — let us ship Build X tonight"
+        ).copy(
+            likesCount = 8,
+            isLikedByMe = true
+        )
+        composeRule.setContent {
+            BuildXTheme(appearance = AppAppearance.DARK) {
+                DmNoteReplySheet(
+                    note = sampleNote,
+                    onViewProfile = {},
+                    onToggleLike = {},
+                    onSendReply = {},
+                    onDismiss = {}
+                )
+            }
+        }
+        captureScreen("dm_note_reply_dark.png")
+    }
+
+    @Test
+    fun capture_ChatWallpaperPicker_Light() {
+        composeRule.setContent {
+            BuildXTheme(appearance = AppAppearance.LIGHT) {
+                ChatWallpaperPickerScreen(
+                    initialConfig = ChatWallpaperConfig(
+                        wallpaperId = "sakura_breeze",
+                        dim = 0.15f,
+                        blur = false
+                    ),
+                    isSpecificChat = true,
+                    isApplying = false,
+                    onBackClick = {},
+                    onApplyWallpaper = { _, _, _ -> }
+                )
+            }
+        }
+        captureScreen("dm_wallpaper_picker_light.png")
+    }
+
+    @Test
+    fun capture_ChatWallpaperPicker_Dark() {
+        composeRule.setContent {
+            BuildXTheme(appearance = AppAppearance.DARK) {
+                ChatWallpaperPickerScreen(
+                    initialConfig = ChatWallpaperConfig(
+                        wallpaperId = "aurora_midnight",
+                        dim = 0.25f,
+                        blur = false
+                    ),
+                    isSpecificChat = true,
+                    isApplying = false,
+                    onBackClick = {},
+                    onApplyWallpaper = { _, _, _ -> }
+                )
+            }
+        }
+        captureScreen("dm_wallpaper_picker_dark.png")
+    }
+
+    @Test
+    fun capture_DmChat_Wallpaper_Dark() {
+        val state = chatState(directDetail, directMessages).copy(
+            activeDmWallpaper = ChatWallpaperConfig(
+                wallpaperId = "aurora_midnight",
+                dim = 0.15f,
+                blur = false
+            )
+        )
+        composeRule.setContent {
+            BuildXTheme(appearance = AppAppearance.DARK) {
+                Box(modifier = Modifier.fillMaxSize().background(BuildXTheme.colors.pageBackground)) {
+                    ConversationScreen(state)
+                }
+            }
+        }
+        captureScreen("dm_chat_wallpaper_dark.png")
     }
 }

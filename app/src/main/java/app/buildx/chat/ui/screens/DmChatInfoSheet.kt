@@ -1,9 +1,11 @@
 package app.buildx.chat.ui.screens
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -61,6 +63,7 @@ import app.buildx.chat.data.model.DmMessage
 import app.buildx.chat.data.model.DmParticipant
 import app.buildx.chat.data.model.PersonSearchResult
 import app.buildx.chat.data.model.ReportReason
+import app.buildx.chat.ui.chat.DmMediaViewerDialog
 import app.buildx.chat.ui.components.VerifiedBadge
 import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.theme.BuildXTheme
@@ -102,7 +105,8 @@ fun DmChatInfoSheet(
     onClearHistory: () -> Unit,
     onReport: (ReportReason, String?) -> Unit,
     onBlock: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onOpenWallpaper: (() -> Unit)? = null
 ) {
     val colors = BuildXTheme.colors
 
@@ -375,6 +379,17 @@ fun DmChatInfoSheet(
                 HorizontalDivider(color = colors.hairlineBorder)
 
                 Spacer(modifier = Modifier.height(6.dp))
+
+                if (onOpenWallpaper != null) {
+                    InfoRow(
+                        iconRes = R.drawable.ic_wallpaper,
+                        label = stringResource(R.string.dm_wallpaper),
+                        onClick = {
+                            onDismiss()
+                            onOpenWallpaper()
+                        }
+                    )
+                }
 
                 InfoRow(
                     iconRes = R.drawable.ic_trash,
@@ -1077,7 +1092,8 @@ private fun AddMembersPicker(
 @Composable
 private fun SharedMediaGrid(media: List<DmMessage>) {
     val colors = BuildXTheme.colors
-    var viewingMediaUrl by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    var viewingMediaMessage by remember { mutableStateOf<DmMessage?>(null) }
 
     if (media.isEmpty()) {
         Text(
@@ -1100,7 +1116,7 @@ private fun SharedMediaGrid(media: List<DmMessage>) {
                             .background(colors.surfaceMuted)
                             .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(12.dp))
                             .pressScaleClickable {
-                                viewingMediaUrl = message.attachmentPath
+                                viewingMediaMessage = message
                             }
                     ) {
                         AsyncImage(
@@ -1118,45 +1134,14 @@ private fun SharedMediaGrid(media: List<DmMessage>) {
         }
     }
 
-    if (viewingMediaUrl != null) {
-        Dialog(
-            onDismissRequest = { viewingMediaUrl = null },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.94f))
-                    .clickable { viewingMediaUrl = null },
-                contentAlignment = Alignment.Center
-            ) {
-                AsyncImage(
-                    model = viewingMediaUrl,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                )
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 40.dp, end = 20.dp)
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.2f))
-                        .clickable { viewingMediaUrl = null },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_close),
-                        contentDescription = "Close",
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
+    viewingMediaMessage?.let { mediaMessage ->
+        DmMediaViewerDialog(
+            message = mediaMessage,
+            onDismiss = { viewingMediaMessage = null },
+            onShowMessage = { msg ->
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
             }
-        }
+        )
     }
 }
 

@@ -13,7 +13,13 @@
     <string name="dm_share_a_note">Share a note</string>
     <string name="dm_leave_a_note">Note</string>
     <string name="dm_reply_to_note">Reply to %1$s\'s note</string>
+    <string name="dm_reply_to_note_hint">Reply to %1$s\'s note…</string>
     <string name="dm_replied_to_note">Replied to note</string>
+    <string name="dm_note_like">Like</string>
+    <string name="dm_note_unlike">Unlike</string>
+    <string name="dm_note_likes_singular">1 like</string>
+    <string name="dm_note_likes_plural">%1$d likes</string>
+    <string name="dm_note_liked_by_header">Liked by</string>
 
     <!-- Filter Chips -->
     <string name="dm_filter_all">All</string>
@@ -22,7 +28,7 @@
 
     <!-- Conversation Row Previews -->
     <string name="dm_no_messages_yet">No messages yet</string>
-    <string name="dm_you_prefix">You: </string>
+    <string name="dm_you_prefix">"You: "</string>
     <string name="dm_media_photo">Photo</string>
     <string name="dm_message_deleted">Message deleted</string>
     <string name="dm_time_now">now</string>
@@ -169,4 +175,54 @@
     <string name="dm_remove_member">Remove</string>
     <string name="dm_remove_member_title">Remove %1$s?</string>
     <string name="dm_remove_member_body">They will no longer be able to send or read new messages in this group.</string>
+    <string name="dm_create_group_with">Create a group chat with %1$s</string>
+    <string name="dm_info_profile_label">Profile</string>
+    <string name="dm_info_search_label">Search</string>
+    <string name="dm_info_mute_label">Mute</string>
+    <string name="dm_info_unmute_label">Unmute</string>
+    <string name="dm_info_pin_label">Pin</string>
+    <string name="dm_info_unpin_label">Unpin</string>
+    <string name="dm_info_add_label">Add</string>
+    <string name="dm_info_clear_history_subtitle">Remove messages for your account</string>
+    <string name="dm_info_report_account">Report account</string>
+    <string name="dm_info_report_account_subtitle">Flag spam, abuse, or safety concerns</string>
+    <string name="dm_info_block_name">Block %1$s</string>
+    <string name="dm_info_edit_group_name">Edit group name</string>
+    <string name="dm_info_leave_group_subtitle">Stop receiving messages from this group</string>
+    <string name="dm_no_shared_photos">No shared photos yet</string>
+    <string name="dm_save_to_gallery">Save to gallery</string>
+    <string name="dm_saved_to_gallery">Saved to gallery</string>
+    <string name="dm_save_failed">Could not save photo</string>
+    <string name="dm_viewer_close">Close photo</string>
+    <string name="dm_search_matches_counter">%1$d of %2$d</string>
+    <string name="dm_search_prev_match">Previous match</string>
+    <string name="dm_search_next_match">Next match</string>
+
+    <!-- Note Reply Redesign & Status -->
+    <string name="dm_note_active_now">Active</string>
+    <string name="dm_note_active_ago">Active · %1$s</string>
+
+    <!-- Chat Wallpapers -->
+    <string name="dm_wallpaper">Chat wallpaper</string>
+    <string name="dm_wallpaper_subtitle">Customize backdrop for this chat</string>
+    <string name="dm_wallpaper_default_subtitle">Set default background for chats</string>
+    <string name="dm_wallpaper_choose_gallery">Choose from Gallery</string>
+    <string name="dm_wallpaper_reset_default">Reset to default</string>
+    <string name="dm_wallpaper_dimming">Dimming</string>
+    <string name="dm_wallpaper_blur">Blur</string>
+    <string name="dm_wallpaper_apply_chat">Apply to this chat</string>
+    <string name="dm_wallpaper_apply_all">Apply to all chats</string>
+    <string name="dm_wallpaper_applied_chat">Chat wallpaper updated</string>
+    <string name="dm_wallpaper_applied_all">Default wallpaper applied to all chats</string>
+    <string name="dm_wallpaper_uploading">Uploading wallpaper…</string>
+    <string name="dm_wallpaper_custom_label">Custom Photo</string>
+    <string name="dm_wallpaper_cat_all">All</string>
+    <string name="dm_wallpaper_cat_signature">Signature</string>
+    <string name="dm_wallpaper_cat_romance">Romance</string>
+    <string name="dm_wallpaper_cat_cinema">Cinema</string>
+    <string name="dm_wallpaper_cat_nature">Nature</string>
+    <string name="dm_wallpaper_cat_abstract">Abstract</string>
+    <string name="dm_wallpaper_cat_patterns">Patterns</string>
+    <string name="dm_wallpaper_preview_incoming">Look how crisp this backdrop looks behind messages.</string>
+    <string name="dm_wallpaper_preview_outgoing">Smooth legibility in every lighting condition.</string>
 </resources>

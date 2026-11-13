@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -15,6 +16,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -22,8 +24,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -35,7 +39,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -52,9 +55,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -71,6 +77,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.sp
 import app.buildx.chat.R
 import app.buildx.chat.data.model.DmMessage
@@ -145,13 +153,22 @@ fun ChatMessageRow(
     onReplyPreviewClick: (String) -> Unit,
     onDismissMenu: () -> Unit,
     onSwipeToReply: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onImageClick: () -> Unit = onBubbleTap,
+    onBubbleLongPress: () -> Unit = onBubbleTap,
+    isHighlighted: Boolean = false,
+    isDimmed: Boolean = false
 ) {
     val topSpacing = if (item.isGroupedWithPrevious) {
         ChatDimens.IntraGroupSpacing
     } else {
         ChatDimens.InterGroupSpacing
     }
+    val rowDimAlpha by animateFloatAsState(
+        targetValue = if (isDimmed && !isMenuOpen) 0.42f else 1f,
+        animationSpec = tween(if (reduceMotion) 0 else 150),
+        label = "row_dim_alpha"
+    )
 
     ChatBubbleEntryWrapper(
         isOwn = item.isOwn,
@@ -162,6 +179,8 @@ fun ChatMessageRow(
         onConsumeNewlyReceived = onConsumeNewlyReceived,
         modifier = modifier
             .fillMaxWidth()
+            .zIndex(if (isMenuOpen) 10f else 0f)
+            .graphicsLayer { alpha = rowDimAlpha }
             .padding(top = topSpacing)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
@@ -207,9 +226,12 @@ fun ChatMessageRow(
                             item = item,
                             chatColors = chatColors,
                             isMenuOpen = isMenuOpen,
+                            isHighlighted = isHighlighted,
                             menuItems = menuItems,
                             reduceMotion = reduceMotion,
                             onBubbleTap = onBubbleTap,
+                            onBubbleLongPress = onBubbleLongPress,
+                            onImageClick = onImageClick,
                             onRetryClick = onRetryClick,
                             onReplyPreviewClick = onReplyPreviewClick,
                             onDismissMenu = onDismissMenu
@@ -284,7 +306,7 @@ private fun ChatBubbleEntryWrapper(
         val scale = ChatMotion.SendLiftStartScale + (1f - ChatMotion.SendLiftStartScale) * p
         val alphaVal = ChatMotion.SendLiftStartAlpha +
             (1f - ChatMotion.SendLiftStartAlpha) * (p * 1.35f).coerceAtMost(1f)
-        val originX = if (isOwn xor isScreenRtl) 0.85f else 0.15f
+        val originX = if (isOwn xor isScreenRtl) 1f else 0f
         Modifier.graphicsLayer {
             scaleX = scale
             scaleY = scale
@@ -315,9 +337,12 @@ private fun ChatBubbleContent(
     item: ChatListItem.MessageItem,
     chatColors: ChatColors,
     isMenuOpen: Boolean,
+    isHighlighted: Boolean,
     menuItems: List<ActionMenuItem>,
     reduceMotion: Boolean,
     onBubbleTap: () -> Unit,
+    onBubbleLongPress: () -> Unit,
+    onImageClick: () -> Unit,
     onRetryClick: () -> Unit,
     onReplyPreviewClick: (String) -> Unit,
     onDismissMenu: () -> Unit
@@ -325,6 +350,17 @@ private fun ChatBubbleContent(
     val msg = item.message
     val shape = chatBubbleShape(isOwn = item.isOwn, position = item.position)
     val hasAttachment = !msg.attachmentPath.isNullOrBlank() && !item.isDeleted
+    val haptic = LocalHapticFeedback.current
+    val focusScale by animateFloatAsState(
+        targetValue = if (isMenuOpen && !reduceMotion) 1.02f else 1f,
+        animationSpec = tween(if (reduceMotion) 0 else 150),
+        label = "bubble_focus_scale"
+    )
+    val highlightAlpha by animateFloatAsState(
+        targetValue = if (isHighlighted) 0.72f else 0f,
+        animationSpec = tween(if (reduceMotion) 0 else 240),
+        label = "bubble_jump_highlight"
+    )
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val maxBubbleWidth = maxWidth * ChatDimens.BubbleMaxWidthFraction
@@ -333,6 +369,10 @@ private fun ChatBubbleContent(
             horizontalAlignment = if (item.isOwn) Alignment.End else Alignment.Start,
             modifier = Modifier
                 .fillMaxWidth()
+                .graphicsLayer {
+                    scaleX = focusScale
+                    scaleY = focusScale
+                }
                 .animateContentSize(
                     animationSpec = if (reduceMotion) tween(0) else tween(ChatMotion.DeleteCrossfadeMs)
                 )
@@ -356,14 +396,41 @@ private fun ChatBubbleContent(
             }
 
             if (hasAttachment) {
+                val mediaShape = RoundedCornerShape(ChatDimens.MediaBubbleCorner)
+                val focusShadowModifier = if (isMenuOpen) {
+                    Modifier.softShadow(
+                        color = BuildXTheme.colors.scrimColor.copy(alpha = 0.45f),
+                        cornerRadius = ChatDimens.MediaBubbleCorner,
+                        blurRadius = 16.dp,
+                        offsetY = 4.dp
+                    )
+                } else {
+                    Modifier
+                }
                 Box(
                     modifier = Modifier
                         .widthIn(max = ChatDimens.MediaMaxWidth.coerceAtMost(maxBubbleWidth))
                         .heightIn(min = ChatDimens.MediaMinHeight, max = ChatDimens.MediaMaxHeight)
-                        .clip(RoundedCornerShape(ChatDimens.MediaBubbleCorner))
+                        .then(focusShadowModifier)
+                        .clip(mediaShape)
                         .background(chatColors.receivedBubbleBg)
-                        .border(0.8.dp, chatColors.headerGlassBorder, RoundedCornerShape(ChatDimens.MediaBubbleCorner))
-                        .clickable(onClick = onBubbleTap)
+                        .border(0.8.dp, chatColors.headerGlassBorder, mediaShape)
+                        .then(
+                            if (highlightAlpha > 0.01f) {
+                                Modifier.border(2.dp, BuildXTheme.colors.primaryBlue.copy(alpha = highlightAlpha), mediaShape)
+                            } else {
+                                Modifier
+                            }
+                        )
+                        .pointerInput(msg.id) {
+                            detectTapGestures(
+                                onTap = { onImageClick() },
+                                onLongPress = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onBubbleLongPress()
+                                }
+                            )
+                        }
                 ) {
                     AsyncImage(
                         model = msg.attachmentPath,
@@ -424,7 +491,15 @@ private fun ChatBubbleContent(
                                 .clip(shape)
                                 .background(chatColors.deletedPillBg)
                                 .border(0.8.dp, chatColors.deletedPillBorder, shape)
-                                .clickable(onClick = onBubbleTap)
+                                .pointerInput(msg.id) {
+                                    detectTapGestures(
+                                        onTap = { onBubbleTap() },
+                                        onLongPress = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            onBubbleLongPress()
+                                        }
+                                    )
+                                }
                                 .padding(
                                     horizontal = ChatDimens.BubbleHorizontalPadding,
                                     vertical = ChatDimens.BubbleVerticalPadding
@@ -445,18 +520,44 @@ private fun ChatBubbleContent(
                         val bubbleBg = if (item.isOwn) chatColors.sentBubbleBg else chatColors.receivedBubbleBg
                         val textColor = if (item.isOwn) chatColors.sentBubbleText else chatColors.receivedBubbleText
                         val metaTint = if (item.isOwn) chatColors.sentMetaText else chatColors.receivedMetaText
+                        val focusShadowModifier = if (isMenuOpen) {
+                            Modifier.softShadow(
+                                color = BuildXTheme.colors.scrimColor.copy(alpha = 0.45f),
+                                cornerRadius = ChatDimens.BubbleCornerLarge,
+                                blurRadius = 16.dp,
+                                offsetY = 4.dp
+                            )
+                        } else {
+                            Modifier
+                        }
 
                         Box(
                             modifier = Modifier
                                 .widthIn(max = maxBubbleWidth)
+                                .then(focusShadowModifier)
                                 .clip(shape)
                                 .background(bubbleBg)
-                                .clickable {
-                                    if (item.deliveryStatus == ChatDeliveryStatus.FAILED) {
-                                        onRetryClick()
+                                .then(
+                                    if (highlightAlpha > 0.01f) {
+                                        Modifier.border(2.dp, BuildXTheme.colors.primaryBlue.copy(alpha = highlightAlpha), shape)
                                     } else {
-                                        onBubbleTap()
+                                        Modifier
                                     }
+                                )
+                                .pointerInput(msg.id, item.deliveryStatus) {
+                                    detectTapGestures(
+                                        onTap = {
+                                            if (item.deliveryStatus == ChatDeliveryStatus.FAILED) {
+                                                onRetryClick()
+                                            } else {
+                                                onBubbleTap()
+                                            }
+                                        },
+                                        onLongPress = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            onBubbleLongPress()
+                                        }
+                                    )
                                 }
                                 .padding(
                                     horizontal = ChatDimens.BubbleHorizontalPadding,
@@ -557,12 +658,10 @@ private fun ChatInlineMetaTextBlock(
             CompositionLocalProvider(
                 LocalLayoutDirection provides if (isRtlContent) LayoutDirection.Rtl else LayoutDirection.Ltr
             ) {
-                SelectionContainer {
-                    Text(
-                        text = text,
-                        style = textStyle
-                    )
-                }
+                Text(
+                    text = text,
+                    style = textStyle
+                )
             }
             ChatBubbleMetaCluster(
                 timeText = timeText,
@@ -682,49 +781,55 @@ private fun ChatStatusIcon(
     failedTint: Color,
     reduceMotion: Boolean
 ) {
-    AnimatedContent(
-        targetState = status,
-        transitionSpec = {
-            if (reduceMotion) {
-                fadeIn(tween(0)) togetherWith fadeOut(tween(0))
+    Box(
+        modifier = Modifier.size(ChatDimens.StatusIconSize),
+        contentAlignment = Alignment.Center
+    ) {
+        AnimatedContent(
+            targetState = status,
+            contentAlignment = Alignment.Center,
+            transitionSpec = {
+                if (reduceMotion) {
+                    fadeIn(tween(0)) togetherWith fadeOut(tween(0))
+                } else {
+                    (fadeIn(tween(ChatMotion.StatusTransitionMs)) +
+                        scaleIn(tween(ChatMotion.StatusTransitionMs), initialScale = ChatMotion.StatusStartScale)) togetherWith
+                        (fadeOut(tween(ChatMotion.StatusTransitionMs)) +
+                            scaleOut(tween(ChatMotion.StatusTransitionMs), targetScale = ChatMotion.StatusStartScale))
+                }
+            },
+            label = "dm_status_icon"
+        ) { target ->
+            if (target == ChatDeliveryStatus.FAILED) {
+                Box(
+                    modifier = Modifier
+                        .size(ChatDimens.StatusIconSize)
+                        .clip(CircleShape)
+                        .background(Color.White),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_dm_error),
+                        contentDescription = target.name,
+                        tint = failedTint,
+                        modifier = Modifier.size(ChatDimens.StatusIconSize)
+                    )
+                }
             } else {
-                (fadeIn(tween(ChatMotion.StatusTransitionMs)) +
-                    scaleIn(tween(ChatMotion.StatusTransitionMs), initialScale = ChatMotion.StatusStartScale)) togetherWith
-                    (fadeOut(tween(ChatMotion.StatusTransitionMs)) +
-                        scaleOut(tween(ChatMotion.StatusTransitionMs), targetScale = ChatMotion.StatusStartScale))
-            }
-        },
-        label = "dm_status_icon"
-    ) { target ->
-        if (target == ChatDeliveryStatus.FAILED) {
-            Box(
-                modifier = Modifier
-                    .size(ChatDimens.StatusIconSize)
-                    .clip(CircleShape)
-                    .background(Color.White),
-                contentAlignment = Alignment.Center
-            ) {
+                val (iconRes, iconTint) = when (target) {
+                    ChatDeliveryStatus.SENDING -> R.drawable.ic_dm_clock to defaultTint
+                    ChatDeliveryStatus.SENT -> R.drawable.ic_check to defaultTint
+                    ChatDeliveryStatus.DELIVERED -> R.drawable.ic_dm_double_check to defaultTint
+                    ChatDeliveryStatus.READ -> R.drawable.ic_dm_double_check to readTint
+                    ChatDeliveryStatus.FAILED -> R.drawable.ic_dm_error to failedTint
+                }
                 Icon(
-                    painter = painterResource(id = R.drawable.ic_dm_error),
+                    painter = painterResource(id = iconRes),
                     contentDescription = target.name,
-                    tint = failedTint,
+                    tint = iconTint,
                     modifier = Modifier.size(ChatDimens.StatusIconSize)
                 )
             }
-        } else {
-            val (iconRes, iconTint) = when (target) {
-                ChatDeliveryStatus.SENDING -> R.drawable.ic_dm_clock to defaultTint
-                ChatDeliveryStatus.SENT -> R.drawable.ic_check to defaultTint
-                ChatDeliveryStatus.DELIVERED -> R.drawable.ic_dm_double_check to defaultTint
-                ChatDeliveryStatus.READ -> R.drawable.ic_dm_double_check to readTint
-                ChatDeliveryStatus.FAILED -> R.drawable.ic_dm_error to failedTint
-            }
-            Icon(
-                painter = painterResource(id = iconRes),
-                contentDescription = target.name,
-                tint = iconTint,
-                modifier = Modifier.size(ChatDimens.StatusIconSize)
-            )
         }
     }
 }
@@ -748,13 +853,15 @@ private fun ChatQuotedReplyCard(
             .clip(RoundedCornerShape(12.dp))
             .background(bg)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 10.dp, vertical = 7.dp)
+            .height(IntrinsicSize.Min),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
                 .width(3.dp)
-                .height(26.dp)
+                .fillMaxHeight()
+                .heightIn(min = 28.dp)
                 .clip(RoundedCornerShape(1.5.dp))
                 .background(bar)
         )
@@ -763,8 +870,9 @@ private fun ChatQuotedReplyCard(
             Text(
                 text = reply.senderDisplayName ?: stringResource(R.string.dm_you),
                 color = bar,
-                fontSize = 11.5.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
+                fontFamily = BuildXFontFamily,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -774,9 +882,15 @@ private fun ChatQuotedReplyCard(
                 } else {
                     reply.content.ifBlank { stringResource(R.string.dm_media_attachment) }
                 },
-                color = if (isOwn) primary.copy(alpha = 0.8f) else secondary,
-                fontSize = 12.sp,
-                maxLines = 1,
+                color = if (reply.isDeleted) secondary else if (isOwn) primary.copy(alpha = 0.85f) else secondary,
+                style = TextStyle(
+                    fontFamily = BuildXFontFamily,
+                    fontSize = 12.5.sp,
+                    lineHeight = 16.sp,
+                    fontStyle = if (reply.isDeleted) FontStyle.Italic else FontStyle.Normal,
+                    textDirection = TextDirection.Content
+                ),
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
         }
@@ -1119,7 +1233,12 @@ private fun ChatBubbleActionPopup(
     val strings = BuildXTheme.strings
     Popup(
         popupPositionProvider = remember(strings.isRtl) { BubblePopupPositionProvider(strings.isRtl) },
-        onDismissRequest = onDismiss
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(
+            focusable = true,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true
+        )
     ) {
         ActionMenuPopup(items = items)
     }

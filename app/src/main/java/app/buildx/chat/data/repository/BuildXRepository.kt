@@ -21,8 +21,10 @@ import app.buildx.chat.data.model.BlockedUser
 import app.buildx.chat.data.model.ChatMessage
 import app.buildx.chat.data.model.ChatMode
 import app.buildx.chat.data.model.ChatSseEvent
+import app.buildx.chat.data.model.ChatWallpaperConfig
 import app.buildx.chat.data.model.Conversation
 import app.buildx.chat.data.model.FollowUserItem
+import app.buildx.chat.data.model.NoteLikeToggleResult
 import app.buildx.chat.data.model.NotificationRow
 import app.buildx.chat.data.model.PersonSearchResult
 import app.buildx.chat.data.model.PublicNote
@@ -114,6 +116,80 @@ class BuildXRepository(val context: Context) {
 
     fun saveAppearanceLocal(appearance: AppAppearance) {
         prefs.edit().putString("app_appearance", appearance.dbValue).apply()
+    }
+
+    private val globalWallpaperPrefsKey = "global_chat_wallpaper_json"
+
+    private fun conversationWallpaperPrefsKey(conversationId: String): String =
+        "chat_wallpaper_$conversationId"
+
+    fun getSavedDefaultWallpaper(): ChatWallpaperConfig {
+        val raw = prefs.getString(globalWallpaperPrefsKey, null) ?: return ChatWallpaperConfig()
+        return runCatching {
+            val decoded = json.decodeFromString(ChatWallpaperConfig.serializer(), raw)
+            decoded.copy(
+                wallpaperId = decoded.normalizedId,
+                dim = decoded.dim.coerceIn(0f, 0.70f)
+            )
+        }.getOrDefault(ChatWallpaperConfig())
+    }
+
+    fun saveDefaultWallpaperLocal(config: ChatWallpaperConfig) {
+        val normalized = config.copy(
+            wallpaperId = config.normalizedId,
+            dim = config.dim.coerceIn(0f, 0.70f)
+        )
+        runCatching {
+            prefs.edit()
+                .putString(globalWallpaperPrefsKey, json.encodeToString(ChatWallpaperConfig.serializer(), normalized))
+                .apply()
+        }
+    }
+
+    fun getSavedConversationWallpaper(conversationId: String): ChatWallpaperConfig? {
+        if (conversationId.isBlank()) return null
+        val raw = prefs.getString(conversationWallpaperPrefsKey(conversationId), null) ?: return null
+        return runCatching {
+            val decoded = json.decodeFromString(ChatWallpaperConfig.serializer(), raw)
+            decoded.copy(
+                wallpaperId = decoded.normalizedId,
+                dim = decoded.dim.coerceIn(0f, 0.70f)
+            )
+        }.getOrNull()
+    }
+
+    fun saveConversationWallpaperLocal(conversationId: String, config: ChatWallpaperConfig?) {
+        if (conversationId.isBlank()) return
+        val editor = prefs.edit()
+        if (config == null) {
+            editor.remove(conversationWallpaperPrefsKey(conversationId)).apply()
+            return
+        }
+        val normalized = config.copy(
+            wallpaperId = config.normalizedId,
+            dim = config.dim.coerceIn(0f, 0.70f)
+        )
+        runCatching {
+            editor.putString(
+                conversationWallpaperPrefsKey(conversationId),
+                json.encodeToString(ChatWallpaperConfig.serializer(), normalized)
+            ).apply()
+        }
+    }
+
+    fun clearAllPerChatWallpapersLocal() {
+        val editor = prefs.edit()
+        prefs.all.keys
+            .filter { it.startsWith("chat_wallpaper_") }
+            .forEach { editor.remove(it) }
+        editor.apply()
+    }
+
+    fun getEffectiveWallpaperLocal(conversationId: String?): ChatWallpaperConfig {
+        if (!conversationId.isNullOrBlank()) {
+            getSavedConversationWallpaper(conversationId)?.let { return it }
+        }
+        return getSavedDefaultWallpaper()
     }
 
     val json = Json {
@@ -355,6 +431,10 @@ class BuildXRepository(val context: Context) {
             .decodeSingleOrNull<UserProfile>()
 
         if (existing != null) {
+            val remoteDefault = existing.defaultWallpaper
+            if (!remoteDefault.isDefault) {
+                saveDefaultWallpaperLocal(remoteDefault)
+            }
             existing
         } else {
             val cleanName = fallbackHandle.ifBlank { "user_${uid.take(6)}" }
@@ -1441,13 +1521,31 @@ class BuildXRepository(val context: Context) {
         }
     }
 
+    suspend fun toggleNoteLike(noteId: String): Result<NoteLikeToggleResult> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_note_id", noteId)
+            }
+            val response = supabase.postgrest.rpc("toggle_note_like", params)
+            val result = json.decodeFromString<NoteLikeToggleResult>(response.data)
+            if (!result.success) {
+                error(result.error ?: "Failed to update note like")
+            }
+            result
+        }
+    }
+
     suspend fun getDmConversationDetail(conversationId: String): Result<DmConversationDetail> = withContext(Dispatchers.IO) {
         runCatching {
             val params = buildJsonObject {
                 put("p_conversation_id", conversationId)
             }
             val response = supabase.postgrest.rpc("get_dm_conversation_detail", params)
-            json.decodeFromString<DmConversationDetail>(response.data)
+            val detail = json.decodeFromString<DmConversationDetail>(response.data)
+            if (response.data.contains("\"wallpaper_id\"")) {
+                saveConversationWallpaperLocal(conversationId, detail.resolvedWallpaper)
+            }
+            detail
         }
     }
 
@@ -1505,7 +1603,7 @@ class BuildXRepository(val context: Context) {
                     put("p_last_read_message_id", lastReadMessageId)
                 }
             }
-            val response = supabase.postgrest.rpc("mark_dm_read", params)
+            val response = supabase.postgrest.rpc("mark_conversation_read", params)
             val obj = json.decodeFromString<JsonObject>(response.data)
             obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
         }
@@ -1675,6 +1773,83 @@ class BuildXRepository(val context: Context) {
                 upsert = true
             }
             bucket.publicUrl(objectPath)
+        }
+    }
+
+    /**
+     * Processes a user-selected gallery image into a screen-optimized JPEG,
+     * caches a local copy under filesDir/wallpapers, and uploads it to the
+     * `attachments` bucket under `$uid/wallpapers/...`.
+     */
+    suspend fun uploadCustomWallpaper(
+        conversationId: String?,
+        uri: Uri
+    ): Result<Pair<String, String?>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val uid = currentUserId() ?: error("Not authenticated")
+            val jpegBytes = AvatarImageProcessor.processWallpaperJpeg(context, uri)
+                ?: error("Cannot process selected wallpaper image")
+            val localKey = conversationId?.takeIf { it.isNotBlank() }?.let { "chat_$it" } ?: "global"
+            val localPath = AvatarImageProcessor.saveWallpaperLocally(context, localKey, jpegBytes)
+            val objectPath = "$uid/wallpapers/${localKey}_${System.currentTimeMillis()}.jpg"
+            val bucket = supabase.storage.from("attachments")
+            bucket.upload(objectPath, jpegBytes) {
+                upsert = true
+            }
+            val remoteUrl = bucket.publicUrl(objectPath)
+            remoteUrl to localPath
+        }
+    }
+
+    /**
+     * Persists either a per-conversation wallpaper override or the user's global
+     * default wallpaper via `set_chat_wallpaper`, keeping local SharedPreferences
+     * synchronized for instantaneous cold-start rendering.
+     */
+    suspend fun setChatWallpaper(
+        conversationId: String?,
+        wallpaperId: String,
+        customUrl: String? = null,
+        dim: Float = 0f,
+        blur: Boolean = false,
+        applyToAll: Boolean = false
+    ): Result<ChatWallpaperConfig> = withContext(Dispatchers.IO) {
+        runCatching {
+            val normalizedId = wallpaperId.trim().lowercase().ifBlank { "default" }
+            val normalizedCustom = customUrl?.trim()?.takeIf { it.isNotBlank() }
+            val normalizedDim = dim.coerceIn(0f, 0.70f)
+            val params = buildJsonObject {
+                if (!conversationId.isNullOrBlank()) {
+                    put("p_conversation_id", conversationId)
+                }
+                put("p_wallpaper_id", normalizedId)
+                if (normalizedCustom != null) {
+                    put("p_custom_url", normalizedCustom)
+                }
+                put("p_dim", normalizedDim)
+                put("p_blur", blur)
+                put("p_apply_to_all", applyToAll)
+            }
+            val response = supabase.postgrest.rpc("set_chat_wallpaper", params)
+            val obj = json.decodeFromString<JsonObject>(response.data)
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            if (!success) {
+                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to update wallpaper")
+            }
+            val resolved = ChatWallpaperConfig(
+                wallpaperId = obj["wallpaper_id"]?.jsonPrimitive?.contentOrNull ?: normalizedId,
+                customUrl = obj["wallpaper_custom_url"]?.jsonPrimitive?.contentOrNull ?: normalizedCustom,
+                dim = obj["wallpaper_dim"]?.jsonPrimitive?.contentOrNull?.toFloatOrNull()?.coerceIn(0f, 0.70f)
+                    ?: normalizedDim,
+                blur = obj["wallpaper_blur"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: blur
+            )
+            if (applyToAll) {
+                saveDefaultWallpaperLocal(resolved)
+                clearAllPerChatWallpapersLocal()
+            } else if (!conversationId.isNullOrBlank()) {
+                saveConversationWallpaperLocal(conversationId, resolved)
+            }
+            resolved
         }
     }
 }

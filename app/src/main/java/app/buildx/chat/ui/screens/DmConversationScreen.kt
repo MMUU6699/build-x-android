@@ -9,10 +9,22 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,6 +33,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -31,21 +44,30 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -68,16 +90,22 @@ import app.buildx.chat.ui.chat.ChatHeader
 import app.buildx.chat.ui.chat.ChatListItem
 import app.buildx.chat.ui.chat.ChatMessageList
 import app.buildx.chat.ui.chat.ChatMessageMapper
+import app.buildx.chat.ui.chat.ChatWallpaperLayer
+import app.buildx.chat.ui.chat.DmMediaViewerDialog
 import app.buildx.chat.ui.chat.rememberReduceMotion
 import app.buildx.chat.ui.chat.toChatColors
 import app.buildx.chat.ui.components.ActionMenuItem
 import app.buildx.chat.ui.components.AttachmentSheetContent
+import app.buildx.chat.ui.components.SelectTextSheetContent
 import app.buildx.chat.ui.components.VoiceDictationBar
+import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.softShadow
 import app.buildx.chat.ui.viewmodel.BuildXUiState
+import kotlinx.coroutines.launch
 import java.io.File
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DmConversationScreen(
     uiState: BuildXUiState,
@@ -114,8 +142,12 @@ fun DmConversationScreen(
     onReportUser: (ReportReason, String?) -> Unit = { _, _ -> },
     onSearchPeopleForGroup: (String) -> Unit = {},
     onOpenChatInfo: (() -> Unit)? = null,
+    onOpenWallpaperClick: (() -> Unit)? = null,
     jumpToMessageId: String? = null,
     onConsumeJumpToMessage: () -> Unit = {},
+    openSearchRequested: Boolean = false,
+    onConsumeOpenSearchRequest: () -> Unit = {},
+    onShowSnackbar: (String) -> Unit = {},
     todayOverride: java.time.LocalDate? = null
 ) {
     val colors = BuildXTheme.colors
@@ -123,6 +155,7 @@ fun DmConversationScreen(
     val chatColors = remember(colors) { colors.toChatColors() }
     val reduceMotion = rememberReduceMotion()
     val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
 
     val detail = uiState.activeDmDetail
@@ -134,8 +167,23 @@ fun DmConversationScreen(
     var isAttachmentSheetOpen by remember { mutableStateOf(false) }
     var selectedAttachmentUris by remember { mutableStateOf<Set<String>>(emptySet()) }
     var activeMenuMessage by remember { mutableStateOf<DmMessage?>(null) }
+    var selectTextContent by remember { mutableStateOf<String?>(null) }
+    var viewerMessage by remember { mutableStateOf<DmMessage?>(null) }
     var isChatInfoSheetOpen by remember { mutableStateOf(false) }
     var pendingCameraUri by remember { mutableStateOf<android.net.Uri?>(null) }
+
+    var isSearchActive by remember { mutableStateOf(false) }
+    var inChatSearchQuery by remember { mutableStateOf("") }
+    var searchMatchIndex by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(openSearchRequested) {
+        if (openSearchRequested) {
+            isSearchActive = true
+            inChatSearchQuery = ""
+            searchMatchIndex = 0
+            onConsumeOpenSearchRequest()
+        }
+    }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 5)
@@ -186,12 +234,47 @@ fun DmConversationScreen(
         )
     }
 
+    val searchMatchMessageIds = remember(listItems, inChatSearchQuery) {
+        val trimmed = inChatSearchQuery.trim()
+        if (trimmed.isBlank()) {
+            emptyList()
+        } else {
+            listItems.mapNotNull { item ->
+                if (item is ChatListItem.MessageItem &&
+                    !item.isDeleted &&
+                    item.message.content.contains(trimmed, ignoreCase = true)
+                ) {
+                    item.message.id
+                } else {
+                    null
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(searchMatchMessageIds) {
+        searchMatchIndex = 0
+        val firstMatchId = searchMatchMessageIds.firstOrNull() ?: return@LaunchedEffect
+        val targetIdx = listItems.indexOfFirst {
+            it is ChatListItem.MessageItem && it.message.id == firstMatchId
+        }
+        if (targetIdx >= 0) {
+            listState.animateScrollToItem(targetIdx)
+        }
+    }
+
+    val activeSearchHighlightId = if (isSearchActive && searchMatchMessageIds.isNotEmpty()) {
+        searchMatchMessageIds.getOrNull(searchMatchIndex.coerceIn(0, searchMatchMessageIds.lastIndex))
+    } else {
+        null
+    }
+
     val membersCountTemplate = stringResource(R.string.dm_members_count, 0)
-    val headerState = remember(detail, currentUserId, membersCountTemplate) {
+    val headerState = remember(detail, currentUserId, membersCountTemplate, uiState.dmTypingUserIds) {
         ChatMessageMapper.mapHeaderState(
             detail = detail,
             currentUserId = currentUserId,
-            typingUserIds = emptySet(),
+            typingUserIds = uiState.dmTypingUserIds,
             membersFormat = { count ->
                 context.getString(R.string.dm_members_count, count)
             }
@@ -224,11 +307,24 @@ fun DmConversationScreen(
         }
     }
 
+    val chromeScrimColor by animateColorAsState(
+        targetValue = if (activeMenuMessage != null) colors.scrimColor else Color.Transparent,
+        animationSpec = tween(if (reduceMotion) 0 else 150),
+        label = "chrome_menu_scrim"
+    )
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(chatColors.pageBackground)
     ) {
+        ChatWallpaperLayer(
+            config = uiState.activeDmWallpaper,
+            isDark = colors.isDark,
+            fallbackBackground = chatColors.pageBackground,
+            modifier = Modifier.fillMaxSize()
+        )
+
         ChatMessageList(
             items = listItems,
             listState = listState,
@@ -246,6 +342,10 @@ fun DmConversationScreen(
                     onDismiss = { activeMenuMessage = null },
                     onReply = {
                         onReplyToMessage(item.message)
+                        activeMenuMessage = null
+                    },
+                    onSelectText = {
+                        selectTextContent = item.message.content
                         activeMenuMessage = null
                     },
                     onEdit = {
@@ -269,6 +369,8 @@ fun DmConversationScreen(
             onLoadOlderMessages = onLoadOlderMessages,
             onConsumeJustSent = onConsumeJustSent,
             onMessageTap = { msg -> activeMenuMessage = msg },
+            onMessageLongPress = { msg -> activeMenuMessage = msg },
+            onImageClick = { msg -> viewerMessage = msg },
             onRetryFailedMessage = onRetryFailedMessage,
             onDismissMenu = { activeMenuMessage = null },
             onSwipeToReply = onReplyToMessage,
@@ -278,18 +380,22 @@ fun DmConversationScreen(
             scrollToBottomFabBottomOffset = fabBottomOffset,
             jumpToMessageId = jumpToMessageId,
             onConsumeJumpToMessage = onConsumeJumpToMessage,
+            highlightedMessageId = activeSearchHighlightId,
             todayOverride = todayOverride,
             modifier = Modifier.fillMaxSize()
         )
 
+        val hasCustomWallpaper = !uiState.activeDmWallpaper.isDefault
+        val topGradientHighAlpha = if (hasCustomWallpaper) 0.72f else 0.96f
+        val topGradientLowAlpha = if (hasCustomWallpaper) 0.44f else 0.84f
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .background(
                     Brush.verticalGradient(
-                        0.0f to chatColors.pageBackground.copy(alpha = 0.96f),
-                        0.72f to chatColors.pageBackground.copy(alpha = 0.84f),
+                        0.0f to chatColors.pageBackground.copy(alpha = topGradientHighAlpha),
+                        0.72f to chatColors.pageBackground.copy(alpha = topGradientLowAlpha),
                         1.0f to Color.Transparent
                     )
                 )
@@ -310,9 +416,54 @@ fun DmConversationScreen(
                     }
                 },
                 onOpenInfoClick = openChatInfoAction,
+                onOpenWallpaperClick = onOpenWallpaperClick,
                 onTogglePinConversation = onTogglePinConversation,
                 onToggleMuteConversation = onToggleMuteConversation
             )
+
+            AnimatedVisibility(
+                visible = isSearchActive,
+                enter = expandVertically(tween(180)) + fadeIn(tween(160)),
+                exit = shrinkVertically(tween(160)) + fadeOut(tween(120))
+            ) {
+                DmInChatSearchBar(
+                    query = inChatSearchQuery,
+                    onQueryChange = { inChatSearchQuery = it },
+                    matchCount = searchMatchMessageIds.size,
+                    currentMatchIndex = searchMatchIndex,
+                    onPrevMatch = {
+                        if (searchMatchMessageIds.isNotEmpty()) {
+                            val nextIdx = (searchMatchIndex + 1) % searchMatchMessageIds.size
+                            searchMatchIndex = nextIdx
+                            val targetId = searchMatchMessageIds[nextIdx]
+                            val rowIdx = listItems.indexOfFirst {
+                                it is ChatListItem.MessageItem && it.message.id == targetId
+                            }
+                            if (rowIdx >= 0) {
+                                coroutineScope.launch { listState.animateScrollToItem(rowIdx) }
+                            }
+                        }
+                    },
+                    onNextMatch = {
+                        if (searchMatchMessageIds.isNotEmpty()) {
+                            val prevIdx = if (searchMatchIndex - 1 < 0) searchMatchMessageIds.lastIndex else searchMatchIndex - 1
+                            searchMatchIndex = prevIdx
+                            val targetId = searchMatchMessageIds[prevIdx]
+                            val rowIdx = listItems.indexOfFirst {
+                                it is ChatListItem.MessageItem && it.message.id == targetId
+                            }
+                            if (rowIdx >= 0) {
+                                coroutineScope.launch { listState.animateScrollToItem(rowIdx) }
+                            }
+                        }
+                    },
+                    onClose = {
+                        isSearchActive = false
+                        inChatSearchQuery = ""
+                        searchMatchIndex = 0
+                    }
+                )
+            }
 
             detail?.pinnedMessage?.let { pinned ->
                 DmPinnedMessageBanner(
@@ -322,13 +473,24 @@ fun DmConversationScreen(
             }
         }
 
-        Box(
+        Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .onSizeChanged { bottomOverlayHeightPx = it.height }
                 .windowInsetsPadding(navAndImeInsets)
         ) {
+            AnimatedVisibility(
+                visible = uiState.dmTypingUserIds.isNotEmpty() && !uiState.isVoiceListening,
+                enter = fadeIn(tween(150)) + expandVertically(tween(160)),
+                exit = fadeOut(tween(120)) + shrinkVertically(tween(140))
+            ) {
+                DmBottomTypingPill(
+                    chatColors = chatColors,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp)
+                )
+            }
+
             if (uiState.isVoiceListening) {
                 VoiceDictationBar(
                     amplitudes = uiState.voiceAmplitudes,
@@ -362,6 +524,33 @@ fun DmConversationScreen(
             }
         }
 
+        if (activeMenuMessage != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(with(density) { topOverlayHeightPx.toDp() }.coerceAtLeast(0.dp))
+                    .background(chromeScrimColor)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { activeMenuMessage = null }
+                    )
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(with(density) { bottomOverlayHeightPx.toDp() }.coerceAtLeast(0.dp))
+                    .background(chromeScrimColor)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { activeMenuMessage = null }
+                    )
+            )
+        }
+
         if (isChatInfoSheetOpen && detail != null) {
             DmChatInfoSheet(
                 detail = detail,
@@ -392,6 +581,7 @@ fun DmConversationScreen(
                 },
                 onReport = onReportUser,
                 onBlock = onBlockUser,
+                onOpenWallpaper = onOpenWallpaperClick,
                 onDismiss = { isChatInfoSheetOpen = false }
             )
         }
@@ -452,6 +642,39 @@ fun DmConversationScreen(
                 )
             }
         }
+        if (selectTextContent != null) {
+            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            ModalBottomSheet(
+                onDismissRequest = { selectTextContent = null },
+                sheetState = sheetState,
+                containerColor = colors.cardBackground,
+                scrimColor = colors.scrimColor,
+                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                dragHandle = {
+                    Box(
+                        modifier = Modifier
+                            .padding(top = 10.dp, bottom = 6.dp)
+                            .size(width = 32.dp, height = 4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(colors.grabHandle)
+                    )
+                }
+            ) {
+                SelectTextSheetContent(
+                    text = selectTextContent ?: "",
+                    onClose = { selectTextContent = null },
+                    modifier = Modifier.navigationBarsPadding()
+                )
+            }
+        }
+
+        viewerMessage?.let { mediaMsg ->
+            DmMediaViewerDialog(
+                message = mediaMsg,
+                onDismiss = { viewerMessage = null },
+                onShowMessage = onShowSnackbar
+            )
+        }
     }
 }
 
@@ -460,6 +683,7 @@ private fun buildDmMessageMenuItems(
     context: Context,
     onDismiss: () -> Unit,
     onReply: () -> Unit,
+    onSelectText: () -> Unit,
     onEdit: () -> Unit,
     onTogglePin: () -> Unit,
     onDelete: () -> Unit,
@@ -471,6 +695,7 @@ private fun buildDmMessageMenuItems(
 
     val replyLabel = context.getString(R.string.dm_action_reply)
     val copyLabel = context.getString(R.string.dm_action_copy)
+    val selectTextLabel = context.getString(R.string.action_select_text)
     val editLabel = context.getString(R.string.dm_action_edit)
     val pinLabel = context.getString(R.string.dm_pin_message)
     val forwardLabel = context.getString(R.string.dm_action_forward)
@@ -490,6 +715,13 @@ private fun buildDmMessageMenuItems(
                             cm.setPrimaryClip(ClipData.newPlainText("message", message.content))
                             onDismiss()
                         }
+                    )
+                )
+                add(
+                    ActionMenuItem(
+                        label = selectTextLabel,
+                        iconRes = R.drawable.ic_select_text,
+                        onClick = onSelectText
                     )
                 )
             }
@@ -532,6 +764,164 @@ private fun buildDmMessageMenuItems(
                 )
             )
         }
+    }
+}
+
+@Composable
+private fun DmInChatSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    matchCount: Int,
+    currentMatchIndex: Int,
+    onPrevMatch: () -> Unit,
+    onNextMatch: () -> Unit,
+    onClose: () -> Unit
+) {
+    val colors = BuildXTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .softShadow(colors.headerHaloShadowColor, cornerRadius = 18.dp, blurRadius = 10.dp, offsetY = 2.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(colors.cardBackground)
+            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(18.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            painter = painterResource(id = R.drawable.ic_search),
+            contentDescription = null,
+            tint = colors.secondaryText,
+            modifier = Modifier.size(17.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            if (query.isEmpty()) {
+                Text(
+                    text = stringResource(R.string.dm_search_chat_hint),
+                    color = colors.secondaryText,
+                    fontSize = 14.sp,
+                    fontFamily = BuildXFontFamily,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                textStyle = TextStyle(
+                    fontFamily = BuildXFontFamily,
+                    color = colors.primaryText,
+                    fontSize = 14.sp,
+                    textDirection = TextDirection.Content
+                ),
+                cursorBrush = SolidColor(colors.primaryBlue),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+        if (query.isNotBlank()) {
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = if (matchCount > 0) {
+                    stringResource(R.string.dm_search_matches_counter, currentMatchIndex + 1, matchCount)
+                } else {
+                    stringResource(R.string.dm_no_search_results)
+                },
+                color = colors.secondaryText,
+                fontSize = 12.sp,
+                fontFamily = BuildXFontFamily,
+                maxLines = 1
+            )
+        }
+        Spacer(modifier = Modifier.width(4.dp))
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .clickable(enabled = matchCount > 0, onClick = onPrevMatch),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_chevron_down),
+                contentDescription = stringResource(R.string.dm_search_prev_match),
+                tint = if (matchCount > 0) colors.primaryText else colors.secondaryText.copy(alpha = 0.35f),
+                modifier = Modifier
+                    .size(16.dp)
+                    .graphicsLayer { rotationZ = 180f }
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .clickable(enabled = matchCount > 0, onClick = onNextMatch),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_chevron_down),
+                contentDescription = stringResource(R.string.dm_search_next_match),
+                tint = if (matchCount > 0) colors.primaryText else colors.secondaryText.copy(alpha = 0.35f),
+                modifier = Modifier.size(16.dp)
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onClose),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_close),
+                contentDescription = stringResource(R.string.dm_cancel),
+                tint = colors.secondaryText,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun DmBottomTypingPill(
+    chatColors: app.buildx.chat.ui.chat.ChatColors,
+    modifier: Modifier = Modifier
+) {
+    val transition = rememberInfiniteTransition(label = "dm_typing_dots")
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(chatColors.receivedBubbleBg)
+            .border(0.7.dp, chatColors.headerGlassBorder, RoundedCornerShape(16.dp))
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        for (i in 0..2) {
+            val dotAlpha by transition.animateFloat(
+                initialValue = 0.3f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 480, delayMillis = i * 140),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "typing_dot_$i"
+            )
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(chatColors.receivedMetaText.copy(alpha = dotAlpha))
+            )
+        }
+        Spacer(modifier = Modifier.width(2.dp))
+        Text(
+            text = stringResource(R.string.dm_typing),
+            color = chatColors.receivedMetaText,
+            fontSize = 11.5.sp,
+            fontFamily = BuildXFontFamily
+        )
     }
 }
 

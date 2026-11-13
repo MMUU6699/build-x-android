@@ -19,6 +19,7 @@ import app.buildx.chat.data.model.BlockedUser
 import app.buildx.chat.data.model.ChatMessage
 import app.buildx.chat.data.model.ChatMode
 import app.buildx.chat.data.model.ChatSseEvent
+import app.buildx.chat.data.model.ChatWallpaperConfig
 import app.buildx.chat.data.model.Conversation
 import app.buildx.chat.data.model.FollowUserItem
 import app.buildx.chat.data.model.MainSurfacePane
@@ -49,9 +50,17 @@ import io.github.jan.supabase.auth.status.RefreshFailureCause
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.realtime.RealtimeChannel
+import io.github.jan.supabase.realtime.broadcast
+import io.github.jan.supabase.realtime.broadcastFlow
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.postgresChangeFlow
 import io.github.jan.supabase.realtime.PostgresAction
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -180,6 +189,7 @@ data class BuildXUiState(
     val activeDmConversationId: String? = null,
     val activeDmDetail: DmConversationDetail? = null,
     val dmMessages: List<DmMessage> = emptyList(),
+    val dmTypingUserIds: Set<String> = emptySet(),
     val isDmMessagesLoading: Boolean = false,
     val isDmPaginating: Boolean = false,
     val hasMoreDmMessages: Boolean = true,
@@ -196,7 +206,10 @@ data class BuildXUiState(
     val groupCreationTitle: String = "",
     val isCreatingGroup: Boolean = false,
     val isGroupAvatarUploading: Boolean = false,
-    val isAddingGroupMembers: Boolean = false
+    val isAddingGroupMembers: Boolean = false,
+    val defaultChatWallpaper: ChatWallpaperConfig = ChatWallpaperConfig(),
+    val activeDmWallpaper: ChatWallpaperConfig = ChatWallpaperConfig(),
+    val isWallpaperUpdating: Boolean = false
 )
 
 class BuildXViewModel(application: Application) : AndroidViewModel(application) {
@@ -254,6 +267,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     private var realtimeNotificationChannel: RealtimeChannel? = null
 
     init {
+        _uiState.update { it.copy(defaultChatWallpaper = repository.getSavedDefaultWallpaper()) }
         viewModelScope.launch {
             repository.supabase.auth.sessionStatus.collect { status ->
                 when (status) {
@@ -324,6 +338,12 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     cacheUserProfile(profile)
                     val resolvedAppearance = AppAppearance.fromDb(profile.appearance)
                     repository.saveAppearanceLocal(resolvedAppearance)
+                    val resolvedDefaultWallpaper = if (!profile.defaultWallpaper.isDefault) {
+                        repository.saveDefaultWallpaperLocal(profile.defaultWallpaper)
+                        profile.defaultWallpaper
+                    } else {
+                        repository.getSavedDefaultWallpaper()
+                    }
                     val showReview = profile.usernameReviewedAt == null
                     _uiState.update {
                         it.copy(
@@ -333,6 +353,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                             authError = null,
                             profile = profile,
                             appearance = resolvedAppearance,
+                            defaultChatWallpaper = resolvedDefaultWallpaper,
                             showUsernameReviewSheet = showReview
                         )
                     }
@@ -2425,6 +2446,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                         isNoteSheetOpen = false
                     )
                 }
+                loadInboxNotesTray()
                 showSnackbar("Note shared")
             }.onFailure { err ->
                 _uiState.update { it.copy(isCreatingNote = false) }
@@ -2436,12 +2458,19 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteNote() {
         viewModelScope.launch {
             repository.deleteNote().onSuccess {
-                _uiState.update {
-                    it.copy(
+                _uiState.update { state ->
+                    val currentUid = currentUserId()
+                    state.copy(
                         activeOwnNote = null,
+                        inboxNotesTray = if (currentUid != null) {
+                            state.inboxNotesTray.filterNot { it.userId == currentUid }
+                        } else {
+                            state.inboxNotesTray
+                        },
                         isNoteSheetOpen = false
                     )
                 }
+                loadInboxNotesTray()
                 showSnackbar("Note deleted")
             }.onFailure { err ->
                 showSnackbar(mapError(err))
@@ -2451,6 +2480,9 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     fun openNoteSheet(open: Boolean) {
         _uiState.update { it.copy(isNoteSheetOpen = open) }
+        if (open) {
+            loadActiveOwnNote()
+        }
     }
 
     fun loadFollowLists(targetUserId: String, tabIndex: Int) {
@@ -2602,6 +2634,10 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     private var dmInboxChannel: RealtimeChannel? = null
     private var dmRoomChannel: RealtimeChannel? = null
+    private var dmRoomSubscriptionJob: Job? = null
+    private val dmTypingExpiryJobs = mutableMapOf<String, Job>()
+    private var dmStopTypingJob: Job? = null
+    private var lastDmTypingSentAtMs: Long = 0L
 
     private fun subscribeToRealtimeInbox(uid: String) {
         viewModelScope.launch {
@@ -2688,8 +2724,16 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun loadConversationInfo(conversationId: String) {
         viewModelScope.launch {
+            _uiState.update {
+                it.copy(activeDmWallpaper = repository.getEffectiveWallpaperLocal(conversationId))
+            }
             repository.getDmConversationDetail(conversationId).onSuccess { detail ->
-                _uiState.update { it.copy(activeDmDetail = detail) }
+                _uiState.update {
+                    it.copy(
+                        activeDmDetail = detail,
+                        activeDmWallpaper = repository.getEffectiveWallpaperLocal(conversationId)
+                    )
+                }
             }
             repository.getDmMessages(conversationId).onSuccess { msgs ->
                 _uiState.update { it.copy(dmMessages = msgs) }
@@ -2717,6 +2761,9 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     fun leaveOrDeleteDmConversation(conversationId: String) {
         viewModelScope.launch {
+            val isGroup = _uiState.value.dmInboxItems
+                .firstOrNull { it.effectiveId == conversationId || it.id == conversationId }
+                ?.kind == "group"
             _uiState.update { state ->
                 val updated = state.dmInboxItems.filterNot { item -> item.effectiveId == conversationId }
                 state.copy(
@@ -2724,7 +2771,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     totalUnreadDmCount = updated.count { it.unreadCount > 0 || it.isMarkedUnread }
                 )
             }
-            repository.leaveOrDeleteDmConversation(conversationId).onFailure { err ->
+            repository.leaveOrDeleteDmConversation(conversationId, isGroup = isGroup).onFailure { err ->
                 showSnackbar(mapError(err))
                 loadDmInbox()
             }
@@ -2776,6 +2823,74 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun toggleNoteLike(noteId: String) {
+        viewModelScope.launch {
+            val previousItem = _uiState.value.inboxNotesTray.firstOrNull {
+                it.effectiveNoteId == noteId || it.id == noteId
+            }
+            val targetNoteId = previousItem?.effectiveNoteId ?: noteId
+            val previousOwn = _uiState.value.activeOwnNote?.takeIf { it.id == targetNoteId || it.id == noteId }
+
+            _uiState.update { state ->
+                val updatedTray = state.inboxNotesTray.map { item ->
+                    if (item.effectiveNoteId == targetNoteId || item.id == noteId) {
+                        val nextLiked = !item.isLikedByMe
+                        val nextCount = (item.likesCount + if (nextLiked) 1 else -1).coerceAtLeast(0)
+                        item.copy(isLikedByMe = nextLiked, likesCount = nextCount)
+                    } else {
+                        item
+                    }
+                }
+                val updatedOwn = state.activeOwnNote?.let { own ->
+                    if (own.id == targetNoteId || own.id == noteId) {
+                        val nextLiked = !own.isLikedByMe
+                        val nextCount = (own.likesCount + if (nextLiked) 1 else -1).coerceAtLeast(0)
+                        own.copy(isLikedByMe = nextLiked, likesCount = nextCount)
+                    } else own
+                }
+                state.copy(inboxNotesTray = updatedTray, activeOwnNote = updatedOwn)
+            }
+
+            repository.toggleNoteLike(targetNoteId).fold(
+                onSuccess = { result ->
+                    val confirmedId = result.noteId?.takeIf { it.isNotBlank() } ?: targetNoteId
+                    _uiState.update { state ->
+                        val syncedTray = state.inboxNotesTray.map { item ->
+                            if (item.effectiveNoteId == confirmedId || item.effectiveNoteId == targetNoteId || item.id == noteId) {
+                                item.copy(isLikedByMe = result.liked, likesCount = result.likesCount)
+                            } else {
+                                item
+                            }
+                        }
+                        val syncedOwn = state.activeOwnNote?.let { own ->
+                            if (own.id == confirmedId || own.id == targetNoteId || own.id == noteId) {
+                                own.copy(isLikedByMe = result.liked, likesCount = result.likesCount)
+                            } else own
+                        }
+                        state.copy(inboxNotesTray = syncedTray, activeOwnNote = syncedOwn)
+                    }
+                    if (_uiState.value.activeOwnNote?.id == confirmedId || _uiState.value.activeOwnNote?.id == targetNoteId) {
+                        loadActiveOwnNote()
+                    }
+                },
+                onFailure = { err ->
+                    _uiState.update { state ->
+                        val revertedTray = if (previousItem != null) {
+                            state.inboxNotesTray.map {
+                                if (it.effectiveNoteId == targetNoteId || it.id == noteId) previousItem else it
+                            }
+                        } else {
+                            state.inboxNotesTray
+                        }
+                        val revertedOwn = previousOwn ?: state.activeOwnNote
+                        state.copy(inboxNotesTray = revertedTray, activeOwnNote = revertedOwn)
+                    }
+                    showSnackbar(mapError(err))
+                }
+            )
+        }
+    }
+
     fun openDirectChatWithUser(targetUserId: String, onResolved: (String) -> Unit) {
         viewModelScope.launch {
             repository.getOrCreateDirectConversation(targetUserId).fold(
@@ -2790,11 +2905,14 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun openCreateGroupSheet(open: Boolean) {
+    fun openCreateGroupSheet(
+        open: Boolean,
+        preselectedUserIds: Set<String> = emptySet()
+    ) {
         _uiState.update {
             it.copy(
                 isCreateGroupSheetOpen = open,
-                groupCreationSelectedUserIds = emptySet(),
+                groupCreationSelectedUserIds = if (open) preselectedUserIds else emptySet(),
                 groupCreationTitle = ""
             )
         }
@@ -2854,6 +2972,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             currentState.activeDmConversationId == conversationId && currentState.dmMessages.isNotEmpty()
 
         viewModelScope.launch {
+            val cachedWallpaper = repository.getEffectiveWallpaperLocal(conversationId)
             if (!isSameConversationAlreadyLoaded) {
                 val savedDraft = currentState.dmDraftsByConversation[conversationId]
                     ?: repository.prefs.getString("dm_draft_$conversationId", "")
@@ -2865,6 +2984,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                         isDmPaginating = false,
                         hasMoreDmMessages = true,
                         activeDmDetail = null,
+                        activeDmWallpaper = cachedWallpaper,
                         dmMessages = emptyList(),
                         dmComposerText = savedDraft,
                         dmStagedAttachments = emptyList(),
@@ -2873,10 +2993,17 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                         activeDmMessageMenuId = null
                     )
                 }
+            } else {
+                _uiState.update { it.copy(activeDmWallpaper = cachedWallpaper) }
             }
 
             repository.getDmConversationDetail(conversationId).onSuccess { detail ->
-                _uiState.update { it.copy(activeDmDetail = detail) }
+                _uiState.update {
+                    it.copy(
+                        activeDmDetail = detail,
+                        activeDmWallpaper = repository.getEffectiveWallpaperLocal(conversationId)
+                    )
+                }
             }
 
             repository.getDmMessages(conversationId, limit = 50).fold(
@@ -2941,7 +3068,14 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun subscribeToDmRoom(conversationId: String) {
-        viewModelScope.launch {
+        dmRoomSubscriptionJob?.cancel()
+        dmTypingExpiryJobs.values.forEach { it.cancel() }
+        dmTypingExpiryJobs.clear()
+        dmStopTypingJob?.cancel()
+        lastDmTypingSentAtMs = 0L
+        _uiState.update { it.copy(dmTypingUserIds = emptySet()) }
+
+        dmRoomSubscriptionJob = viewModelScope.launch {
             try {
                 dmRoomChannel?.unsubscribe()
                 val channel = repository.supabase.channel("dm-room-$conversationId")
@@ -2960,6 +3094,8 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     table = "dm_conversations"
                     filter("id", FilterOperator.EQ, conversationId)
                 }
+
+                val typingFlow = channel.broadcastFlow<JsonObject>(event = "typing")
 
                 dmRoomChannel = channel
                 channel.subscribe()
@@ -2985,7 +3121,12 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 launch {
                     partFlow.collect {
                         repository.getDmConversationDetail(conversationId).onSuccess { detail ->
-                            _uiState.update { it.copy(activeDmDetail = detail) }
+                            _uiState.update {
+                                it.copy(
+                                    activeDmDetail = detail,
+                                    activeDmWallpaper = repository.getEffectiveWallpaperLocal(conversationId)
+                                )
+                            }
                         }
                     }
                 }
@@ -2993,7 +3134,35 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 launch {
                     convFlow.collect {
                         repository.getDmConversationDetail(conversationId).onSuccess { detail ->
-                            _uiState.update { it.copy(activeDmDetail = detail) }
+                            _uiState.update {
+                                it.copy(
+                                    activeDmDetail = detail,
+                                    activeDmWallpaper = repository.getEffectiveWallpaperLocal(conversationId)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                launch {
+                    typingFlow.collect { payload ->
+                        val senderId = payload["user_id"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                        val targetConv = payload["conversation_id"]?.jsonPrimitive?.contentOrNull
+                        if (!targetConv.isNullOrBlank() && targetConv != conversationId) return@collect
+                        val myUid = repository.currentUserId()
+                        if (senderId.isBlank() || senderId == myUid) return@collect
+                        val isTyping = payload["is_typing"]?.jsonPrimitive?.booleanOrNull ?: true
+
+                        dmTypingExpiryJobs.remove(senderId)?.cancel()
+                        if (!isTyping) {
+                            _uiState.update { it.copy(dmTypingUserIds = it.dmTypingUserIds - senderId) }
+                        } else {
+                            _uiState.update { it.copy(dmTypingUserIds = it.dmTypingUserIds + senderId) }
+                            dmTypingExpiryJobs[senderId] = launch {
+                                delay(3600L)
+                                _uiState.update { it.copy(dmTypingUserIds = it.dmTypingUserIds - senderId) }
+                                dmTypingExpiryJobs.remove(senderId)
+                            }
                         }
                     }
                 }
@@ -3001,9 +3170,43 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun leaveDmRoom() {
+    private fun sendDmTypingBroadcast(conversationId: String, isTyping: Boolean) {
+        val channel = dmRoomChannel ?: return
+        val uid = repository.currentUserId() ?: return
         viewModelScope.launch {
             try {
+                channel.broadcast(
+                    event = "typing",
+                    message = buildJsonObject {
+                        put("user_id", uid)
+                        put("conversation_id", conversationId)
+                        put("is_typing", isTyping)
+                    }
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun leaveDmRoom() {
+        val prevConvId = _uiState.value.activeDmConversationId
+        dmStopTypingJob?.cancel()
+        dmTypingExpiryJobs.values.forEach { it.cancel() }
+        dmTypingExpiryJobs.clear()
+        dmRoomSubscriptionJob?.cancel()
+        dmRoomSubscriptionJob = null
+        lastDmTypingSentAtMs = 0L
+        viewModelScope.launch {
+            try {
+                if (!prevConvId.isNullOrBlank()) {
+                    dmRoomChannel?.broadcast(
+                        event = "typing",
+                        message = buildJsonObject {
+                            put("user_id", repository.currentUserId() ?: "")
+                            put("conversation_id", prevConvId)
+                            put("is_typing", false)
+                        }
+                    )
+                }
                 dmRoomChannel?.unsubscribe()
             } catch (_: Exception) {}
             dmRoomChannel = null
@@ -3011,7 +3214,9 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 it.copy(
                     activeDmConversationId = null,
                     activeDmDetail = null,
+                    activeDmWallpaper = it.defaultChatWallpaper,
                     dmMessages = emptyList(),
+                    dmTypingUserIds = emptySet(),
                     dmComposerText = "",
                     dmStagedAttachments = emptyList(),
                     dmReplyingToMessage = null,
@@ -3028,6 +3233,22 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         val convId = _uiState.value.activeDmConversationId
         if (!convId.isNullOrBlank()) {
             repository.prefs.edit().putString("dm_draft_$convId", text).apply()
+            dmStopTypingJob?.cancel()
+            if (text.isNotBlank()) {
+                val now = System.currentTimeMillis()
+                if (now - lastDmTypingSentAtMs >= 1800L) {
+                    lastDmTypingSentAtMs = now
+                    sendDmTypingBroadcast(convId, isTyping = true)
+                }
+                dmStopTypingJob = viewModelScope.launch {
+                    delay(2600L)
+                    lastDmTypingSentAtMs = 0L
+                    sendDmTypingBroadcast(convId, isTyping = false)
+                }
+            } else if (lastDmTypingSentAtMs != 0L) {
+                lastDmTypingSentAtMs = 0L
+                sendDmTypingBroadcast(convId, isTyping = false)
+            }
         }
         _uiState.update { state ->
             val updatedDrafts = if (!convId.isNullOrBlank()) {
@@ -3108,6 +3329,12 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         if (text.isBlank() && staged.isEmpty()) return
+
+        dmStopTypingJob?.cancel()
+        if (lastDmTypingSentAtMs != 0L) {
+            lastDmTypingSentAtMs = 0L
+            sendDmTypingBroadcast(conversationId, isTyping = false)
+        }
 
         val myProfile = state.profile
         val clientTempId = UUID.randomUUID().toString()
@@ -3410,6 +3637,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             else -> null
         }
         val isMuted = untilIso != null
+        val currentUserId = repository.currentUserId()
         viewModelScope.launch {
             _uiState.update { state ->
                 val updated = state.dmInboxItems.map { item ->
@@ -3417,7 +3645,16 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                         item.copy(isMuted = isMuted, mutedUntil = untilIso)
                     } else item
                 }
-                state.copy(dmInboxItems = updated)
+                val updatedDetail = state.activeDmDetail?.let { d ->
+                    if (d.conversation?.id == conversationId) {
+                        d.copy(
+                            participants = d.participants.map { p ->
+                                if (p.userId == currentUserId) p.copy(isMuted = isMuted) else p
+                            }
+                        )
+                    } else d
+                }
+                state.copy(dmInboxItems = updated, activeDmDetail = updatedDetail)
             }
             repository.setConversationMute(conversationId, untilIso).fold(
                 onSuccess = {
@@ -3575,6 +3812,93 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             val recent = repository.queryRecentDeviceImages(limit = 12)
             _uiState.update { it.copy(recentDeviceImages = recent) }
+        }
+    }
+
+    /**
+     * Resolves an effective wallpaper for a chat room (or falls back to global default).
+     */
+    fun getEffectiveWallpaper(conversationId: String?): ChatWallpaperConfig =
+        repository.getEffectiveWallpaperLocal(conversationId)
+
+    /**
+     * Uploads a custom image if provided and persists wallpaper preferences via
+     * `set_chat_wallpaper`, updating UI state only when the backend RPC succeeds.
+     */
+    fun updateChatWallpaper(
+        conversationId: String?,
+        pickedImageUri: Uri?,
+        config: ChatWallpaperConfig,
+        applyToAll: Boolean,
+        onComplete: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isWallpaperUpdating = true) }
+            var finalConfig = config.copy(
+                wallpaperId = config.normalizedId,
+                dim = config.dim.coerceIn(0f, 0.70f)
+            )
+            if (pickedImageUri != null) {
+                val uploadResult = repository.uploadCustomWallpaper(conversationId, pickedImageUri)
+                if (uploadResult.isFailure) {
+                    _uiState.update { it.copy(isWallpaperUpdating = false) }
+                    uploadResult.exceptionOrNull()?.let { showSnackbar(mapError(it)) }
+                    return@launch
+                }
+                val (remoteUrl, _) = uploadResult.getOrThrow()
+                finalConfig = finalConfig.copy(
+                    wallpaperId = "custom",
+                    customUrl = remoteUrl
+                )
+            }
+
+            val targetConvId = conversationId?.takeIf { it.isNotBlank() } ?: _uiState.value.activeDmConversationId
+            val effectiveApplyAll = applyToAll || targetConvId.isNullOrBlank()
+            repository.setChatWallpaper(
+                conversationId = targetConvId,
+                wallpaperId = finalConfig.normalizedId,
+                customUrl = finalConfig.customUrl,
+                dim = finalConfig.dim,
+                blur = finalConfig.blur,
+                applyToAll = effectiveApplyAll
+            ).fold(
+                onSuccess = { saved ->
+                    _uiState.update { state ->
+                        val nextDefault = if (effectiveApplyAll) saved else state.defaultChatWallpaper
+                        val nextActive = if (effectiveApplyAll || targetConvId == state.activeDmConversationId) {
+                            saved
+                        } else {
+                            state.activeDmWallpaper
+                        }
+                        state.copy(
+                            defaultChatWallpaper = nextDefault,
+                            activeDmWallpaper = nextActive,
+                            activeDmDetail = state.activeDmDetail?.let { d ->
+                                if (d.conversation?.id == targetConvId || effectiveApplyAll) {
+                                    d.copy(
+                                        wallpaperId = saved.normalizedId,
+                                        wallpaperCustomUrl = saved.customUrl,
+                                        wallpaperDim = saved.dim,
+                                        wallpaperBlur = saved.blur
+                                    )
+                                } else d
+                            },
+                            isWallpaperUpdating = false
+                        )
+                    }
+                    val msgRes = if (effectiveApplyAll) {
+                        R.string.dm_wallpaper_applied_all
+                    } else {
+                        R.string.dm_wallpaper_applied_chat
+                    }
+                    showSnackbar(getApplication<Application>().getString(msgRes))
+                    onComplete()
+                },
+                onFailure = { err ->
+                    _uiState.update { it.copy(isWallpaperUpdating = false) }
+                    showSnackbar(mapError(err))
+                }
+            )
         }
     }
 

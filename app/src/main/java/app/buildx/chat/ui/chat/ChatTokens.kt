@@ -203,9 +203,10 @@ object ChatDimens {
     val ComposerOuterPaddingBottom: Dp = 8.dp
     val ComposerMinHeight: Dp = 50.dp
     val ComposerCorner: Dp = 26.dp
+    val ComposerExpandedCorner: Dp = 22.dp
     val ComposerBorderWidth: Dp = 1.dp
     val ComposerAttachButtonSize: Dp = 40.dp
-    val ComposerActionSize: Dp = 44.dp
+    val ComposerActionSize: Dp = 42.dp
     val ComposerTextMaxLines: Int = 6
     val ComposerTextMaxHeight: Dp = 136.dp
     val ComposerShadowBlur: Dp = 14.dp
@@ -224,15 +225,15 @@ object ChatDimens {
  */
 object ChatMotion {
     // Bubble send transition ("composer -> bubble" lift)
-    const val SendLiftStartScale: Float = 0.72f
-    const val SendLiftStartAlpha: Float = 0.35f
-    val SendLiftStartTranslationY: Dp = 44.dp
-    const val SendLiftDampingRatio: Float = 0.80f
+    const val SendLiftStartScale: Float = 0.86f
+    const val SendLiftStartAlpha: Float = 0.20f
+    val SendLiftStartTranslationY: Dp = 36.dp
+    const val SendLiftDampingRatio: Float = 0.82f
     const val SendLiftStiffness: Float = Spring.StiffnessMediumLow
     const val SendFadeDurationMs: Int = 200
 
     // List item placement & receive entry
-    const val ItemPlacementDamping: Float = 0.84f
+    const val ItemPlacementDamping: Float = 0.85f
     const val ItemPlacementStiffness: Float = Spring.StiffnessMediumLow
     const val ReceiveEntryDurationMs: Int = 220
     const val ReceiveEntryStartScale: Float = 0.96f

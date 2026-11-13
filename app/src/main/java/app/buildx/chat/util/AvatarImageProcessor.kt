@@ -232,4 +232,59 @@ object AvatarImageProcessor {
             null
         }
     }
+
+    /**
+     * Processes a user-selected gallery image into an EXIF-oriented, screen-friendly
+     * JPEG byte array (longest edge <= 1920px, <= ~1.4 MB) for chat wallpapers.
+     */
+    fun processWallpaperJpeg(
+        context: Context,
+        uri: Uri,
+        maxEdge: Int = 1920,
+        quality: Int = 86,
+        maxBytes: Int = 1_400_000
+    ): ByteArray? {
+        val decoded = decodeSubsampledBitmap(context, uri, maxDimension = maxEdge) ?: return null
+        val longest = maxOf(decoded.width, decoded.height)
+        val scaled = if (longest > maxEdge && longest > 0) {
+            val ratio = maxEdge.toFloat() / longest.toFloat()
+            val targetW = (decoded.width * ratio).toInt().coerceAtLeast(1)
+            val targetH = (decoded.height * ratio).toInt().coerceAtLeast(1)
+            val resized = Bitmap.createScaledBitmap(decoded, targetW, targetH, true)
+            if (resized != decoded) decoded.recycle()
+            resized
+        } else {
+            decoded
+        }
+
+        val out = ByteArrayOutputStream()
+        scaled.compress(Bitmap.CompressFormat.JPEG, quality, out)
+        var bytes = out.toByteArray()
+        if (bytes.size > maxBytes) {
+            val fallback = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, 74, fallback)
+            bytes = fallback.toByteArray()
+        }
+        scaled.recycle()
+        return bytes
+    }
+
+    /**
+     * Persists a local copy of a processed wallpaper inside app filesDir/wallpapers
+     * for instant offline/cold-start loading before network sync completes.
+     */
+    fun saveWallpaperLocally(context: Context, key: String, jpegBytes: ByteArray): String? {
+        return try {
+            val dir = File(context.filesDir, "wallpapers").apply { mkdirs() }
+            val safeKey = key.replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "default" }
+            val file = File(dir, "wp_${safeKey}_${System.currentTimeMillis()}.jpg")
+            FileOutputStream(file).use { fos ->
+                fos.write(jpegBytes)
+                fos.flush()
+            }
+            file.absolutePath
+        } catch (_: Throwable) {
+            null
+        }
+    }
 }

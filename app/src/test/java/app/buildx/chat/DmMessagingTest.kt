@@ -1,5 +1,6 @@
 package app.buildx.chat
 
+import app.buildx.chat.data.model.ChatWallpaperConfig
 import app.buildx.chat.data.model.DmConversationDetail
 import app.buildx.chat.data.model.DmInboxItem
 import app.buildx.chat.data.model.DmMessage
@@ -7,6 +8,15 @@ import app.buildx.chat.data.model.DmParticipant
 import app.buildx.chat.data.model.DmReplyPreview
 import app.buildx.chat.data.model.DmSendStatus
 import app.buildx.chat.data.model.FeedNoteItem
+import app.buildx.chat.data.model.NoteLikeToggleResult
+import app.buildx.chat.data.model.PublicNote
+import app.buildx.chat.data.model.UserProfile
+import app.buildx.chat.data.model.WallpaperCategory
+import app.buildx.chat.ui.chat.ChatWallpaperCatalog
+import app.buildx.chat.ui.screens.RowAnchoredPopupPositionProvider
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -233,5 +243,204 @@ class DmMessagingTest {
         val seenForMsg99 = participants.filter { it.userId != currentUserId && it.lastReadMessageId == "msg-99" }
         assertEquals(1, seenForMsg99.size)
         assertEquals("u1", seenForMsg99.first().userId)
+    }
+
+    @Test
+    fun testNoteLikesAndLikersDeserialization() {
+        val publicNoteJson = """
+            {
+                "id": "note-like-1",
+                "user_id": "owner-1",
+                "content": "Shipping Build X",
+                "created_at": "2026-11-12T10:00:00Z",
+                "expires_at": "2026-11-13T10:00:00Z",
+                "is_active": true,
+                "likes_count": 2,
+                "is_liked_by_me": false,
+                "likers": [
+                    {
+                        "id": "u-2",
+                        "username": "amira",
+                        "handle": "amira",
+                        "display_name": "Amira",
+                        "avatar_url": "https://example.com/amira.png",
+                        "is_verified": true
+                    }
+                ]
+            }
+        """.trimIndent()
+
+        val publicNote = json.decodeFromString<PublicNote>(publicNoteJson)
+        assertEquals(2, publicNote.likesCount)
+        assertFalse(publicNote.isLikedByMe)
+        assertEquals(1, publicNote.likers.size)
+        assertEquals("Amira", publicNote.likers.first().displayName)
+        assertTrue(publicNote.likers.first().isVerified)
+
+        val feedNoteJson = """
+            {
+                "id": "note-like-2",
+                "user_id": "friend-1",
+                "content": "Coffee first",
+                "created_at": "2026-11-12T11:00:00Z",
+                "expires_at": "2026-11-13T11:00:00Z",
+                "is_own": false,
+                "likes_count": 4,
+                "is_liked_by_me": true,
+                "author": {
+                    "id": "friend-1",
+                    "username": "tariq",
+                    "display_name": "Tariq",
+                    "is_verified": false
+                }
+            }
+        """.trimIndent()
+
+        val feedNote = json.decodeFromString<FeedNoteItem>(feedNoteJson)
+        assertEquals(4, feedNote.likesCount)
+        assertTrue(feedNote.isLikedByMe)
+        assertFalse(feedNote.isOwn)
+
+        val toggleJson = """{"success": true, "liked": true, "likes_count": 5}"""
+        val toggleResult = json.decodeFromString<NoteLikeToggleResult>(toggleJson)
+        assertTrue(toggleResult.success)
+        assertTrue(toggleResult.liked)
+        assertEquals(5, toggleResult.likesCount)
+    }
+
+    @Test
+    fun testRowAnchoredPopupPositionProviderLtrAndRtlAndAboveFallback() {
+        val window = IntSize(1080, 2400)
+        val popup = IntSize(600, 720)
+        val gap = 24
+        val margin = 40
+
+        // Row near top -> places BELOW row cleanly separated by gap
+        val topRow = IntRect(left = 0, top = 400, right = 1080, bottom = 600)
+        var placedAbove = false
+        val ltrProvider = RowAnchoredPopupPositionProvider(
+            rowBounds = topRow,
+            isRtl = false,
+            gapPx = gap,
+            edgeMarginPx = margin,
+            onDirectionResolved = { placedAbove = it }
+        )
+        val posBelow = ltrProvider.calculatePosition(topRow, window, LayoutDirection.Ltr, popup)
+        assertFalse(placedAbove)
+        assertEquals(margin, posBelow.x)
+        assertEquals(topRow.bottom + gap, posBelow.y)
+
+        // Row near bottom -> flips ABOVE row with gap above row top
+        val bottomRow = IntRect(left = 0, top = 1900, right = 1080, bottom = 2100)
+        var placedAboveRtl = false
+        val rtlProvider = RowAnchoredPopupPositionProvider(
+            rowBounds = bottomRow,
+            isRtl = true,
+            gapPx = gap,
+            edgeMarginPx = margin,
+            onDirectionResolved = { placedAboveRtl = it }
+        )
+        val posAboveRtl = rtlProvider.calculatePosition(bottomRow, window, LayoutDirection.Rtl, popup)
+        assertTrue(placedAboveRtl)
+        assertEquals(bottomRow.right - margin - popup.width, posAboveRtl.x)
+        assertEquals(bottomRow.top - gap - popup.height, posAboveRtl.y)
+    }
+
+    @Test
+    fun testChatWallpaperCatalogHas24PresetsAndExactCategoryCounts() {
+        val artistic = ChatWallpaperCatalog.artisticPresets
+        assertEquals(24, artistic.size)
+        assertEquals(25, ChatWallpaperCatalog.allSelectablePresets.size)
+        assertEquals(
+            ChatWallpaperCatalog.allSelectablePresets.size,
+            ChatWallpaperCatalog.allSelectablePresets.map { it.id }.toSet().size
+        )
+
+        val byCategory = artistic.groupBy { it.category }.mapValues { it.value.size }
+        assertEquals(4, byCategory[WallpaperCategory.SIGNATURE])
+        assertEquals(5, byCategory[WallpaperCategory.ROMANCE])
+        assertEquals(5, byCategory[WallpaperCategory.CINEMA])
+        assertEquals(4, byCategory[WallpaperCategory.NATURE])
+        assertEquals(4, byCategory[WallpaperCategory.ABSTRACT])
+        assertEquals(2, byCategory[WallpaperCategory.PATTERNS])
+
+        assertEquals("default", ChatWallpaperCatalog.findById(null).id)
+        assertEquals("default", ChatWallpaperCatalog.findById("non_existent_id").id)
+        assertEquals("aurora_midnight", ChatWallpaperCatalog.findById("  AURORA_MIDNIGHT ").id)
+    }
+
+    @Test
+    fun testFeedNoteItemEffectiveNoteIdFallsBackCleanly() {
+        val withNoteId = """
+            {
+                "id": "row-1",
+                "note_id": "note-canonical-2",
+                "user_id": "u-1",
+                "content": "Hoola",
+                "created_at": "2026-11-12T10:00:00Z",
+                "expires_at": "2026-11-13T10:00:00Z",
+                "author": { "id": "u-1", "username": "voxin" }
+            }
+        """.trimIndent()
+        val parsedWithNoteId = json.decodeFromString<FeedNoteItem>(withNoteId)
+        assertEquals("note-canonical-2", parsedWithNoteId.effectiveNoteId)
+
+        val legacyWithoutNoteId = """
+            {
+                "id": "row-only-1",
+                "user_id": "u-1",
+                "content": "Hoola",
+                "created_at": "2026-11-12T10:00:00Z",
+                "expires_at": "2026-11-13T10:00:00Z",
+                "author": { "id": "u-1", "username": "voxin" }
+            }
+        """.trimIndent()
+        val parsedLegacy = json.decodeFromString<FeedNoteItem>(legacyWithoutNoteId)
+        assertEquals("row-only-1", parsedLegacy.effectiveNoteId)
+    }
+
+    @Test
+    fun testWallpaperDeserializationOnConversationDetailAndUserProfile() {
+        val detailPayload = """
+            {
+                "success": true,
+                "conversation": {
+                    "id": "conv-wp-1",
+                    "kind": "direct",
+                    "wallpaper_id": "telegram_doodle",
+                    "wallpaper_dim": 0.25,
+                    "wallpaper_blur": false
+                },
+                "wallpaper_id": "velvet_rose",
+                "wallpaper_custom_url": null,
+                "wallpaper_dim": 0.95,
+                "wallpaper_blur": true
+            }
+        """.trimIndent()
+        val detail = json.decodeFromString<DmConversationDetail>(detailPayload)
+        val resolved = detail.resolvedWallpaper
+        assertEquals("velvet_rose", resolved.normalizedId)
+        assertNull(resolved.customUrl)
+        assertEquals(0.70f, resolved.dim, 0.001f)
+        assertTrue(resolved.blur)
+        assertFalse(resolved.isDefault)
+
+        val profilePayload = """
+            {
+                "id": "user-1",
+                "username": "voxin",
+                "display_name": "Voxin",
+                "default_wallpaper_id": "sakura_breeze",
+                "default_wallpaper_custom_url": "",
+                "default_wallpaper_dim": 0.30,
+                "default_wallpaper_blur": true
+            }
+        """.trimIndent()
+        val profile = json.decodeFromString<UserProfile>(profilePayload)
+        val defaultWp = profile.defaultWallpaper
+        assertEquals("sakura_breeze", defaultWp.normalizedId)
+        assertEquals(0.30f, defaultWp.dim, 0.001f)
+        assertTrue(defaultWp.blur)
+        assertFalse(defaultWp.isCustom)
     }
 }

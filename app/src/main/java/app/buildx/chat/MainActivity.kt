@@ -60,6 +60,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import app.buildx.chat.data.model.FollowUserItem
 import app.buildx.chat.data.model.MainSurfacePane
 import app.buildx.chat.ui.components.UsernameReviewSheet
 import android.app.Activity
@@ -70,8 +71,10 @@ import app.buildx.chat.ui.screens.AuthScreen
 import app.buildx.chat.ui.screens.BlockedAccountsScreen
 import app.buildx.chat.ui.screens.ChatAndDrawerScreen
 import app.buildx.chat.ui.chat.ChatInfoScreen
+import app.buildx.chat.ui.chat.ChatWallpaperPickerScreen
 import app.buildx.chat.ui.screens.DmInboxScreen
 import app.buildx.chat.ui.screens.DmConversationScreen
+import app.buildx.chat.ui.screens.NewChatMode
 import app.buildx.chat.ui.screens.NewMessageOrGroupSheet
 import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.ui.screens.ConversationActionsSheet
@@ -628,7 +631,42 @@ fun BuildXRoot(
                         AppAppearanceScreen(
                             selectedAppearance = uiState.appearance,
                             onSelectAppearance = { appearance -> viewModel.setAppearance(appearance) },
-                            onBackClick = { navController.popBackStack() }
+                            onBackClick = { navController.popBackStack() },
+                            defaultWallpaper = uiState.defaultChatWallpaper,
+                            onChatWallpaperClick = { navController.navigate("chat_wallpaper") }
+                        )
+                    }
+
+                    composable(
+                        route = "chat_wallpaper",
+                        enterTransition = {
+                            slideIntoContainer(
+                                towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                animationSpec = tween(260, easing = FastOutSlowInEasing)
+                            ) + fadeIn(animationSpec = tween(200))
+                        },
+                        popExitTransition = {
+                            slideOutOfContainer(
+                                towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                animationSpec = tween(240, easing = FastOutSlowInEasing)
+                            ) + fadeOut(animationSpec = tween(180))
+                        }
+                    ) {
+                        ChatWallpaperPickerScreen(
+                            initialConfig = uiState.defaultChatWallpaper,
+                            isSpecificChat = false,
+                            isApplying = uiState.isWallpaperUpdating,
+                            onBackClick = { navController.popBackStack() },
+                            onApplyWallpaper = { pickedUri, config, applyToAll ->
+                                viewModel.updateChatWallpaper(
+                                    conversationId = null,
+                                    pickedImageUri = pickedUri,
+                                    config = config,
+                                    applyToAll = applyToAll
+                                ) {
+                                    navController.popBackStack()
+                                }
+                            }
                         )
                     }
 
@@ -931,6 +969,7 @@ fun BuildXRoot(
                     composable("messages") {
                         LaunchedEffect(Unit) {
                             viewModel.loadDmInbox()
+                            viewModel.loadActiveOwnNote()
                             viewModel.loadInboxNotesTray()
                             val uid = viewModel.currentUserId()
                             if (uid != null) {
@@ -949,6 +988,7 @@ fun BuildXRoot(
                                     navController.navigate("dm/$convId")
                                 }
                             },
+                            onToggleNoteLike = { noteId -> viewModel.toggleNoteLike(noteId) },
                             onCreateGroupClick = { viewModel.openCreateGroupSheet(true) },
                             onTogglePinConversation = { convId -> viewModel.togglePinDmConversation(convId) },
                             onToggleMuteConversation = { convId -> viewModel.toggleMuteDmConversation(convId) },
@@ -1004,6 +1044,9 @@ fun BuildXRoot(
                         val conversationId = backStackEntry.arguments?.getString("conversationId") ?: ""
                         val jumpToMessageId by backStackEntry.savedStateHandle
                             .getStateFlow<String?>("jump_to_message_id", null)
+                            .collectAsState()
+                        val openSearchRequested by backStackEntry.savedStateHandle
+                            .getStateFlow("open_chat_search", false)
                             .collectAsState()
                         LaunchedEffect(conversationId) {
                             if (uiState.activeDmDetail?.conversation?.id != conversationId) {
@@ -1105,9 +1148,19 @@ fun BuildXRoot(
                             onOpenChatInfo = {
                                 navController.navigate("dm/$conversationId/info")
                             },
+                            onOpenWallpaperClick = {
+                                navController.navigate("dm/$conversationId/wallpaper")
+                            },
                             jumpToMessageId = jumpToMessageId,
                             onConsumeJumpToMessage = {
                                 backStackEntry.savedStateHandle["jump_to_message_id"] = null
+                            },
+                            openSearchRequested = openSearchRequested,
+                            onConsumeOpenSearchRequest = {
+                                backStackEntry.savedStateHandle["open_chat_search"] = false
+                            },
+                            onShowSnackbar = { message ->
+                                viewModel.showSnackbar(message)
                             }
                         )
                     }
@@ -1187,6 +1240,70 @@ fun BuildXRoot(
                                         viewModel.leaveDmRoom()
                                         navController.popBackStack("dm/{conversationId}", inclusive = true)
                                     }
+                                }
+                            },
+                            onSearchInChat = {
+                                navController.previousBackStackEntry
+                                    ?.savedStateHandle
+                                    ?.set("open_chat_search", true)
+                                navController.popBackStack()
+                            },
+                            onCreateGroupWithPeer = { peerId ->
+                                viewModel.openCreateGroupSheet(
+                                    open = true,
+                                    preselectedUserIds = setOf(peerId)
+                                )
+                            },
+                            onShowSnackbar = { message ->
+                                viewModel.showSnackbar(message)
+                            },
+                            activeWallpaper = uiState.activeDmWallpaper,
+                            onOpenWallpaper = {
+                                navController.navigate("dm/$conversationId/wallpaper")
+                            }
+                        )
+                    }
+
+                    composable(
+                        route = "dm/{conversationId}/wallpaper",
+                        enterTransition = {
+                            slideIntoContainer(
+                                towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                                animationSpec = tween(260, easing = FastOutSlowInEasing)
+                            ) + fadeIn(animationSpec = tween(200))
+                        },
+                        popExitTransition = {
+                            slideOutOfContainer(
+                                towards = AnimatedContentTransitionScope.SlideDirection.End,
+                                animationSpec = tween(240, easing = FastOutSlowInEasing)
+                            ) + fadeOut(animationSpec = tween(180))
+                        }
+                    ) { backStackEntry ->
+                        val conversationId = backStackEntry.arguments?.getString("conversationId") ?: ""
+                        val initialWallpaper = remember(
+                            conversationId,
+                            uiState.activeDmConversationId,
+                            uiState.activeDmWallpaper
+                        ) {
+                            if (uiState.activeDmConversationId == conversationId) {
+                                uiState.activeDmWallpaper
+                            } else {
+                                viewModel.getEffectiveWallpaper(conversationId)
+                            }
+                        }
+                        ChatWallpaperPickerScreen(
+                            initialConfig = initialWallpaper,
+                            isSpecificChat = true,
+                            isApplying = uiState.isWallpaperUpdating,
+                            onBackClick = { navController.popBackStack() },
+                            onApplyWallpaper = { pickedUri, config, applyToAll ->
+                                viewModel.updateChatWallpaper(
+                                    conversationId = conversationId,
+                                    pickedImageUri = pickedUri,
+                                    config = config,
+                                    applyToAll = applyToAll
+                                ) {
+                                    navController.popBackStack()
                                 }
                             }
                         )
@@ -1271,7 +1388,8 @@ fun BuildXRoot(
                 isLoading = uiState.isCreatingNote,
                 onDismiss = { viewModel.openNoteSheet(false) },
                 onCreateNote = { content -> viewModel.createNote(content) },
-                onDeleteNote = { viewModel.deleteNote() }
+                onDeleteNote = { viewModel.deleteNote() },
+                onOpenProfile = { handle -> navController.navigate("profile/$handle") }
             )
 
             // One-time Username Review Bottom Sheet
@@ -1290,8 +1408,22 @@ fun BuildXRoot(
 
             // New Message or Group Sheet
             if (uiState.isCreateGroupSheetOpen) {
+                val activePeer = uiState.activeDmDetail?.peerIntro
+                val groupCandidateUsers = remember(uiState.followingListUsers, activePeer) {
+                    if (activePeer != null && uiState.followingListUsers.none { it.id == activePeer.id }) {
+                        uiState.followingListUsers + FollowUserItem(
+                            id = activePeer.id,
+                            username = activePeer.username ?: activePeer.handle ?: "user",
+                            displayName = activePeer.displayName ?: activePeer.username ?: "",
+                            avatarUrl = activePeer.avatarUrl,
+                            isVerified = activePeer.isVerified
+                        )
+                    } else {
+                        uiState.followingListUsers
+                    }
+                }
                 NewMessageOrGroupSheet(
-                    candidateUsers = uiState.followingListUsers,
+                    candidateUsers = groupCandidateUsers,
                     searchResults = uiState.dmSearchPeopleResults,
                     isSearchLoading = uiState.isDmSearchPeopleLoading,
                     searchQuery = uiState.dmSearchQuery,
@@ -1311,7 +1443,12 @@ fun BuildXRoot(
                         }
                     },
                     isCreatingGroup = uiState.isCreatingGroup,
-                    onDismiss = { viewModel.openCreateGroupSheet(false) }
+                    onDismiss = { viewModel.openCreateGroupSheet(false) },
+                    initialMode = if (uiState.groupCreationSelectedUserIds.isNotEmpty()) {
+                        NewChatMode.GROUP
+                    } else {
+                        NewChatMode.DIRECT
+                    }
                 )
             }
 

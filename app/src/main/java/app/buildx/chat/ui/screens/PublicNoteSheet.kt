@@ -1,23 +1,29 @@
 package app.buildx.chat.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -35,15 +41,19 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.buildx.chat.R
+import app.buildx.chat.data.model.DmPeerSummary
 import app.buildx.chat.data.model.PublicNote
 import app.buildx.chat.data.model.UserProfile
+import app.buildx.chat.ui.components.VerifiedBadge
 import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.isRtlText
@@ -62,7 +72,8 @@ fun PublicNoteSheet(
     isLoading: Boolean,
     onDismiss: () -> Unit,
     onCreateNote: (String) -> Unit,
-    onDeleteNote: () -> Unit
+    onDeleteNote: () -> Unit,
+    onOpenProfile: (String) -> Unit = {}
 ) {
     if (!isOpen) return
 
@@ -207,6 +218,22 @@ fun PublicNoteSheet(
                 }
             }
 
+            val currentNote = activeNote
+            if (hasActiveNote && currentNote.likesCount > 0) {
+                Spacer(modifier = Modifier.height(16.dp))
+                NoteLikesBreakdownCard(
+                    likesCount = currentNote.likesCount,
+                    likers = currentNote.likers,
+                    onLikerClick = { liker ->
+                        val target = liker.handle ?: liker.username
+                        if (!target.isNullOrBlank()) {
+                            onDismiss()
+                            onOpenProfile(target)
+                        }
+                    }
+                )
+            }
+
             Spacer(modifier = Modifier.height(24.dp))
 
             // Action Buttons
@@ -269,6 +296,137 @@ fun PublicNoteSheet(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun NoteLikesBreakdownCard(
+    likesCount: Int,
+    likers: List<DmPeerSummary>,
+    onLikerClick: (DmPeerSummary) -> Unit
+) {
+    val colors = BuildXTheme.colors
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(colors.surfaceMuted)
+            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(18.dp))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_heart_filled),
+                contentDescription = null,
+                tint = colors.destructiveRed,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (likesCount == 1) {
+                    stringResource(R.string.dm_note_likes_singular)
+                } else {
+                    stringResource(R.string.dm_note_likes_plural, likesCount)
+                },
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = colors.primaryText
+            )
+            if (likers.isNotEmpty()) {
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = stringResource(R.string.dm_note_liked_by_header),
+                    fontSize = 12.sp,
+                    color = colors.secondaryText
+                )
+            }
+        }
+
+        if (likers.isNotEmpty()) {
+            HorizontalDivider(color = colors.hairlineBorder, thickness = 0.6.dp)
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 180.dp)
+            ) {
+                items(likers, key = { it.id }) { liker ->
+                    val displayName = liker.displayName?.takeIf { it.isNotBlank() }
+                        ?: liker.handle
+                        ?: liker.username
+                        ?: ""
+                    val handleText = liker.handle?.takeIf { it.isNotBlank() }
+                        ?: liker.username?.takeIf { it.isNotBlank() }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !handleText.isNullOrBlank()) {
+                                onLikerClick(liker)
+                            }
+                            .padding(horizontal = 14.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(colors.cardBackground)
+                                .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (!liker.avatarUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = liker.avatarUrl,
+                                    contentDescription = displayName,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_user),
+                                    contentDescription = displayName,
+                                    tint = colors.secondaryText,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = displayName,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = colors.primaryText,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                                if (liker.isVerified) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    VerifiedBadge(size = 13.dp)
+                                }
+                            }
+                            if (!handleText.isNullOrBlank()) {
+                                Text(
+                                    text = "@$handleText",
+                                    fontSize = 12.sp,
+                                    color = colors.secondaryText,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

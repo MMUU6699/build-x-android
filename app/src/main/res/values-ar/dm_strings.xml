@@ -13,7 +13,13 @@
     <string name="dm_share_a_note">شارك ملاحظة</string>
     <string name="dm_leave_a_note">ملاحظة</string>
     <string name="dm_reply_to_note">الرد على ملاحظة %1$s</string>
+    <string name="dm_reply_to_note_hint">الرد على ملاحظة %1$s…</string>
     <string name="dm_replied_to_note">رد على ملاحظة</string>
+    <string name="dm_note_like">إعجاب</string>
+    <string name="dm_note_unlike">إلغاء الإعجاب</string>
+    <string name="dm_note_likes_singular">إعجاب واحد</string>
+    <string name="dm_note_likes_plural">%1$d إعجابات</string>
+    <string name="dm_note_liked_by_header">أعجب بها</string>
 
     <!-- Filter Chips -->
     <string name="dm_filter_all">الكل</string>
@@ -22,7 +28,7 @@
 
     <!-- Conversation Row Previews -->
     <string name="dm_no_messages_yet">لا توجد رسائل بعد</string>
-    <string name="dm_you_prefix">أنت: </string>
+    <string name="dm_you_prefix">"أنت: "</string>
     <string name="dm_media_photo">صورة</string>
     <string name="dm_message_deleted">تم حذف الرسالة</string>
     <string name="dm_time_now">الآن</string>
@@ -169,4 +175,54 @@
     <string name="dm_remove_member">إزالة</string>
     <string name="dm_remove_member_title">إزالة %1$s؟</string>
     <string name="dm_remove_member_body">لن يتمكن بعد الآن من إرسال أو قراءة رسائل جديدة في هذه المجموعة.</string>
+    <string name="dm_create_group_with">إنشاء دردشة جماعية مع %1$s</string>
+    <string name="dm_info_profile_label">الملف الشخصي</string>
+    <string name="dm_info_search_label">بحث</string>
+    <string name="dm_info_mute_label">كتم</string>
+    <string name="dm_info_unmute_label">إلغاء الكتم</string>
+    <string name="dm_info_pin_label">تثبيت</string>
+    <string name="dm_info_unpin_label">إلغاء التثبيت</string>
+    <string name="dm_info_add_label">إضافة</string>
+    <string name="dm_info_clear_history_subtitle">إزالة الرسائل من حسابك</string>
+    <string name="dm_info_report_account">الإبلاغ عن الحساب</string>
+    <string name="dm_info_report_account_subtitle">الإبلاغ عن محتوى مسيء أو مخالف</string>
+    <string name="dm_info_block_name">حظر %1$s</string>
+    <string name="dm_info_edit_group_name">تعديل اسم المجموعة</string>
+    <string name="dm_info_leave_group_subtitle">التوقف عن استلام رسائل هذه المجموعة</string>
+    <string name="dm_no_shared_photos">لا توجد صور مشتركة بعد</string>
+    <string name="dm_save_to_gallery">حفظ في المعرض</string>
+    <string name="dm_saved_to_gallery">تم الحفظ في المعرض</string>
+    <string name="dm_save_failed">تعذر حفظ الصورة</string>
+    <string name="dm_viewer_close">إغلاق الصورة</string>
+    <string name="dm_search_matches_counter">%1$d من %2$d</string>
+    <string name="dm_search_prev_match">النتيجة السابقة</string>
+    <string name="dm_search_next_match">النتيجة التالية</string>
+
+    <!-- Note Reply Redesign & Status -->
+    <string name="dm_note_active_now">نشط الآن</string>
+    <string name="dm_note_active_ago">نشط · %1$s</string>
+
+    <!-- Chat Wallpapers -->
+    <string name="dm_wallpaper">خلفية المحادثة</string>
+    <string name="dm_wallpaper_subtitle">تخصيص خلفية لهذه المحادثة</string>
+    <string name="dm_wallpaper_default_subtitle">تعيين الخلفية الافتراضية للمحادثات</string>
+    <string name="dm_wallpaper_choose_gallery">اختيار من المعرض</string>
+    <string name="dm_wallpaper_reset_default">استعادة الافتراضي</string>
+    <string name="dm_wallpaper_dimming">التعتيم</string>
+    <string name="dm_wallpaper_blur">تمويه</string>
+    <string name="dm_wallpaper_apply_chat">تطبيق على هذه المحادثة</string>
+    <string name="dm_wallpaper_apply_all">تطبيق على جميع المحادثات</string>
+    <string name="dm_wallpaper_applied_chat">تم تحديث خلفية المحادثة</string>
+    <string name="dm_wallpaper_applied_all">تم تطبيق الخلفية على جميع المحادثات</string>
+    <string name="dm_wallpaper_uploading">جارٍ رفع الخلفية…</string>
+    <string name="dm_wallpaper_custom_label">صورة مخصصة</string>
+    <string name="dm_wallpaper_cat_all">الكل</string>
+    <string name="dm_wallpaper_cat_signature">أساسي</string>
+    <string name="dm_wallpaper_cat_romance">رومانسي</string>
+    <string name="dm_wallpaper_cat_cinema">سينما</string>
+    <string name="dm_wallpaper_cat_nature">طبيعة</string>
+    <string name="dm_wallpaper_cat_abstract">تجريدي</string>
+    <string name="dm_wallpaper_cat_patterns">أنماط</string>
+    <string name="dm_wallpaper_preview_incoming">انظر مدى وضوح وتناغم هذه الخلفية مع الرسائل.</string>
+    <string name="dm_wallpaper_preview_outgoing">قراءة مريحة وتفاصيل أنيقة في كل محادثة.</string>
 </resources>

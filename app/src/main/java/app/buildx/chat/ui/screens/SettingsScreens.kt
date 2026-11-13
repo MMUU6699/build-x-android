@@ -51,7 +51,9 @@ import app.buildx.chat.R
 import app.buildx.chat.data.model.AppAppearance
 import app.buildx.chat.data.model.AppLanguage
 import app.buildx.chat.data.model.AttachmentRow
+import app.buildx.chat.data.model.ChatWallpaperConfig
 import app.buildx.chat.data.model.UserProfile
+import app.buildx.chat.ui.chat.displayTitle
 import app.buildx.chat.ui.components.AppearanceRadioRow
 import app.buildx.chat.ui.components.GroupedCard
 import app.buildx.chat.ui.components.HeaderCircleButton
@@ -379,7 +381,9 @@ fun AppAppearanceScreen(
     selectedAppearance: AppAppearance,
     onSelectAppearance: (AppAppearance) -> Unit,
     onBackClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    defaultWallpaper: ChatWallpaperConfig = ChatWallpaperConfig(),
+    onChatWallpaperClick: () -> Unit = {}
 ) {
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
@@ -433,6 +437,22 @@ fun AppAppearanceScreen(
                 label = strings.appearanceDark,
                 selected = selectedAppearance == AppAppearance.DARK,
                 onClick = { onSelectAppearance(AppAppearance.DARK) },
+                showDivider = false
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        GroupedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
+            SettingsRow(
+                iconRes = R.drawable.ic_wallpaper,
+                title = stringResource(R.string.dm_wallpaper),
+                subtitle = defaultWallpaper.displayTitle(stringResource(R.string.dm_wallpaper_custom_label)),
+                onClick = onChatWallpaperClick,
                 showDivider = false
             )
         }

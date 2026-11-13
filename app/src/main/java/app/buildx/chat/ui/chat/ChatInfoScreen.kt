@@ -5,6 +5,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,7 +36,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -45,8 +51,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -55,13 +59,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.buildx.chat.R
 import app.buildx.chat.data.model.AppAppearance
+import app.buildx.chat.data.model.ChatWallpaperConfig
 import app.buildx.chat.data.model.DmConversationDetail
 import app.buildx.chat.data.model.DmConversationMetadata
 import app.buildx.chat.data.model.DmMessage
@@ -69,21 +73,22 @@ import app.buildx.chat.data.model.DmParticipant
 import app.buildx.chat.data.model.DmPeerIntro
 import app.buildx.chat.data.model.PersonSearchResult
 import app.buildx.chat.data.model.ReportReason
+import app.buildx.chat.ui.components.HeaderCircleButton
 import app.buildx.chat.ui.components.VerifiedBadge
 import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.screens.BlockAccountDialog
 import app.buildx.chat.ui.screens.ReportAccountSheet
 import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
-import app.buildx.chat.ui.theme.isRtlText
 import app.buildx.chat.ui.theme.softShadow
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 
 /**
- * Dedicated full-screen Chat Info destination (`dm/{conversationId}/info`).
- * Matches the Meta-AI-inspired light/dark visual language with edge-to-edge layout,
- * real backend wiring, and clean state restoration.
+ * Full-screen Chat Details screen (`dm/{conversationId}/info`).
+ * Features a clean centered hero header, four circular quick actions,
+ * strictly functional account/group controls, and a 3-column shared photo grid
+ * opening [DmMediaViewerDialog].
  */
 @Composable
 fun ChatInfoScreen(
@@ -111,12 +116,15 @@ fun ChatInfoScreen(
     onClearHistory: () -> Unit,
     onReport: (ReportReason, String?) -> Unit,
     onBlock: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onSearchInChat: (() -> Unit)? = null,
+    onCreateGroupWithPeer: ((String) -> Unit)? = null,
+    onShowSnackbar: (String) -> Unit = {},
+    activeWallpaper: ChatWallpaperConfig = ChatWallpaperConfig(),
+    onOpenWallpaper: (() -> Unit)? = null
 ) {
     val colors = BuildXTheme.colors
     val chatColors = remember(colors) { colors.toChatColors() }
-    val uriHandler = LocalUriHandler.current
-    val isScreenRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
     val conversation = detail?.conversation
     val isDirect = conversation?.kind != "group"
@@ -129,18 +137,15 @@ fun ChatInfoScreen(
         detail?.participants?.filter { it.status == "active" }.orEmpty()
     }
 
-    val sharedMedia = remember(messages) { ChatMessageMapper.extractSharedMedia(messages) }
-    val sharedFiles = remember(messages) { ChatMessageMapper.extractSharedFiles(messages) }
-    val sharedLinks = remember(messages) { ChatMessageMapper.extractSharedLinks(messages) }
+    val sharedMedia = remember(messages) {
+        ChatMessageMapper.extractSharedMedia(messages).asReversed()
+    }
 
-    var isSearchOpen by remember { mutableStateOf(false) }
-    var searchQuery by remember { mutableStateOf("") }
-    var showAllMediaGallery by remember { mutableStateOf(false) }
-    var previewMediaUrl by remember { mutableStateOf<String?>(null) }
-
+    var viewerMediaMessage by remember { mutableStateOf<DmMessage?>(null) }
     var isRenaming by remember { mutableStateOf(false) }
     var titleDraft by remember(conversation?.title) { mutableStateOf(conversation?.title ?: "") }
     var isAddingMembersOpen by remember { mutableStateOf(false) }
+    var isMembersExpanded by remember { mutableStateOf(true) }
     var memberQuery by remember { mutableStateOf("") }
     var selectedMemberIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var memberToRemove by remember { mutableStateOf<DmParticipant?>(null) }
@@ -167,16 +172,17 @@ fun ChatInfoScreen(
         }
     }
 
-    val searchMatches = remember(messages, searchQuery) {
-        val clean = searchQuery.trim()
-        if (clean.isBlank()) {
-            emptyList()
-        } else {
-            messages.filter {
-                it.deletedAt == null && it.content.contains(clean, ignoreCase = true)
-            }.asReversed()
-        }
+    val displayTitle = if (isDirect) {
+        peer?.displayName?.takeIf { it.isNotBlank() }
+            ?: peer?.username?.takeIf { it.isNotBlank() }
+            ?: stringResource(R.string.dm_chat_info)
+    } else {
+        conversation?.title?.takeIf { it.isNotBlank() } ?: stringResource(R.string.dm_group_info)
     }
+    val heroAvatarUrl = if (isDirect) peer?.avatarUrl else conversation?.avatarUrl
+    val peerFirstLabel = peer?.displayName?.trim()?.substringBefore(' ')?.takeIf { it.isNotBlank() }
+        ?: peer?.handle?.takeIf { it.isNotBlank() }
+        ?: displayTitle
 
     Column(
         modifier = modifier
@@ -184,610 +190,410 @@ fun ChatInfoScreen(
             .background(chatColors.pageBackground)
             .statusBarsPadding()
             .navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
     ) {
-        // Floating pill top bar
+        // Minimal floating top navigation bar matching Build X HeaderCircleButton grammar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = ChatDimens.HeaderHorizontalPadding, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(ChatDimens.HeaderButtonSize)
-                    .pressScaleClickable(onClick = onBackClick)
-                    .softShadow(
-                        color = chatColors.headerShadow,
-                        cornerRadius = ChatDimens.HeaderButtonSize / 2,
-                        blurRadius = 12.dp,
-                        offsetY = 2.dp
-                    )
-                    .clip(CircleShape)
-                    .background(chatColors.headerGlassBg)
-                    .border(0.8.dp, chatColors.headerGlassBorder, CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_back),
-                    contentDescription = stringResource(R.string.dm_back),
-                    tint = colors.primaryText,
-                    modifier = Modifier
-                        .size(21.dp)
-                        .then(if (isScreenRtl) Modifier.graphicsLayer(scaleX = -1f) else Modifier)
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(ChatDimens.HeaderCapsuleHeight)
-                    .softShadow(
-                        color = chatColors.headerShadow,
-                        cornerRadius = ChatDimens.HeaderCapsuleHeight / 2,
-                        blurRadius = 12.dp,
-                        offsetY = 2.dp
-                    )
-                    .clip(RoundedCornerShape(ChatDimens.HeaderCapsuleHeight / 2))
-                    .background(chatColors.headerGlassBg)
-                    .border(0.8.dp, chatColors.headerGlassBorder, RoundedCornerShape(ChatDimens.HeaderCapsuleHeight / 2))
-                    .padding(horizontal = 18.dp),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                Text(
-                    text = stringResource(R.string.dm_chat_info),
-                    color = colors.primaryText,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+            HeaderCircleButton(
+                iconRes = R.drawable.ic_back,
+                contentDescription = stringResource(R.string.dm_back),
+                onClick = onBackClick,
+                backgroundColor = chatColors.headerGlassBg,
+                iconTint = colors.primaryText
+            )
+            Spacer(modifier = Modifier.weight(1f))
         }
 
+        // Centered Hero Identity Block
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 28.dp)
+                .padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(10.dp))
+            Box(
+                modifier = Modifier.size(92.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .softShadow(
+                            color = chatColors.headerShadow,
+                            cornerRadius = 46.dp,
+                            blurRadius = 16.dp,
+                            offsetY = 3.dp
+                        )
+                        .clip(CircleShape)
+                        .background(colors.surfaceMuted)
+                        .border(1.dp, colors.subtleSurfaceBorder, CircleShape)
+                        .then(
+                            if (!isDirect && isAdmin && !isGroupAvatarUploading) {
+                                Modifier.pressScaleClickable {
+                                    photoPicker.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                    )
+                                }
+                            } else if (isDirect && !peer?.handle.isNullOrBlank()) {
+                                Modifier.pressScaleClickable {
+                                    peer?.handle?.let(onViewProfile)
+                                }
+                            } else {
+                                Modifier
+                            }
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (!heroAvatarUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = heroAvatarUrl,
+                            contentDescription = displayTitle,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Icon(
+                            painter = painterResource(id = if (isDirect) R.drawable.ic_user else R.drawable.ic_plus),
+                            contentDescription = null,
+                            tint = colors.secondaryText,
+                            modifier = Modifier.size(34.dp)
+                        )
+                    }
 
-            // Top Identity Card
-            ChatInfoSectionCard {
-                if (isDirect) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
+                    if (isGroupAvatarUploading) {
                         Box(
                             modifier = Modifier
-                                .size(88.dp)
-                                .clip(CircleShape)
-                                .background(colors.surfaceMuted)
-                                .border(1.dp, colors.subtleSurfaceBorder, CircleShape),
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.45f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            if (!peer?.avatarUrl.isNullOrBlank()) {
-                                AsyncImage(
-                                    model = peer?.avatarUrl,
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            } else {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_user),
-                                    contentDescription = null,
-                                    tint = colors.secondaryText,
-                                    modifier = Modifier.size(38.dp)
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Text(
-                                text = peer?.displayName?.takeIf { it.isNotBlank() } ?: peer?.handle.orEmpty(),
-                                color = colors.primaryText,
-                                fontSize = 19.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (peer?.isVerified == true) {
-                                Spacer(modifier = Modifier.width(5.dp))
-                                VerifiedBadge(size = 16.dp)
-                            }
-                        }
-
-                        if (!peer?.handle.isNullOrBlank()) {
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "@${peer?.handle}",
-                                color = colors.secondaryText,
-                                fontSize = 13.5.sp,
-                                maxLines = 1
-                            )
-                        }
-
-                        if (isMuted) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            MutedStatusBadge()
-                        }
-
-                        if (!peer?.bio.isNullOrBlank()) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Text(
-                                text = peer?.bio.orEmpty(),
-                                color = colors.secondaryText,
-                                fontSize = 13.5.sp,
-                                lineHeight = 19.sp,
-                                textAlign = TextAlign.Center,
-                                maxLines = 4,
-                                overflow = TextOverflow.Ellipsis
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                strokeWidth = 2.5.dp,
+                                modifier = Modifier.size(26.dp)
                             )
                         }
                     }
-                } else {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                }
+
+                if (!isDirect && isAdmin) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(colors.cardBackground)
+                            .border(1.dp, colors.subtleSurfaceBorder, CircleShape)
+                            .pressScaleClickable(enabled = !isGroupAvatarUploading) {
+                                photoPicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Box(modifier = Modifier.size(88.dp)) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clip(CircleShape)
-                                    .background(colors.surfaceMuted)
-                                    .border(1.dp, colors.subtleSurfaceBorder, CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (!conversation?.avatarUrl.isNullOrBlank()) {
-                                    AsyncImage(
-                                        model = conversation?.avatarUrl,
-                                        contentDescription = null,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                } else {
-                                    Text(
-                                        text = (conversation?.title?.firstOrNull()?.uppercase() ?: "G"),
-                                        color = colors.primaryText,
-                                        fontSize = 30.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                                if (isGroupAvatarUploading) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .background(colors.pageBackground.copy(alpha = 0.55f)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        CircularProgressIndicator(
-                                            color = colors.primaryBlue,
-                                            strokeWidth = 2.5.dp,
-                                            modifier = Modifier.size(24.dp)
-                                        )
-                                    }
-                                }
-                            }
-
-                            if (isAdmin) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(30.dp)
-                                        .align(Alignment.BottomEnd)
-                                        .clip(CircleShape)
-                                        .background(colors.primaryBlue)
-                                        .border(2.dp, colors.cardBackground, CircleShape)
-                                        .pressScaleClickable {
-                                            photoPicker.launch(
-                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                            )
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.ic_camera),
-                                        contentDescription = stringResource(R.string.dm_change_group_photo),
-                                        tint = Color.White,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        if (isRenaming && isAdmin) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                BasicTextField(
-                                    value = titleDraft,
-                                    onValueChange = { titleDraft = it },
-                                    singleLine = true,
-                                    textStyle = TextStyle(
-                                        fontFamily = BuildXFontFamily,
-                                        color = colors.primaryText,
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        textDirection = if (isRtlText(titleDraft, isScreenRtl)) TextDirection.Rtl else TextDirection.Ltr
-                                    ),
-                                    cursorBrush = SolidColor(colors.primaryBlue),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(colors.surfaceMuted)
-                                        .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(14.dp))
-                                        .padding(horizontal = 12.dp, vertical = 10.dp)
-                                )
-                                SmallIconPill(
-                                    iconRes = R.drawable.ic_check,
-                                    bg = colors.primaryBlue,
-                                    tint = Color.White,
-                                    onClick = {
-                                        val clean = titleDraft.trim()
-                                        if (clean.isNotEmpty()) {
-                                            onRenameGroup(clean)
-                                            isRenaming = false
-                                        }
-                                    }
-                                )
-                                SmallIconPill(
-                                    iconRes = R.drawable.ic_close,
-                                    bg = colors.surfaceMuted,
-                                    tint = colors.secondaryText,
-                                    onClick = { isRenaming = false }
-                                )
-                            }
-                        } else {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Text(
-                                    text = conversation?.title.orEmpty(),
-                                    color = colors.primaryText,
-                                    fontSize = 19.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                if (isAdmin) {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .size(28.dp)
-                                            .clip(CircleShape)
-                                            .background(colors.surfaceMuted)
-                                            .pressScaleClickable {
-                                                titleDraft = conversation?.title.orEmpty()
-                                                isRenaming = true
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            painter = painterResource(id = R.drawable.ic_pencil),
-                                            contentDescription = stringResource(R.string.dm_rename_group),
-                                            tint = colors.secondaryText,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Text(
-                            text = stringResource(R.string.dm_members_count, activeParticipants.size),
-                            color = colors.secondaryText,
-                            fontSize = 13.sp
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_camera),
+                            contentDescription = stringResource(R.string.dm_change_group_photo),
+                            tint = colors.primaryText,
+                            modifier = Modifier.size(14.dp)
                         )
-
-                        if (isMuted) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            MutedStatusBadge()
-                        }
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Quick Action Row
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
             ) {
-                if (isDirect) {
-                    val handle = peer?.handle
-                    QuickActionTile(
-                        iconRes = R.drawable.ic_user,
-                        label = stringResource(R.string.dm_view_profile),
-                        enabled = !handle.isNullOrBlank(),
-                        onClick = { if (!handle.isNullOrBlank()) onViewProfile(handle) },
-                        modifier = Modifier.weight(1f)
-                    )
-                } else {
-                    QuickActionTile(
-                        iconRes = R.drawable.ic_pin,
-                        label = if (isPinned) stringResource(R.string.dm_unpin_chat) else stringResource(R.string.dm_pin_chat),
-                        enabled = true,
-                        onClick = onTogglePin,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                QuickActionTile(
-                    iconRes = R.drawable.ic_search,
-                    label = stringResource(R.string.dm_search_in_chat),
-                    enabled = true,
-                    onClick = { isSearchOpen = !isSearchOpen },
-                    modifier = Modifier.weight(1f)
+                Text(
+                    text = displayTitle,
+                    color = colors.primaryText,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = BuildXFontFamily,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
-
-                QuickActionTile(
-                    iconRes = if (isMuted) R.drawable.ic_bell else R.drawable.ic_bell_off,
-                    label = if (isMuted) stringResource(R.string.dm_unmute_chat) else stringResource(R.string.dm_mute_chat),
-                    enabled = true,
-                    onClick = onToggleMute,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            // Expandable Search in Chat panel
-            AnimatedVisibility(visible = isSearchOpen) {
-                Column(modifier = Modifier.padding(top = 12.dp)) {
-                    ChatInfoSectionCard {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(colors.surfaceMuted)
-                                .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(14.dp))
-                                .padding(horizontal = 12.dp, vertical = 10.dp)
-                        ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_search),
-                                contentDescription = null,
-                                tint = colors.secondaryText,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Box(modifier = Modifier.weight(1f)) {
-                                if (searchQuery.isEmpty()) {
-                                    Text(
-                                        text = stringResource(R.string.dm_search_chat_hint),
-                                        color = colors.secondaryText,
-                                        fontSize = 14.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                BasicTextField(
-                                    value = searchQuery,
-                                    onValueChange = { searchQuery = it },
-                                    singleLine = true,
-                                    textStyle = TextStyle(
-                                        fontFamily = BuildXFontFamily,
-                                        color = colors.primaryText,
-                                        fontSize = 14.sp,
-                                        textDirection = if (isRtlText(searchQuery, isScreenRtl)) TextDirection.Rtl else TextDirection.Ltr
-                                    ),
-                                    cursorBrush = SolidColor(colors.primaryBlue),
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                            if (searchQuery.isNotEmpty()) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_close),
-                                    contentDescription = stringResource(R.string.dm_cancel),
-                                    tint = colors.secondaryText,
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .clickable { searchQuery = "" }
-                                )
-                            }
-                        }
-
-                        if (searchQuery.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            if (searchMatches.isEmpty()) {
-                                Text(
-                                    text = stringResource(R.string.dm_no_search_results),
-                                    color = colors.secondaryText,
-                                    fontSize = 13.sp,
-                                    modifier = Modifier.padding(vertical = 6.dp)
-                                )
-                            } else {
-                                searchMatches.take(12).forEach { match ->
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .clickable { onJumpToMessage(match.id) }
-                                            .padding(horizontal = 6.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = match.senderDisplayName ?: stringResource(R.string.dm_you),
-                                                color = colors.primaryBlue,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                maxLines = 1
-                                            )
-                                            Text(
-                                                text = match.content,
-                                                color = colors.primaryText,
-                                                fontSize = 13.5.sp,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = ChatMessageMapper.formatShortTime(match.createdAt),
-                                            color = colors.secondaryText,
-                                            fontSize = 11.sp
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
+                if (isDirect && peer?.isVerified == true) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    VerifiedBadge(size = 18.dp)
                 }
             }
 
-            // Group Members section
-            if (!isDirect) {
-                Spacer(modifier = Modifier.height(14.dp))
-                ChatInfoSectionCard {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "${stringResource(R.string.dm_members)} (${activeParticipants.size})",
+            Spacer(modifier = Modifier.height(3.dp))
+
+            val heroSubtitle = if (isDirect) {
+                peer?.handle?.takeIf { it.isNotBlank() }?.let { "@$it" }.orEmpty()
+            } else {
+                stringResource(R.string.dm_members_count, activeParticipants.size)
+            }
+            if (heroSubtitle.isNotBlank()) {
+                Text(
+                    text = heroSubtitle,
+                    color = colors.secondaryText,
+                    fontSize = 14.sp,
+                    fontFamily = BuildXFontFamily,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            AnimatedVisibility(visible = !isDirect && isRenaming && isAdmin) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(colors.surfaceMuted)
+                        .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    BasicTextField(
+                        value = titleDraft,
+                        onValueChange = { titleDraft = it },
+                        singleLine = true,
+                        textStyle = TextStyle(
+                            fontFamily = BuildXFontFamily,
                             color = colors.primaryText,
                             fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.weight(1f)
+                            fontWeight = FontWeight.Medium,
+                            textDirection = TextDirection.Content
+                        ),
+                        cursorBrush = SolidColor(colors.primaryBlue),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(colors.primaryBlue)
+                            .clickable {
+                                val clean = titleDraft.trim()
+                                if (clean.isNotBlank()) {
+                                    onRenameGroup(clean)
+                                    isRenaming = false
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_check),
+                            contentDescription = stringResource(R.string.dm_save),
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
                         )
-                        if (isAdmin) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(999.dp))
-                                    .background(colors.surfaceMuted)
-                                    .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(999.dp))
-                                    .pressScaleClickable {
-                                        isAddingMembersOpen = !isAddingMembersOpen
-                                        selectedMemberIds = emptySet()
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.dm_add_members),
-                                    color = colors.primaryText,
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
                     }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(colors.cardBackground)
+                            .clickable { isRenaming = false },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_close),
+                            contentDescription = stringResource(R.string.dm_cancel),
+                            tint = colors.secondaryText,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                }
+            }
+        }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(22.dp))
 
+        // 4 Centered Circular Quick Actions
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            if (isDirect) {
+                val peerHandle = peer?.handle?.takeIf { it.isNotBlank() }
+                ChatInfoQuickCircleAction(
+                    iconRes = R.drawable.ic_user,
+                    label = stringResource(R.string.dm_info_profile_label),
+                    enabled = peerHandle != null,
+                    onClick = { peerHandle?.let(onViewProfile) }
+                )
+            } else if (isAdmin) {
+                ChatInfoQuickCircleAction(
+                    iconRes = R.drawable.ic_plus,
+                    label = stringResource(R.string.dm_info_add_label),
+                    isActive = isAddingMembersOpen,
+                    onClick = {
+                        isMembersExpanded = true
+                        isAddingMembersOpen = !isAddingMembersOpen
+                        selectedMemberIds = emptySet()
+                    }
+                )
+            } else {
+                ChatInfoQuickCircleAction(
+                    iconRes = R.drawable.ic_user,
+                    label = stringResource(R.string.dm_members),
+                    isActive = isMembersExpanded,
+                    onClick = { isMembersExpanded = !isMembersExpanded }
+                )
+            }
+
+            ChatInfoQuickCircleAction(
+                iconRes = R.drawable.ic_search,
+                label = stringResource(R.string.dm_info_search_label),
+                enabled = onSearchInChat != null || messages.any { it.deletedAt == null && it.content.isNotBlank() },
+                onClick = {
+                    if (onSearchInChat != null) {
+                        onSearchInChat()
+                    } else {
+                        messages.lastOrNull { it.deletedAt == null }?.id?.let(onJumpToMessage)
+                    }
+                }
+            )
+
+            ChatInfoQuickCircleAction(
+                iconRes = if (isMuted) R.drawable.ic_bell_off else R.drawable.ic_bell,
+                label = stringResource(if (isMuted) R.string.dm_info_unmute_label else R.string.dm_info_mute_label),
+                isActive = isMuted,
+                onClick = onToggleMute
+            )
+
+            ChatInfoQuickCircleAction(
+                iconRes = R.drawable.ic_pin,
+                label = stringResource(if (isPinned) R.string.dm_info_unpin_label else R.string.dm_info_pin_label),
+                isActive = isPinned,
+                onClick = onTogglePin
+            )
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Clean Edge-to-Edge Vertical Controls List (Real backend actions only)
+        if (onOpenWallpaper != null) {
+            val customLabel = stringResource(R.string.dm_wallpaper_custom_label)
+            val resolvedWallpaper = remember(detail, activeWallpaper) {
+                if (!activeWallpaper.isDefault) {
+                    activeWallpaper
+                } else {
+                    detail?.resolvedWallpaper ?: activeWallpaper
+                }
+            }
+            ChatInfoControlRow(
+                iconRes = R.drawable.ic_wallpaper,
+                title = stringResource(R.string.dm_wallpaper),
+                subtitle = resolvedWallpaper.displayTitle(customLabel),
+                onClick = onOpenWallpaper
+            )
+        }
+
+        if (isDirect) {
+            val peerId = peer?.id
+            if (!peerId.isNullOrBlank() && onCreateGroupWithPeer != null) {
+                ChatInfoControlRow(
+                    iconRes = R.drawable.ic_plus,
+                    title = stringResource(R.string.dm_create_group_with, peerFirstLabel),
+                    onClick = { onCreateGroupWithPeer(peerId) }
+                )
+            }
+            ChatInfoControlRow(
+                iconRes = R.drawable.ic_trash,
+                title = stringResource(R.string.dm_clear_history),
+                subtitle = stringResource(R.string.dm_info_clear_history_subtitle),
+                onClick = { showClearConfirm = true }
+            )
+            ChatInfoControlRow(
+                iconRes = R.drawable.ic_flag,
+                title = stringResource(R.string.dm_info_report_account),
+                subtitle = stringResource(R.string.dm_info_report_account_subtitle),
+                onClick = { showReportSheet = true }
+            )
+            ChatInfoControlRow(
+                iconRes = R.drawable.ic_block,
+                title = stringResource(R.string.dm_info_block_name, peerFirstLabel),
+                isDestructive = true,
+                onClick = { showBlockConfirm = true }
+            )
+        } else {
+            if (isAdmin) {
+                ChatInfoControlRow(
+                    iconRes = R.drawable.ic_pencil_edit,
+                    title = stringResource(R.string.dm_info_edit_group_name),
+                    onClick = {
+                        titleDraft = conversation?.title.orEmpty()
+                        isRenaming = !isRenaming
+                    }
+                )
+                ChatInfoControlRow(
+                    iconRes = R.drawable.ic_plus,
+                    title = stringResource(R.string.dm_add_members),
+                    onClick = {
+                        isMembersExpanded = true
+                        isAddingMembersOpen = !isAddingMembersOpen
+                        selectedMemberIds = emptySet()
+                    }
+                )
+            }
+
+            val chevronRotation by animateFloatAsState(
+                targetValue = if (isMembersExpanded) 180f else 0f,
+                animationSpec = tween(180),
+                label = "members_chevron_rotation"
+            )
+            ChatInfoControlRow(
+                iconRes = R.drawable.ic_user,
+                title = stringResource(R.string.dm_group_members_format, activeParticipants.size),
+                trailing = {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_chevron_down),
+                        contentDescription = null,
+                        tint = colors.secondaryText,
+                        modifier = Modifier
+                            .size(16.dp)
+                            .graphicsLayer { rotationZ = chevronRotation }
+                    )
+                },
+                onClick = { isMembersExpanded = !isMembersExpanded }
+            )
+
+            AnimatedVisibility(
+                visible = isMembersExpanded,
+                enter = expandVertically(tween(180)) + fadeIn(tween(150)),
+                exit = shrinkVertically(tween(160)) + fadeOut(tween(120))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                ) {
                     activeParticipants.forEach { participant ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable(enabled = !participant.handle.isNullOrBlank()) {
-                                    participant.handle?.takeIf { it.isNotBlank() }?.let(onViewProfile)
-                                }
-                                .padding(vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(colors.surfaceMuted),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (!participant.avatarUrl.isNullOrBlank()) {
-                                    AsyncImage(
-                                        model = participant.avatarUrl,
-                                        contentDescription = null,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                } else {
-                                    Text(
-                                        text = (participant.displayName ?: participant.handle ?: "?").first().uppercase(),
-                                        color = colors.primaryText,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = participant.displayName?.takeIf { it.isNotBlank() } ?: participant.handle.orEmpty(),
-                                        color = colors.primaryText,
-                                        fontSize = 14.5.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f, fill = false)
-                                    )
-                                    if (participant.isVerified) {
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        VerifiedBadge(size = 13.dp)
-                                    }
-                                }
-                                if (!participant.handle.isNullOrBlank()) {
-                                    Text(
-                                        text = "@${participant.handle}",
-                                        color = colors.secondaryText,
-                                        fontSize = 12.sp,
-                                        maxLines = 1
-                                    )
-                                }
-                            }
-                            if (participant.role == "admin") {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(999.dp))
-                                        .background(colors.surfaceMuted)
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                                ) {
-                                    Text(
-                                        text = stringResource(R.string.dm_admin),
-                                        color = colors.primaryBlue,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                            } else if (isAdmin && participant.userId != currentUserId) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(999.dp))
-                                        .background(colors.destructiveRed.copy(alpha = 0.12f))
-                                        .pressScaleClickable { memberToRemove = participant }
-                                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                                ) {
-                                    Text(
-                                        text = stringResource(R.string.dm_remove_member),
-                                        color = colors.destructiveRed,
-                                        fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                            }
-                        }
+                        ChatInfoMemberRow(
+                            participant = participant,
+                            currentUserId = currentUserId,
+                            isViewerAdmin = isAdmin,
+                            onViewProfile = onViewProfile,
+                            onRequestRemove = { memberToRemove = participant }
+                        )
                     }
 
                     AnimatedVisibility(visible = isAddingMembersOpen && isAdmin) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(top = 10.dp)
+                                .padding(top = 8.dp, bottom = 6.dp)
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(colors.surfaceMuted)
                                 .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
@@ -800,8 +606,10 @@ fun ChatInfoScreen(
                                 textStyle = TextStyle(
                                     fontFamily = BuildXFontFamily,
                                     color = colors.primaryText,
-                                    fontSize = 14.sp
+                                    fontSize = 14.sp,
+                                    textDirection = TextDirection.Content
                                 ),
+                                cursorBrush = SolidColor(colors.primaryBlue),
                                 decorationBox = { inner ->
                                     Box {
                                         if (memberQuery.isEmpty()) {
@@ -854,7 +662,7 @@ fun ChatInfoScreen(
                                                         selectedMemberIds + person.id
                                                     }
                                                 }
-                                                .padding(vertical = 6.dp, horizontal = 4.dp),
+                                                .padding(vertical = 7.dp, horizontal = 6.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
@@ -877,6 +685,7 @@ fun ChatInfoScreen(
                             }
 
                             Spacer(modifier = Modifier.height(8.dp))
+
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.End,
@@ -899,7 +708,13 @@ fun ChatInfoScreen(
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(16.dp))
-                                        .background(if (selectedMemberIds.isNotEmpty() && !isAddingGroupMembers) colors.primaryBlue else colors.surfaceMuted)
+                                        .background(
+                                            if (selectedMemberIds.isNotEmpty() && !isAddingGroupMembers) {
+                                                colors.primaryBlue
+                                            } else {
+                                                colors.cardBackground
+                                            }
+                                        )
                                         .clickable(enabled = selectedMemberIds.isNotEmpty() && !isAddingGroupMembers) {
                                             onAddMembers(selectedMemberIds.toList())
                                             isAddingMembersOpen = false
@@ -920,286 +735,92 @@ fun ChatInfoScreen(
                 }
             }
 
-            // Shared Media section with Grid Preview + See All
-            Spacer(modifier = Modifier.height(14.dp))
-            ChatInfoSectionCard {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = stringResource(R.string.dm_shared_media),
-                        color = colors.primaryText,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (sharedMedia.isNotEmpty()) {
-                        Text(
-                            text = "${stringResource(R.string.dm_see_all)} (${sharedMedia.size})",
-                            color = colors.primaryBlue,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable { showAllMediaGallery = true }
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                if (sharedMedia.isEmpty()) {
-                    Text(
-                        text = stringResource(R.string.dm_no_shared_media),
-                        color = colors.secondaryText,
-                        fontSize = 13.sp
-                    )
-                } else {
-                    val previewItems = sharedMedia.take(6)
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        previewItems.chunked(3).forEach { rowItems ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                rowItems.forEach { msg ->
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .aspectRatio(1f)
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(colors.surfaceMuted)
-                                            .clickable { previewMediaUrl = msg.attachmentPath }
-                                    ) {
-                                        AsyncImage(
-                                            model = msg.attachmentPath,
-                                            contentDescription = null,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    }
-                                }
-                                repeat(3 - rowItems.size) {
-                                    Spacer(modifier = Modifier.weight(1f))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Shared Links & Files section
-            Spacer(modifier = Modifier.height(14.dp))
-            ChatInfoSectionCard {
-                Text(
-                    text = stringResource(R.string.dm_shared_links_files),
-                    color = colors.primaryText,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-
-                if (sharedLinks.isEmpty() && sharedFiles.isEmpty()) {
-                    Text(
-                        text = stringResource(R.string.dm_no_shared_links_files),
-                        color = colors.secondaryText,
-                        fontSize = 13.sp
-                    )
-                } else {
-                    sharedLinks.take(5).forEach { link ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { runCatching { uriHandler.openUri(link.url) } }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_link),
-                                contentDescription = null,
-                                tint = colors.primaryBlue,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = link.url,
-                                color = colors.primaryText,
-                                fontSize = 13.5.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-                    sharedFiles.take(5).forEach { fileMsg ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable {
-                                    fileMsg.attachmentPath?.let { path -> runCatching { uriHandler.openUri(path) } }
-                                }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_paperclip),
-                                contentDescription = null,
-                                tint = colors.secondaryText,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = fileMsg.attachmentPath?.substringAfterLast('/') ?: stringResource(R.string.dm_media_attachment),
-                                color = colors.primaryText,
-                                fontSize = 13.5.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Chat Settings section
-            Spacer(modifier = Modifier.height(14.dp))
-            ChatInfoSectionCard {
-                Text(
-                    text = stringResource(R.string.dm_chat_settings),
-                    color = colors.primaryText,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-
-                ChatInfoActionRow(
-                    iconRes = R.drawable.ic_pin,
-                    label = if (isPinned) stringResource(R.string.dm_unpin_chat) else stringResource(R.string.dm_pin_chat),
-                    onClick = onTogglePin
-                )
-                HorizontalDivider(color = colors.hairlineBorder)
-                ChatInfoActionRow(
-                    iconRes = if (isMuted) R.drawable.ic_bell else R.drawable.ic_bell_off,
-                    label = if (isMuted) stringResource(R.string.dm_unmute_chat) else stringResource(R.string.dm_mute_chat),
-                    onClick = onToggleMute
-                )
-                HorizontalDivider(color = colors.hairlineBorder)
-                ChatInfoActionRow(
-                    iconRes = R.drawable.ic_trash,
-                    label = stringResource(R.string.dm_clear_history),
-                    onClick = { showClearConfirm = true }
-                )
-            }
-
-            // Privacy & Safety / Danger Zone section
-            Spacer(modifier = Modifier.height(14.dp))
-            ChatInfoSectionCard {
-                Text(
-                    text = stringResource(R.string.dm_danger_zone),
-                    color = colors.primaryText,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-
-                if (isDirect) {
-                    val peerLabel = peer?.displayName?.takeIf { it.isNotBlank() } ?: peer?.handle.orEmpty()
-                    ChatInfoActionRow(
-                        iconRes = R.drawable.ic_flag,
-                        label = stringResource(R.string.dm_report_user, peerLabel),
-                        tint = colors.destructiveRed,
-                        onClick = { showReportSheet = true }
-                    )
-                    HorizontalDivider(color = colors.hairlineBorder)
-                    ChatInfoActionRow(
-                        iconRes = R.drawable.ic_block,
-                        label = stringResource(R.string.dm_block_user, peerLabel),
-                        tint = colors.destructiveRed,
-                        onClick = { showBlockConfirm = true }
-                    )
-                } else {
-                    ChatInfoActionRow(
-                        iconRes = R.drawable.ic_leave_group,
-                        label = stringResource(R.string.dm_leave_group),
-                        tint = colors.destructiveRed,
-                        onClick = { showLeaveConfirm = true }
-                    )
-                }
-            }
+            ChatInfoControlRow(
+                iconRes = R.drawable.ic_leave_group,
+                title = stringResource(R.string.dm_leave_group),
+                subtitle = stringResource(R.string.dm_info_leave_group_subtitle),
+                isDestructive = true,
+                onClick = { showLeaveConfirm = true }
+            )
         }
-    }
 
-    // Full shared media gallery dialog
-    if (showAllMediaGallery) {
-        Dialog(
-            onDismissRequest = { showAllMediaGallery = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(chatColors.pageBackground)
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Bottom Shared Media Section: Single clean media icon tab + underline + 3-col square grid
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text(
-                        text = stringResource(R.string.dm_shared_media),
-                        color = colors.primaryText,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
                     Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(colors.surfaceMuted)
-                            .pressScaleClickable { showAllMediaGallery = false },
+                        modifier = Modifier.padding(vertical = 10.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            painter = painterResource(id = R.drawable.ic_close),
-                            contentDescription = stringResource(R.string.dm_cancel),
+                            painter = painterResource(id = R.drawable.ic_image),
+                            contentDescription = stringResource(R.string.dm_shared_media),
                             tint = colors.primaryText,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                     }
+                    Box(
+                        modifier = Modifier
+                            .width(68.dp)
+                            .height(2.dp)
+                            .background(colors.primaryText)
+                    )
                 }
-                Column(
+                Spacer(modifier = Modifier.weight(2f))
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(0.7.dp)
+                    .background(colors.hairlineBorder)
+            )
+
+            if (sharedMedia.isEmpty()) {
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(vertical = 40.dp, horizontal = 24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = stringResource(R.string.dm_no_shared_photos),
+                        color = colors.secondaryText,
+                        fontSize = 13.5.sp,
+                        fontFamily = BuildXFontFamily,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            } else {
+                Spacer(modifier = Modifier.height(2.dp))
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     sharedMedia.chunked(3).forEach { rowItems ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            rowItems.forEach { msg ->
+                            rowItems.forEach { mediaMsg ->
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
                                         .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(14.dp))
                                         .background(colors.surfaceMuted)
-                                        .clickable { previewMediaUrl = msg.attachmentPath }
+                                        .clickable { viewerMediaMessage = mediaMsg }
                                 ) {
                                     AsyncImage(
-                                        model = msg.attachmentPath,
-                                        contentDescription = null,
+                                        model = mediaMsg.attachmentPath,
+                                        contentDescription = mediaMsg.content.takeIf { it.isNotBlank() },
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize()
                                     )
@@ -1215,26 +836,12 @@ fun ChatInfoScreen(
         }
     }
 
-    if (!previewMediaUrl.isNullOrBlank()) {
-        Dialog(
-            onDismissRequest = { previewMediaUrl = null },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.92f))
-                    .clickable { previewMediaUrl = null },
-                contentAlignment = Alignment.Center
-            ) {
-                AsyncImage(
-                    model = previewMediaUrl,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
+    viewerMediaMessage?.let { msg ->
+        DmMediaViewerDialog(
+            message = msg,
+            onDismiss = { viewerMediaMessage = null },
+            onShowMessage = onShowSnackbar
+        )
     }
 
     if (showReportSheet) {
@@ -1308,154 +915,224 @@ fun ChatInfoScreen(
 }
 
 @Composable
-private fun ChatInfoSectionCard(
-    content: @Composable () -> Unit
-) {
-    val colors = BuildXTheme.colors
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .softShadow(
-                color = colors.headerHaloShadowColor,
-                cornerRadius = 20.dp,
-                blurRadius = 10.dp,
-                offsetY = 2.dp
-            )
-            .clip(RoundedCornerShape(20.dp))
-            .background(colors.cardBackground)
-            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(20.dp))
-            .padding(16.dp)
-    ) {
-        content()
-    }
-}
-
-@Composable
-private fun MutedStatusBadge() {
-    val colors = BuildXTheme.colors
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(colors.surfaceMuted)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp)
-    ) {
-        Icon(
-            painter = painterResource(id = R.drawable.ic_bell_off),
-            contentDescription = null,
-            tint = colors.secondaryText,
-            modifier = Modifier.size(12.dp)
-        )
-        Text(
-            text = stringResource(R.string.dm_mute_chat),
-            color = colors.secondaryText,
-            fontSize = 11.5.sp,
-            fontWeight = FontWeight.Medium
-        )
-    }
-}
-
-@Composable
-private fun QuickActionTile(
+private fun ChatInfoQuickCircleAction(
     iconRes: Int,
     label: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val colors = BuildXTheme.colors
-    Column(
-        modifier = modifier
-            .softShadow(
-                color = colors.headerHaloShadowColor,
-                cornerRadius = 18.dp,
-                blurRadius = 10.dp,
-                offsetY = 2.dp
-            )
-            .clip(RoundedCornerShape(18.dp))
-            .background(colors.cardBackground)
-            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(18.dp))
-            .pressScaleClickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 12.dp, horizontal = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(5.dp)
-    ) {
-        Icon(
-            painter = painterResource(id = iconRes),
-            contentDescription = label,
-            tint = if (enabled) colors.primaryText else colors.secondaryText.copy(alpha = 0.5f),
-            modifier = Modifier.size(20.dp)
-        )
-        Text(
-            text = label,
-            color = if (enabled) colors.primaryText else colors.secondaryText.copy(alpha = 0.5f),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@Composable
-private fun SmallIconPill(
-    iconRes: Int,
-    bg: Color,
-    tint: Color,
+    isActive: Boolean = false,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
-    Box(
+    val colors = BuildXTheme.colors
+    val circleBg by animateColorAsState(
+        targetValue = if (isActive) colors.primaryBlue.copy(alpha = 0.14f) else colors.surfaceMuted,
+        animationSpec = tween(160),
+        label = "quick_action_bg"
+    )
+    val iconTint by animateColorAsState(
+        targetValue = when {
+            !enabled -> colors.secondaryText.copy(alpha = 0.45f)
+            isActive -> colors.primaryBlue
+            else -> colors.primaryText
+        },
+        animationSpec = tween(160),
+        label = "quick_action_tint"
+    )
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .size(36.dp)
-            .clip(CircleShape)
-            .background(bg)
-            .pressScaleClickable(onClick = onClick),
-        contentAlignment = Alignment.Center
+            .width(68.dp)
+            .pressScaleClickable(enabled = enabled, onClick = onClick)
     ) {
-        Icon(
-            painter = painterResource(id = iconRes),
-            contentDescription = null,
-            tint = tint,
-            modifier = Modifier.size(16.dp)
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(circleBg)
+                .border(
+                    width = 0.8.dp,
+                    color = if (isActive) colors.primaryBlue.copy(alpha = 0.42f) else colors.subtleSurfaceBorder,
+                    shape = CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                painter = painterResource(id = iconRes),
+                contentDescription = label,
+                tint = iconTint,
+                modifier = Modifier.size(21.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = label,
+            color = if (isActive) colors.primaryBlue else if (enabled) colors.primaryText else colors.secondaryText.copy(alpha = 0.55f),
+            fontSize = 12.5.sp,
+            fontWeight = FontWeight.Medium,
+            fontFamily = BuildXFontFamily,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
         )
     }
 }
 
 @Composable
-private fun ChatInfoActionRow(
+private fun ChatInfoControlRow(
     iconRes: Int,
-    label: String,
-    onClick: () -> Unit,
-    tint: Color? = null
+    title: String,
+    subtitle: String? = null,
+    isDestructive: Boolean = false,
+    trailing: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit
 ) {
     val colors = BuildXTheme.colors
-    val contentColor = tint ?: colors.primaryText
+    val contentTint = if (isDestructive) Color(0xFFE53935) else colors.primaryText
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 12.dp, horizontal = 2.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .heightIn(min = 28.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
             painter = painterResource(id = iconRes),
             contentDescription = null,
-            tint = contentColor,
-            modifier = Modifier.size(19.dp)
+            tint = contentTint,
+            modifier = Modifier.size(22.dp)
         )
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = label,
-            color = contentColor,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
-        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = contentTint,
+                fontSize = 15.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = BuildXFontFamily,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(1.dp))
+                Text(
+                    text = subtitle,
+                    color = colors.secondaryText,
+                    fontSize = 12.5.sp,
+                    fontFamily = BuildXFontFamily,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        if (trailing != null) {
+            Spacer(modifier = Modifier.width(8.dp))
+            trailing()
+        }
+    }
+}
+
+@Composable
+private fun ChatInfoMemberRow(
+    participant: DmParticipant,
+    currentUserId: String,
+    isViewerAdmin: Boolean,
+    onViewProfile: (String) -> Unit,
+    onRequestRemove: () -> Unit
+) {
+    val colors = BuildXTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(enabled = !participant.handle.isNullOrBlank()) {
+                participant.handle?.takeIf { it.isNotBlank() }?.let(onViewProfile)
+            }
+            .padding(horizontal = 4.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(colors.surfaceMuted)
+                .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            if (!participant.avatarUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = participant.avatarUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Text(
+                    text = (participant.displayName ?: participant.handle ?: "U").first().uppercase(),
+                    color = colors.primaryText,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = participant.displayName?.takeIf { it.isNotBlank() } ?: participant.handle.orEmpty(),
+                    color = colors.primaryText,
+                    fontSize = 14.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                if (participant.isVerified) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    VerifiedBadge(size = 13.dp)
+                }
+            }
+            if (!participant.handle.isNullOrBlank()) {
+                Text(
+                    text = "@${participant.handle}",
+                    color = colors.secondaryText,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        if (participant.role == "admin") {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(colors.surfaceMuted)
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.dm_admin),
+                    color = colors.primaryBlue,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        } else if (isViewerAdmin && participant.userId != currentUserId) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(colors.destructiveRed.copy(alpha = 0.12f))
+                    .pressScaleClickable(onClick = onRequestRemove)
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.dm_remove_member),
+                    color = colors.destructiveRed,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
     }
 }
 
@@ -1468,23 +1145,13 @@ private fun ChatInfoConfirmDialog(
     onDismiss: () -> Unit
 ) {
     val colors = BuildXTheme.colors
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
+    Dialog(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 28.dp)
-                .softShadow(
-                    color = colors.composerShadowColor,
-                    cornerRadius = 22.dp,
-                    blurRadius = 30.dp,
-                    offsetY = 10.dp
-                )
-                .clip(RoundedCornerShape(22.dp))
+                .clip(RoundedCornerShape(24.dp))
                 .background(colors.cardBackground)
+                .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(24.dp))
                 .padding(22.dp)
         ) {
             Text(
@@ -1550,8 +1217,7 @@ private fun PreviewChatInfoDirectLight() {
                     username = "shopramahoo",
                     handle = "shopramahoo",
                     displayName = "Voxin",
-                    isVerified = true,
-                    bio = "Designing Build X & mobile chat experiences."
+                    isVerified = true
                 ),
                 participants = listOf(
                     DmParticipant(userId = "me", isMuted = false, isPinned = true),
@@ -1589,7 +1255,9 @@ private fun PreviewChatInfoDirectLight() {
             onLeaveGroup = {},
             onClearHistory = {},
             onReport = { _, _ -> },
-            onBlock = {}
+            onBlock = {},
+            onSearchInChat = {},
+            onCreateGroupWithPeer = {}
         )
     }
 }

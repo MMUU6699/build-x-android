@@ -82,10 +82,11 @@ fun NewMessageOrGroupSheet(
     onCreateGroup: () -> Unit,
     isCreatingGroup: Boolean,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    initialMode: NewChatMode = NewChatMode.DIRECT
 ) {
     val colors = BuildXTheme.colors
-    var currentMode by remember { mutableStateOf(NewChatMode.DIRECT) }
+    var currentMode by remember(initialMode) { mutableStateOf(initialMode) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(

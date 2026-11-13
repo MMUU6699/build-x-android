@@ -2,6 +2,10 @@ package app.buildx.chat.ui.screens
 
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -58,6 +62,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -74,6 +79,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
@@ -91,7 +97,6 @@ import app.buildx.chat.data.model.DmMemberAvatar
 import app.buildx.chat.data.model.DmPeerSummary
 import app.buildx.chat.data.model.FeedNoteItem
 import app.buildx.chat.data.model.PersonSearchResult
-import app.buildx.chat.ui.components.BubblePopupPositionProvider
 import app.buildx.chat.ui.components.HeaderCircleButton
 import app.buildx.chat.ui.components.VerifiedBadge
 import app.buildx.chat.ui.components.pressScaleClickable
@@ -117,6 +122,7 @@ fun DmInboxScreen(
     onOpenProfile: (String) -> Unit,
     onOpenNoteSheet: () -> Unit,
     onReplyToNote: (FeedNoteItem, String) -> Unit,
+    onToggleNoteLike: (String) -> Unit = {},
     onCreateGroupClick: () -> Unit,
     onTogglePinConversation: (String) -> Unit,
     onToggleMuteConversation: (String) -> Unit,
@@ -143,6 +149,8 @@ fun DmInboxScreen(
 
     var activePopupItem by remember { mutableStateOf<DmInboxItem?>(null) }
     var activeRowBounds by remember { mutableStateOf<IntRect?>(null) }
+    var rootLeftPx by remember { mutableStateOf(0) }
+    var rootTopPx by remember { mutableStateOf(0) }
     var selectedGroupInfoItem by remember { mutableStateOf<DmInboxItem?>(null) }
     var selectedReplyNote by remember { mutableStateOf<FeedNoteItem?>(null) }
 
@@ -159,6 +167,11 @@ fun DmInboxScreen(
             modifier = modifier
                 .fillMaxSize()
                 .background(colors.pageBackground)
+                .onGloballyPositioned { coords ->
+                    val rootBounds = coords.boundsInWindow()
+                    rootLeftPx = rootBounds.left.roundToInt()
+                    rootTopPx = rootBounds.top.roundToInt()
+                }
         ) {
             Column(
                 modifier = Modifier
@@ -272,6 +285,8 @@ fun DmInboxScreen(
                                 createdAt = pn.createdAt,
                                 expiresAt = pn.expiresAt,
                                 isOwn = true,
+                                likesCount = pn.likesCount,
+                                isLikedByMe = pn.isLikedByMe,
                                 author = DmPeerSummary(
                                     id = pn.userId,
                                     displayName = uiState.profile?.displayName ?: "You",
@@ -281,10 +296,15 @@ fun DmInboxScreen(
                                 )
                             )
                         }
+                    val ownAvatarUrl = ownNote?.author?.avatarUrl?.takeIf { it.isNotBlank() }
+                        ?: uiState.profile?.avatarUrl
+                    val ownDisplayName = uiState.profile?.displayName
                     val friendsNotes = uiState.inboxNotesTray.filterNot { it.isOwn || it.userId == currentUserId }
 
                     DmNotesStrip(
                         ownNote = ownNote,
+                        ownAvatarUrl = ownAvatarUrl,
+                        ownDisplayName = ownDisplayName,
                         friendsNotes = friendsNotes,
                         currentUserId = currentUserId,
                         onOpenNoteSheet = onOpenNoteSheet,
@@ -405,12 +425,26 @@ fun DmInboxScreen(
             // 6. Long-Press Row Lift & Anchored Popup Menu Overlay
             activePopupItem?.let { item ->
                 val density = LocalDensity.current
+                var liftVisible by remember(item.effectiveId) { mutableStateOf(false) }
+                var placedAbove by remember(item.effectiveId) { mutableStateOf(false) }
+                LaunchedEffect(item.effectiveId) { liftVisible = true }
+
+                val scrimAlpha by animateFloatAsState(
+                    targetValue = if (liftVisible) 0.30f else 0f,
+                    animationSpec = tween(160),
+                    label = "popup_scrim_alpha"
+                )
+                val liftScale by animateFloatAsState(
+                    targetValue = if (liftVisible) 1.02f else 1f,
+                    animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMedium),
+                    label = "popup_row_lift_scale"
+                )
 
                 // 30% Dimming Scrim
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.30f))
+                        .background(Color.Black.copy(alpha = scrimAlpha))
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
@@ -421,14 +455,15 @@ fun DmInboxScreen(
                         )
                 )
 
-                // Lifted Row Overlay
+                // Lifted Row Overlay aligned cleanly against parent window origin
                 activeRowBounds?.let { bounds ->
-                    val topDp = with(density) { bounds.top.toDp() }
+                    val offsetX = bounds.left - rootLeftPx
+                    val offsetY = bounds.top - rootTopPx
                     Box(
                         modifier = Modifier
-                            .offset(y = topDp)
-                            .fillMaxWidth()
-                            .scale(1.02f)
+                            .offset { IntOffset(offsetX, offsetY) }
+                            .width(with(density) { bounds.width.toDp() })
+                            .scale(liftScale)
                             .softShadow(colors.cardBackground.copy(alpha = 0.35f), cornerRadius = 16.dp, blurRadius = 18.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .background(colors.pageBackground)
@@ -440,34 +475,59 @@ fun DmInboxScreen(
                         )
                     }
 
+                    val gapPx = with(density) { 10.dp.roundToPx() }
+                    val edgeMarginPx = with(density) { 16.dp.roundToPx() }
+                    val positionProvider = remember(bounds, strings.isRtl, gapPx, edgeMarginPx) {
+                        RowAnchoredPopupPositionProvider(
+                            rowBounds = bounds,
+                            isRtl = strings.isRtl,
+                            gapPx = gapPx,
+                            edgeMarginPx = edgeMarginPx,
+                            onDirectionResolved = { above -> placedAbove = above }
+                        )
+                    }
+
                     // Anchored Popup Attached to Row
                     Popup(
-                        popupPositionProvider = BubblePopupPositionProvider(isRtl = strings.isRtl),
+                        popupPositionProvider = positionProvider,
                         onDismissRequest = {
                             activePopupItem = null
                             activeRowBounds = null
                         }
                     ) {
-                        DmConversationPopupCard(
-                            item = item,
-                            onPinToggle = { onSetConversationPin(item.effectiveId, !item.isPinned) },
-                            onMuteSelect = { duration -> onSetConversationMute(item.effectiveId, duration) },
-                            onReadUnreadToggle = { onToggleReadUnreadConversation(item.effectiveId) },
-                            onViewProfile = {
-                                val handle = item.handle
-                                if (!handle.isNullOrBlank()) onOpenProfile(handle)
-                            },
-                            onGroupInfo = {
-                                selectedGroupInfoItem = item
-                                onLoadGroupDetail(item.effectiveId)
-                            },
-                            onDeleteChat = { onDeleteConversationForMe(item.effectiveId) },
-                            onLeaveGroup = { onLeaveGroup(item.effectiveId) },
-                            onDismiss = {
-                                activePopupItem = null
-                                activeRowBounds = null
-                            }
-                        )
+                        AnimatedVisibility(
+                            visible = liftVisible,
+                            enter = fadeIn(tween(150)) + scaleIn(
+                                initialScale = 0.90f,
+                                transformOrigin = TransformOrigin(
+                                    pivotFractionX = if (strings.isRtl) 0.92f else 0.08f,
+                                    pivotFractionY = if (placedAbove) 1f else 0f
+                                ),
+                                animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMedium)
+                            ),
+                            exit = fadeOut(tween(110)) + scaleOut(targetScale = 0.94f)
+                        ) {
+                            DmConversationPopupCard(
+                                item = item,
+                                onPinToggle = { onSetConversationPin(item.effectiveId, !item.isPinned) },
+                                onMuteSelect = { duration -> onSetConversationMute(item.effectiveId, duration) },
+                                onReadUnreadToggle = { onToggleReadUnreadConversation(item.effectiveId) },
+                                onViewProfile = {
+                                    val handle = item.handle
+                                    if (!handle.isNullOrBlank()) onOpenProfile(handle)
+                                },
+                                onGroupInfo = {
+                                    selectedGroupInfoItem = item
+                                    onLoadGroupDetail(item.effectiveId)
+                                },
+                                onDeleteChat = { onDeleteConversationForMe(item.effectiveId) },
+                                onLeaveGroup = { onLeaveGroup(item.effectiveId) },
+                                onDismiss = {
+                                    activePopupItem = null
+                                    activeRowBounds = null
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -524,20 +584,26 @@ fun DmInboxScreen(
                 )
             }
 
-            // 8. Friend Note Reply Sheet
+            // 8. Friend Note Interaction Sheet (View Profile, Like & Reply)
             selectedReplyNote?.let { note ->
+                val liveNote = uiState.inboxNotesTray.firstOrNull {
+                    it.effectiveNoteId == note.effectiveNoteId || it.id == note.id
+                } ?: note
                 DmNoteReplySheet(
-                    note = note,
+                    note = liveNote,
                     onViewProfile = {
-                        val handle = note.author.handle
+                        val handle = liveNote.author.handle
                         if (!handle.isNullOrBlank()) {
                             selectedReplyNote = null
                             onOpenProfile(handle)
                         }
                     },
+                    onToggleLike = {
+                        onToggleNoteLike(liveNote.effectiveNoteId)
+                    },
                     onSendReply = { replyText ->
                         selectedReplyNote = null
-                        onReplyToNote(note, replyText)
+                        onReplyToNote(liveNote, replyText)
                     },
                     onDismiss = { selectedReplyNote = null }
                 )
@@ -613,6 +679,8 @@ private fun DmFilterChip(
 @Composable
 private fun DmNotesStrip(
     ownNote: FeedNoteItem?,
+    ownAvatarUrl: String?,
+    ownDisplayName: String?,
     friendsNotes: List<FeedNoteItem>,
     currentUserId: String?,
     onOpenNoteSheet: () -> Unit,
@@ -621,14 +689,15 @@ private fun DmNotesStrip(
     LazyRow(
         modifier = Modifier
             .fillMaxWidth()
-            .height(124.dp),
+            .height(130.dp),
         contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         item(key = "own_note_slot") {
             NoteStripCell(
-                avatarUrl = ownNote?.author?.avatarUrl,
+                avatarUrl = ownAvatarUrl,
+                avatarContentDescription = ownDisplayName,
                 label = stringResource(R.string.dm_your_note),
                 bubbleText = ownNote?.content?.takeIf { it.isNotBlank() }
                     ?: stringResource(R.string.dm_share_a_note),
@@ -638,9 +707,10 @@ private fun DmNotesStrip(
             )
         }
 
-        items(friendsNotes, key = { it.id }) { note ->
+        items(friendsNotes, key = { it.effectiveNoteId }) { note ->
             NoteStripCell(
                 avatarUrl = note.author.avatarUrl,
+                avatarContentDescription = note.author.displayName ?: note.author.handle,
                 label = note.author.displayName ?: note.author.handle ?: "",
                 bubbleText = note.content,
                 showAddBadge = false,
@@ -652,13 +722,14 @@ private fun DmNotesStrip(
 }
 
 /**
- * A single 88x124dp note cell: 68dp avatar 22dp above the baseline, the thought
- * bubble floating over its top rim, and an always-on "+" affordance for the
- * viewer's own note.
+ * A single 90x130dp note cell: 68dp avatar 22dp above the baseline, a fixed-height
+ * 48dp top bubble zone aligning every 1-line and 2-line thought bubble cleanly above
+ * the avatar's top rim, and two distinct tail dots above the upper-start rim.
  */
 @Composable
 private fun NoteStripCell(
     avatarUrl: String?,
+    avatarContentDescription: String?,
     label: String,
     bubbleText: String,
     showAddBadge: Boolean,
@@ -669,8 +740,8 @@ private fun NoteStripCell(
 
     Box(
         modifier = Modifier
-            .width(88.dp)
-            .height(124.dp)
+            .width(90.dp)
+            .height(130.dp)
             .pressScaleClickable(onClick = onClick),
         contentAlignment = Alignment.TopCenter
     ) {
@@ -686,14 +757,14 @@ private fun NoteStripCell(
             if (!avatarUrl.isNullOrBlank()) {
                 AsyncImage(
                     model = avatarUrl,
-                    contentDescription = null,
+                    contentDescription = avatarContentDescription,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
                 Icon(
                     painter = painterResource(id = R.drawable.ic_user),
-                    contentDescription = null,
+                    contentDescription = avatarContentDescription,
                     tint = colors.secondaryText,
                     modifier = Modifier
                         .size(32.dp)
@@ -702,10 +773,16 @@ private fun NoteStripCell(
             }
         }
 
-        ThoughtBubbleCard(
-            content = bubbleText,
-            modifier = Modifier.align(Alignment.TopCenter)
-        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .height(48.dp)
+                .zIndex(2f),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            ThoughtBubbleCard(content = bubbleText)
+        }
 
         if (showAddBadge) {
             Box(
@@ -713,6 +790,7 @@ private fun NoteStripCell(
                     .align(Alignment.BottomEnd)
                     .padding(end = 6.dp, bottom = 20.dp)
                     .size(24.dp)
+                    .zIndex(3f)
                     .clip(CircleShape)
                     .background(colors.pageBackground)
                     .padding(2.dp)
@@ -761,12 +839,13 @@ private fun ThoughtBubbleCard(
     val colors = BuildXTheme.colors
 
     Column(
-        modifier = modifier.zIndex(1f),
-        horizontalAlignment = Alignment.CenterHorizontally
+        modifier = modifier.zIndex(2f),
+        horizontalAlignment = Alignment.Start
     ) {
         Box(
             modifier = Modifier
-                .widthIn(min = 48.dp, max = 92.dp)
+                .widthIn(min = 56.dp, max = 90.dp)
+                .defaultMinSize(minHeight = 32.dp)
                 .softShadow(
                     color = colors.headerHaloShadowColor,
                     cornerRadius = 16.dp,
@@ -776,7 +855,7 @@ private fun ThoughtBubbleCard(
                 .clip(RoundedCornerShape(16.dp))
                 .background(colors.cardBackground)
                 .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
-                .padding(horizontal = 8.dp, vertical = 5.dp),
+                .padding(horizontal = 10.dp, vertical = 4.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
@@ -787,46 +866,74 @@ private fun ThoughtBubbleCard(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
-                lineHeight = 14.5.sp
+                lineHeight = 13.5.sp
             )
         }
 
-        // Two visible tail dots bridging the bubble into the avatar rim.
-        Spacer(modifier = Modifier.height(1.dp))
-        Box(
-            modifier = Modifier
-                .size(6.5.dp)
-                .clip(CircleShape)
-                .background(colors.cardBackground)
-                .border(0.6.dp, colors.subtleSurfaceBorder, CircleShape)
-        )
-        Spacer(modifier = Modifier.height(1.dp))
-        Box(
-            modifier = Modifier
-                .size(4.dp)
-                .clip(CircleShape)
-                .background(colors.cardBackground)
-        )
+        // Two distinct bordered tail dots sitting cleanly above the avatar's top-start edge.
+        Column(
+            modifier = Modifier.padding(start = 15.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(modifier = Modifier.height(1.dp))
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(colors.cardBackground)
+                    .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
+            )
+            Spacer(modifier = Modifier.height(1.dp))
+            Box(
+                modifier = Modifier
+                    .size(4.dp)
+                    .clip(CircleShape)
+                    .background(colors.cardBackground)
+                    .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
+            )
+        }
     }
 }
 
 /**
- * Bottom sheet shown when a friend's note is tapped: author identity, a
- * "View profile" pill, the note itself, and a reply composer that starts a
- * direct conversation through [onSendReply].
+ * Redesigned Note Interaction Bottom Sheet shown when a friend's note is tapped:
+ * - Compact @handle + active timestamp + "View profile" header
+ * - Centered Hero Thought-Bubble with two tail dots over a 76dp avatar
+ * - Crimson Heart Like button anchored cleanly at Alignment.BottomEnd of the avatar
+ * - Bold display name + verified badge and a 50dp capsule reply bar with 42dp send button
  */
 @Composable
-private fun DmNoteReplySheet(
+internal fun DmNoteReplySheet(
     note: FeedNoteItem,
     onViewProfile: () -> Unit,
+    onToggleLike: () -> Unit,
     onSendReply: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
-    var replyText by remember(note.id) { mutableStateOf("") }
+    val haptic = LocalHapticFeedback.current
+    var replyText by remember(note.effectiveNoteId) { mutableStateOf("") }
+    var heartPulse by remember(note.effectiveNoteId) { mutableStateOf(false) }
     val canSend = replyText.trim().isNotEmpty()
-    val authorName = note.author.displayName ?: note.author.handle ?: ""
+    val authorName = note.author.displayName?.takeIf { it.isNotBlank() } ?: note.author.handle ?: ""
+    val handleText = note.author.handle?.takeIf { it.isNotBlank() }
+        ?: note.author.username?.takeIf { it.isNotBlank() }
+    val rawTime = formatLocalizedTime(note.createdAt)
+    val nowLabel = stringResource(R.string.dm_time_now)
+    val activeStatusText = if (rawTime.isBlank() || rawTime == nowLabel) {
+        stringResource(R.string.dm_note_active_now)
+    } else {
+        stringResource(R.string.dm_note_active_ago, rawTime)
+    }
+    val heartCrimson = Color(0xFFFF3040)
+
+    val heartScale by animateFloatAsState(
+        targetValue = if (heartPulse) 1.25f else 1f,
+        animationSpec = spring(dampingRatio = 0.42f, stiffness = Spring.StiffnessMedium),
+        finishedListener = { heartPulse = false },
+        label = "note_like_heart_scale"
+    )
 
     Box(
         modifier = Modifier
@@ -842,7 +949,7 @@ private fun DmNoteReplySheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
+                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
                 .background(colors.cardBackground)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -850,77 +957,47 @@ private fun DmNoteReplySheet(
                     onClick = {}
                 )
                 .imePadding()
-                .padding(horizontal = 20.dp, vertical = 18.dp)
+                .padding(horizontal = 20.dp, vertical = 14.dp)
                 .navigationBarsPadding()
         ) {
             Box(
                 modifier = Modifier
-                    .width(36.dp)
+                    .width(32.dp)
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
                     .background(colors.grabHandle)
                     .align(Alignment.CenterHorizontally)
             )
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(colors.surfaceMuted)
-                        .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
-                ) {
-                    if (!note.author.avatarUrl.isNullOrBlank()) {
-                        AsyncImage(
-                            model = note.author.avatarUrl,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_user),
-                            contentDescription = null,
-                            tint = colors.secondaryText,
-                            modifier = Modifier
-                                .size(24.dp)
-                                .align(Alignment.Center)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
+            // Compact top header: @username + active status at start, View profile pill at end
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (!handleText.isNullOrBlank()) {
                         Text(
-                            text = authorName,
+                            text = "\u2066@$handleText\u2069",
                             color = colors.primaryText,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        if (note.author.isVerified) {
-                            Spacer(modifier = Modifier.width(4.dp))
-                            VerifiedBadge(size = 14.dp)
-                        }
-                    }
-                    if (!note.author.handle.isNullOrBlank()) {
-                        Text(
-                            text = "@${note.author.handle}",
-                            color = colors.secondaryText,
-                            fontSize = 12.5.sp,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            style = TextStyle(textDirection = TextDirection.Ltr),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
+                    Text(
+                        text = activeStatusText,
+                        color = colors.secondaryText,
+                        fontSize = 12.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
 
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(12.dp))
 
                 Box(
                     modifier = Modifier
@@ -928,7 +1005,7 @@ private fun DmNoteReplySheet(
                         .background(colors.surfaceMuted)
                         .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(999.dp))
                         .pressScaleClickable(onClick = onViewProfile)
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
                 ) {
                     Text(
                         text = stringResource(R.string.dm_view_profile),
@@ -939,46 +1016,177 @@ private fun DmNoteReplySheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
-            Box(
-                modifier = Modifier
-                    .widthIn(min = 48.dp, max = 320.dp)
-                    .softShadow(
-                        color = colors.headerHaloShadowColor,
-                        cornerRadius = 18.dp,
-                        blurRadius = 12.dp,
-                        offsetY = 2.5.dp
-                    )
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(colors.surfaceMuted)
-                    .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(18.dp))
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            // Centered Hero Stage: Note Bubble -> 2 Tail Dots -> 76dp Avatar + Like Badge -> Display Name
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = note.content,
-                    color = colors.primaryText,
-                    fontSize = 14.5.sp,
-                    lineHeight = 20.sp
+                Box(
+                    modifier = Modifier
+                        .widthIn(min = 96.dp, max = 240.dp)
+                        .softShadow(
+                            color = colors.headerHaloShadowColor,
+                            cornerRadius = 22.dp,
+                            blurRadius = 16.dp,
+                            offsetY = 3.dp
+                        )
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(colors.surfaceMuted)
+                        .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(22.dp))
+                        .padding(horizontal = 18.dp, vertical = 14.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = note.content,
+                        color = colors.primaryText,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        lineHeight = 22.sp,
+                        textAlign = TextAlign.Center,
+                        style = TextStyle(textDirection = TextDirection.Content)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(3.dp))
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(colors.surfaceMuted)
+                        .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
                 )
+                Spacer(modifier = Modifier.height(2.5.dp))
+                Box(
+                    modifier = Modifier
+                        .size(5.dp)
+                        .clip(CircleShape)
+                        .background(colors.surfaceMuted)
+                        .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Box(
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(76.dp)
+                            .clip(CircleShape)
+                            .background(colors.surfaceMuted)
+                            .border(1.dp, colors.subtleSurfaceBorder, CircleShape)
+                    ) {
+                        if (!note.author.avatarUrl.isNullOrBlank()) {
+                            AsyncImage(
+                                model = note.author.avatarUrl,
+                                contentDescription = authorName,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_user),
+                                contentDescription = authorName,
+                                tint = colors.secondaryText,
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .align(Alignment.Center)
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .offset(x = if (note.likesCount > 0) 20.dp else 8.dp, y = 4.dp)
+                            .defaultMinSize(minWidth = 34.dp, minHeight = 34.dp)
+                            .softShadow(
+                                color = colors.headerHaloShadowColor,
+                                cornerRadius = 17.dp,
+                                blurRadius = 10.dp,
+                                offsetY = 2.dp
+                            )
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(colors.cardBackground)
+                            .border(
+                                width = 0.9.dp,
+                                color = if (note.isLikedByMe) heartCrimson.copy(alpha = 0.45f) else colors.subtleSurfaceBorder,
+                                shape = RoundedCornerShape(999.dp)
+                            )
+                            .pressScaleClickable {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                heartPulse = true
+                                onToggleLike()
+                            }
+                            .padding(horizontal = if (note.likesCount > 0) 9.dp else 7.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            painter = painterResource(
+                                id = if (note.isLikedByMe) R.drawable.ic_heart_filled else R.drawable.ic_heart
+                            ),
+                            contentDescription = stringResource(
+                                if (note.isLikedByMe) R.string.dm_note_unlike else R.string.dm_note_like
+                            ),
+                            tint = if (note.isLikedByMe) heartCrimson else colors.primaryText,
+                            modifier = Modifier
+                                .size(18.dp)
+                                .scale(heartScale)
+                        )
+                        if (note.likesCount > 0) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = note.likesCount.toString(),
+                                color = if (note.isLikedByMe) heartCrimson else colors.primaryText,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = authorName,
+                        color = colors.primaryText,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (note.author.isVerified) {
+                        Spacer(modifier = Modifier.width(5.dp))
+                        VerifiedBadge(size = 16.dp)
+                    }
+                }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(22.dp))
 
+            // 50dp Capsule Reply Input with 42dp blue send button
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
-                    .clip(RoundedCornerShape(26.dp))
+                    .height(50.dp)
+                    .clip(RoundedCornerShape(25.dp))
                     .background(colors.surfaceMuted)
-                    .border(1.dp, colors.subtleSurfaceBorder, RoundedCornerShape(26.dp))
-                    .padding(start = 18.dp, end = 6.dp),
+                    .border(1.dp, colors.subtleSurfaceBorder, RoundedCornerShape(25.dp))
+                    .padding(start = 18.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(modifier = Modifier.weight(1f)) {
                     if (replyText.isEmpty()) {
                         Text(
-                            text = stringResource(R.string.dm_reply_to_note, authorName),
+                            text = stringResource(R.string.dm_reply_to_note_hint, authorName),
                             color = colors.secondaryText,
                             fontSize = 14.5.sp,
                             maxLines = 1,
@@ -993,6 +1201,7 @@ private fun DmNoteReplySheet(
                             color = colors.primaryText,
                             fontSize = 14.5.sp,
                             lineHeight = 20.sp,
+                            textDirection = TextDirection.Content,
                             textAlign = if (isRtlText(replyText, strings.isRtl)) TextAlign.Right else TextAlign.Left
                         ),
                         cursorBrush = SolidColor(colors.primaryBlue),
@@ -1004,7 +1213,7 @@ private fun DmNoteReplySheet(
 
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(42.dp)
                         .clip(CircleShape)
                         .background(
                             if (canSend) colors.primaryBlue else colors.primaryBlue.copy(alpha = 0.35f)
@@ -1245,7 +1454,7 @@ private fun DmConversationAvatar(
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .size(42.dp)
+                .size(45.dp)
                 .background(colors.pageBackground, CircleShape)
                 .padding(2.5.dp)
         ) {
@@ -1311,11 +1520,55 @@ private fun buildConversationPreview(item: DmInboxItem): String {
     }
 
     val content = when (item.lastMessageType) {
-        "image" -> stringResource(R.string.dm_media_photo)
+        "image", "media" -> stringResource(R.string.dm_media_photo)
         else -> lastText ?: stringResource(R.string.dm_no_messages_yet)
     }
 
-    return "\u2068$prefix$content\u2069"
+    return "$prefix\u2068$content\u2069"
+}
+
+/**
+ * Anchors the conversation context-menu popup cleanly above or below the captured
+ * conversation row bounds (in window space), keeping it separated by [gapPx] and
+ * safely inside [edgeMarginPx] screen bounds for both LTR and RTL locales.
+ */
+internal class RowAnchoredPopupPositionProvider(
+    private val rowBounds: IntRect,
+    private val isRtl: Boolean,
+    private val gapPx: Int,
+    private val edgeMarginPx: Int = 24,
+    private val onDirectionResolved: (placedAbove: Boolean) -> Unit = {}
+) : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize
+    ): IntOffset {
+        val maxX = (windowSize.width - popupContentSize.width - edgeMarginPx).coerceAtLeast(edgeMarginPx)
+        val rawX = if (isRtl) {
+            rowBounds.right - edgeMarginPx - popupContentSize.width
+        } else {
+            rowBounds.left + edgeMarginPx
+        }
+        val x = rawX.coerceIn(edgeMarginPx, maxX)
+
+        val maxY = (windowSize.height - popupContentSize.height - edgeMarginPx).coerceAtLeast(edgeMarginPx)
+        val spaceBelow = (windowSize.height - edgeMarginPx) - rowBounds.bottom - gapPx
+        val spaceAbove = rowBounds.top - edgeMarginPx - gapPx
+        val placeBelow = spaceBelow >= popupContentSize.height || spaceBelow >= spaceAbove
+
+        onDirectionResolved(!placeBelow)
+
+        val rawY = if (placeBelow) {
+            rowBounds.bottom + gapPx
+        } else {
+            rowBounds.top - gapPx - popupContentSize.height
+        }
+        val y = rawY.coerceIn(edgeMarginPx, maxY)
+
+        return IntOffset(x, y)
+    }
 }
 
 /**

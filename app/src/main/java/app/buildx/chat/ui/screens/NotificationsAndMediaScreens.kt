@@ -224,11 +224,16 @@ fun NotificationsScreen(
                                 }
                             }
                             Spacer(modifier = Modifier.height(2.dp))
-                            val actionDesc = if (item.type == "follow") {
-                                strings.startedFollowingYou
-                            } else {
-                                val snippet = if (!item.noteContent.isNullOrBlank()) ": \"${item.noteContent}\"" else ""
-                                "${strings.postedANote}$snippet"
+                            val actionDesc = when (item.type) {
+                                "follow" -> strings.startedFollowingYou
+                                "note_like" -> {
+                                    val snippet = if (!item.noteContent.isNullOrBlank()) ": \"${item.noteContent}\"" else ""
+                                    "${strings.likedANote}$snippet"
+                                }
+                                else -> {
+                                    val snippet = if (!item.noteContent.isNullOrBlank()) ": \"${item.noteContent}\"" else ""
+                                    "${strings.postedANote}$snippet"
+                                }
                             }
                             Text(
                                 text = actionDesc,

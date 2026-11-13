@@ -79,7 +79,8 @@ fun ChatHeader(
     onOpenInfoClick: () -> Unit,
     onTogglePinConversation: () -> Unit,
     onToggleMuteConversation: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenWallpaperClick: (() -> Unit)? = null
 ) {
     val colors = BuildXTheme.colors
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -302,6 +303,18 @@ fun ChatHeader(
                                     }
                                 )
                             )
+                            if (onOpenWallpaperClick != null) {
+                                add(
+                                    ActionMenuItem(
+                                        label = stringResource(R.string.dm_wallpaper),
+                                        iconRes = R.drawable.ic_wallpaper,
+                                        onClick = {
+                                            isMoreMenuOpen = false
+                                            onOpenWallpaperClick()
+                                        }
+                                    )
+                                )
+                            }
                             if (state.isDirect && !state.peerHandle.isNullOrBlank()) {
                                 add(
                                     ActionMenuItem(
