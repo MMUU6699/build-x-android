@@ -35,7 +35,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -74,6 +73,7 @@ import app.buildx.chat.data.model.DmPeerIntro
 import app.buildx.chat.data.model.PersonSearchResult
 import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.ui.components.HeaderCircleButton
+import app.buildx.chat.ui.components.MarkLoader
 import app.buildx.chat.ui.components.VerifiedBadge
 import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.screens.BlockAccountDialog
@@ -272,10 +272,10 @@ fun ChatInfoScreen(
                                 .background(Color.Black.copy(alpha = 0.45f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            CircularProgressIndicator(
-                                color = Color.White,
-                                strokeWidth = 2.5.dp,
-                                modifier = Modifier.size(26.dp)
+                            MarkLoader(
+                                size = 26.dp,
+                                isSpinning = true,
+                                tint = Color.White
                             )
                         }
                     }
@@ -641,10 +641,10 @@ fun ChatInfoScreen(
                                         .padding(vertical = 10.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    CircularProgressIndicator(
-                                        color = colors.primaryBlue,
-                                        strokeWidth = 2.dp,
-                                        modifier = Modifier.size(20.dp)
+                                    MarkLoader(
+                                        size = 20.dp,
+                                        isSpinning = true,
+                                        tint = colors.primaryBlue
                                     )
                                 }
                             } else {

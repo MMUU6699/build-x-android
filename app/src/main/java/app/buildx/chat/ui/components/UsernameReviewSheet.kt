@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -178,10 +177,10 @@ fun UsernameReviewSheet(
                         )
                     }
                     if (isChecking) {
-                        CircularProgressIndicator(
-                            color = colors.primaryBlue,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(16.dp)
+                        MarkLoader(
+                            size = 16.dp,
+                            isSpinning = true,
+                            tint = colors.primaryBlue
                         )
                     }
                 }

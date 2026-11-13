@@ -48,13 +48,14 @@ object ChatMessageMapper {
     /**
      * Computes bubble content dimensions and disjoint coordinates for text + metadata.
      *
-     * Overlap is impossible by construction:
-     * - When `(lastLineWidthPx + inlineGapPx + metaWidthPx <= maxWidthPx)`:
-     *   - For 1-line text, bubble width = `max(textWidthPx, lastLineWidthPx + inlineGapPx + metaWidthPx)` (<= maxWidthPx).
-     *   - For multi-line text, bubble width = `max(textWidthPx, lastLineWidthPx + inlineGapPx + metaWidthPx)` (<= maxWidthPx).
-     *   - For LTR text (`isRtlContent = false`), text starts at X=0 and meta is anchored bottom-right (`widthPx - metaWidthPx`).
-     *   - For RTL text (`isRtlContent = true`), text is anchored bottom/top-right (`widthPx - textWidthPx`) and meta is anchored bottom-left (`X=0`).
-     * - Otherwise meta wraps below text (`metaY = textHeightPx + wrapTopGapPx`) anchored to the bubble's text-direction end edge.
+     * Metadata (`HH:mm` + status checkmark) always anchors to the bottom-right corner
+     * (`metaX = bubbleWidth - metaWidthPx`), matching modern Telegram/Signal ergonomics
+     * across both LTR and RTL content without ever overlapping text:
+     * - LTR (`isRtlContent = false`): inline on the bottom line whenever
+     *   `lastLineWidthPx + inlineGapPx + metaWidthPx <= safeMaxWidth`; otherwise wraps below.
+     * - RTL (`isRtlContent = true`): inline to the right of 1-line text when
+     *   `lineCount == 1 && lastLineWidthPx + inlineGapPx + metaWidthPx <= safeMaxWidth`;
+     *   otherwise wraps cleanly below at bottom-right so multi-line RTL lines are never overlapped.
      */
     fun computeBubbleMetaPlacement(
         textWidthPx: Int,
@@ -70,12 +71,13 @@ object ChatMessageMapper {
     ): BubbleMetaLayoutSpec {
         val safeMaxWidth = max(maxWidthPx, max(textWidthPx, metaWidthPx)).coerceAtLeast(1)
         val requiredInlineWidth = lastLineWidthPx + inlineGapPx + metaWidthPx
-        val fitsInline = lineCount > 0 && requiredInlineWidth <= safeMaxWidth
+        val canInlineRtl = !isRtlContent || lineCount == 1
+        val fitsInline = lineCount > 0 && canInlineRtl && requiredInlineWidth <= safeMaxWidth
 
         return if (fitsInline) {
             val bubbleWidth = max(textWidthPx, requiredInlineWidth).coerceAtMost(safeMaxWidth)
-            val textX = if (isRtlContent) (bubbleWidth - textWidthPx).coerceAtLeast(0) else 0
-            val metaX = if (isRtlContent) 0 else (bubbleWidth - metaWidthPx).coerceAtLeast(0)
+            val metaX = (bubbleWidth - metaWidthPx).coerceAtLeast(0)
+            val textX = if (isRtlContent) (metaX - inlineGapPx - textWidthPx).coerceAtLeast(0) else 0
             val metaY = (textHeightPx - metaHeightPx).coerceAtLeast(0)
             val bubbleHeight = max(textHeightPx, metaY + metaHeightPx)
             BubbleMetaLayoutSpec(
@@ -90,7 +92,7 @@ object ChatMessageMapper {
         } else {
             val bubbleWidth = max(textWidthPx, metaWidthPx).coerceAtMost(safeMaxWidth)
             val textX = if (isRtlContent) (bubbleWidth - textWidthPx).coerceAtLeast(0) else 0
-            val metaX = if (isRtlContent) 0 else (bubbleWidth - metaWidthPx).coerceAtLeast(0)
+            val metaX = (bubbleWidth - metaWidthPx).coerceAtLeast(0)
             val metaY = textHeightPx + wrapTopGapPx
             BubbleMetaLayoutSpec(
                 widthPx = bubbleWidth,
@@ -158,6 +160,7 @@ object ChatMessageMapper {
             }
         }
 
+        val participantLookup = participants.associateBy { it.userId }
         val otherParticipants = participants.filter { it.userId != currentUserId }
         val maxPeerReadAtMillis = otherParticipants
             .mapNotNull { it.lastReadAt?.let(::parseInstantMillis) }
@@ -233,6 +236,15 @@ object ChatMessageMapper {
                 it.userId != msg.senderId && it.lastReadMessageId == msg.id
             }
 
+            val participant = participantLookup[msg.senderId]
+            val resolvedSenderName = msg.senderDisplayName?.trim()?.takeIf { it.isNotBlank() }
+                ?: participant?.displayName?.trim()?.takeIf { it.isNotBlank() }
+            val resolvedSenderHandle = msg.senderHandle?.trim()?.takeIf { it.isNotBlank() }
+                ?: msg.senderUsername?.trim()?.takeIf { it.isNotBlank() }
+                ?: participant?.handle?.trim()?.takeIf { it.isNotBlank() }
+                ?: participant?.username?.trim()?.takeIf { it.isNotBlank() }
+            val senderIsVerified = msg.senderIsVerified || (participant?.isVerified == true)
+
             chronologicalItems.add(
                 ChatListItem.MessageItem(
                     stableKey = msg.clientTempId ?: msg.id,
@@ -244,12 +256,15 @@ object ChatMessageMapper {
                     isRtlContent = isRtlText(msg.content, defaultRtl = defaultRtl),
                     position = position,
                     isGroupedWithPrevious = groupedWithPrev,
-                    showSenderName = !isDirect && !isOwn && !isDeleted && !groupedWithPrev && !msg.senderDisplayName.isNullOrBlank(),
+                    showSenderName = !isDirect && !isOwn && !isDeleted && !groupedWithPrev && !resolvedSenderName.isNullOrBlank(),
                     showSenderAvatar = !isDirect && !isOwn && !groupedWithNext,
                     formattedTime = formatShortTime(msg.createdAt, zoneId, locale),
                     deliveryStatus = deliveryStatus,
                     replyPreview = msg.replyTo,
-                    seenParticipants = seenAtThisMessage
+                    seenParticipants = seenAtThisMessage,
+                    resolvedSenderName = resolvedSenderName,
+                    resolvedSenderHandle = resolvedSenderHandle,
+                    senderIsVerified = senderIsVerified
                 )
             )
         }
@@ -364,12 +379,60 @@ object ChatMessageMapper {
         Instant.parse(iso).toEpochMilli()
     }.getOrNull()
 
+    fun mergeParticipantReadState(
+        currentParticipants: List<DmParticipant>,
+        readerUserId: String,
+        readAtIso: String,
+        lastReadMessageId: String?
+    ): List<DmParticipant> {
+        val incomingMs = parseInstantMillis(readAtIso)
+        return currentParticipants.map { participant ->
+            if (participant.userId != readerUserId) {
+                participant
+            } else {
+                val currentMs = participant.lastReadAt?.let(::parseInstantMillis) ?: Long.MIN_VALUE
+                val resolvedAt = if (incomingMs == null || incomingMs >= currentMs) readAtIso else participant.lastReadAt
+                val resolvedMsgId = when {
+                    lastReadMessageId.isNullOrBlank() -> participant.lastReadMessageId
+                    incomingMs == null || incomingMs >= currentMs -> lastReadMessageId
+                    else -> participant.lastReadMessageId
+                }
+                participant.copy(
+                    lastReadAt = resolvedAt,
+                    lastReadMessageId = resolvedMsgId
+                )
+            }
+        }
+    }
+
+    fun mergeMonotonicParticipants(
+        existing: List<DmParticipant>,
+        incoming: List<DmParticipant>
+    ): List<DmParticipant> {
+        if (existing.isEmpty()) return incoming
+        val existingById = existing.associateBy { it.userId }
+        return incoming.map { next ->
+            val prev = existingById[next.userId] ?: return@map next
+            val prevMs = prev.lastReadAt?.let(::parseInstantMillis) ?: Long.MIN_VALUE
+            val nextMs = next.lastReadAt?.let(::parseInstantMillis) ?: Long.MIN_VALUE
+            when {
+                prevMs > nextMs -> next.copy(
+                    lastReadAt = prev.lastReadAt,
+                    lastReadMessageId = prev.lastReadMessageId ?: next.lastReadMessageId
+                )
+                prevMs == nextMs && next.lastReadMessageId.isNullOrBlank() && !prev.lastReadMessageId.isNullOrBlank() ->
+                    next.copy(lastReadMessageId = prev.lastReadMessageId)
+                else -> next
+            }
+        }
+    }
+
     fun formatShortTime(
         iso: String,
         zoneId: ZoneId = ZoneId.systemDefault(),
         locale: Locale = Locale.getDefault()
     ): String = runCatching {
-        val formatter = DateTimeFormatter.ofPattern("h:mm a", locale)
+        val formatter = DateTimeFormatter.ofPattern("HH:mm", locale)
         Instant.parse(iso).atZone(zoneId).format(formatter)
     }.getOrDefault("")
 

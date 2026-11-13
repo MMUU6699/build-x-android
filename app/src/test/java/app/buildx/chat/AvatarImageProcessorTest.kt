@@ -1,9 +1,15 @@
 package app.buildx.chat
 
+import app.buildx.chat.data.model.PublicProfile
+import app.buildx.chat.data.model.UserProfile
+import app.buildx.chat.data.model.resolveProfileBannerType
+import app.buildx.chat.ui.screens.computeBannerVideoCenterCropScale
 import app.buildx.chat.util.AuthValidation
 import app.buildx.chat.util.AvatarImageProcessor
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -97,5 +103,161 @@ class AvatarImageProcessorTest {
         assertFalse(AuthValidation.isValidDisplayName(""))
         assertFalse(AuthValidation.isValidDisplayName("   "))
         assertFalse(AuthValidation.isValidDisplayName("A".repeat(31)))
+    }
+
+    @Test
+    fun testValidateBannerVideoLimits_BoundaryConditions() {
+        assertNull(AvatarImageProcessor.validateBannerVideoLimits(durationMs = 0L, sizeBytes = 1L))
+        assertNull(
+            AvatarImageProcessor.validateBannerVideoLimits(
+                durationMs = AvatarImageProcessor.MAX_BANNER_VIDEO_DURATION_MS,
+                sizeBytes = AvatarImageProcessor.MAX_BANNER_VIDEO_BYTES
+            )
+        )
+
+        val tooLong = AvatarImageProcessor.validateBannerVideoLimits(
+            durationMs = AvatarImageProcessor.MAX_BANNER_VIDEO_DURATION_MS + 1L,
+            sizeBytes = 1024L
+        )
+        assertTrue(tooLong is AvatarImageProcessor.BannerVideoValidation.TooLong)
+
+        val tooLarge = AvatarImageProcessor.validateBannerVideoLimits(
+            durationMs = 5_000L,
+            sizeBytes = AvatarImageProcessor.MAX_BANNER_VIDEO_BYTES + 1L
+        )
+        assertTrue(tooLarge is AvatarImageProcessor.BannerVideoValidation.TooLarge)
+
+        assertEquals(
+            AvatarImageProcessor.BannerVideoValidation.Unreadable,
+            AvatarImageProcessor.validateBannerVideoLimits(durationMs = -1L, sizeBytes = 1024L)
+        )
+        assertEquals(
+            AvatarImageProcessor.BannerVideoValidation.Unreadable,
+            AvatarImageProcessor.validateBannerVideoLimits(durationMs = 2_000L, sizeBytes = 0L)
+        )
+    }
+
+    @Test
+    fun testResolveProfileBannerType_NormalizationAndFallback() {
+        assertEquals("none", resolveProfileBannerType(null, "image"))
+        assertEquals("none", resolveProfileBannerType("   ", "video"))
+        assertEquals("image", resolveProfileBannerType("https://cdn.example/b.png", " IMAGE "))
+        assertEquals("video", resolveProfileBannerType("https://cdn.example/b", " Video "))
+        assertEquals(
+            "video",
+            resolveProfileBannerType("https://cdn.example/u1/banners/clip.mp4?token=abc", "none")
+        )
+        assertEquals(
+            "video",
+            resolveProfileBannerType("https://cdn.example/u1/banners/clip.WEBM", "")
+        )
+        assertEquals(
+            "image",
+            resolveProfileBannerType("https://cdn.example/u1/banners/photo.jpg", null)
+        )
+    }
+
+    @Test
+    fun testProfileBannerJsonSerialization_UserAndPublicProfiles() {
+        val json = Json { ignoreUnknownKeys = true }
+
+        val userProfile = json.decodeFromString<UserProfile>(
+            """
+            {
+              "id": "u-1",
+              "username": "alex_dev",
+              "handle": "alex_dev",
+              "display_name": "Alex",
+              "banner_url": "https://cdn.example/u-1/banners/banner_1.mp4",
+              "banner_type": "video"
+            }
+            """.trimIndent()
+        )
+        assertTrue(userProfile.hasBanner)
+        assertEquals("video", userProfile.normalizedBannerType)
+
+        val publicProfile = json.decodeFromString<PublicProfile>(
+            """
+            {
+              "id": "u-2",
+              "username": "sara_k",
+              "display_name": "Sara",
+              "banner_url": "https://cdn.example/u-2/banners/banner_2.jpg",
+              "banner_type": "image"
+            }
+            """.trimIndent()
+        )
+        assertTrue(publicProfile.hasBanner)
+        assertEquals("image", publicProfile.normalizedBannerType)
+
+        val emptyBanner = json.decodeFromString<PublicProfile>(
+            """
+            {
+              "id": "u-3",
+              "username": "omar",
+              "display_name": "Omar"
+            }
+            """.trimIndent()
+        )
+        assertFalse(emptyBanner.hasBanner)
+        assertEquals("none", emptyBanner.normalizedBannerType)
+    }
+
+    @Test
+    fun testComputeBannerVideoCenterCropScale_PreservesAspectAndFillsViewport() {
+        assertEquals(1f to 1f, computeBannerVideoCenterCropScale(0, 500, 1920, 1080))
+        assertEquals(1f to 1f, computeBannerVideoCenterCropScale(1000, 500, 0, 1080))
+
+        // Same 2:1 aspect ratio -> exact fill
+        val (sameX, sameY) = computeBannerVideoCenterCropScale(1000, 500, 2000, 1000)
+        assertEquals(1f, sameX, 0.001f)
+        assertEquals(1f, sameY, 0.001f)
+
+        // Portrait 9:16 video inside landscape 2:1 banner -> width fills (1f), height scales > 1f
+        val (portX, portY) = computeBannerVideoCenterCropScale(1000, 500, 1080, 1920)
+        assertEquals(1f, portX, 0.001f)
+        assertTrue(portY > 3.5f)
+        assertEquals((portX * 1000f) / 1080f, (portY * 500f) / 1920f, 0.001f)
+
+        // Ultra-wide 21:9 video inside 4:3 banner -> height fills (1f), width scales > 1f
+        val (wideX, wideY) = computeBannerVideoCenterCropScale(400, 300, 2100, 900)
+        assertEquals(1f, wideY, 0.001f)
+        assertTrue(wideX > 1.7f)
+        assertEquals((wideX * 400f) / 2100f, (wideY * 300f) / 900f, 0.001f)
+    }
+
+    @Test
+    fun testUpdateProfilePullOffsetPx_RubberBandAndBounds() {
+        val maxPull = 300f
+        // Downward pull applies 0.46f rubber-band damping
+        val pulled = app.buildx.chat.ui.screens.updateProfilePullOffsetPx(
+            currentPx = 0f,
+            dragDeltaPx = 100f,
+            maxPullPx = maxPull
+        )
+        assertEquals(46f, pulled, 0.01f)
+
+        // Cannot exceed maxPullPx
+        val clamped = app.buildx.chat.ui.screens.updateProfilePullOffsetPx(
+            currentPx = 280f,
+            dragDeltaPx = 200f,
+            maxPullPx = maxPull
+        )
+        assertEquals(maxPull, clamped, 0.01f)
+
+        // Upward drag collapses 1:1 without damping down to 0
+        val collapsed = app.buildx.chat.ui.screens.updateProfilePullOffsetPx(
+            currentPx = 100f,
+            dragDeltaPx = -40f,
+            maxPullPx = maxPull
+        )
+        assertEquals(60f, collapsed, 0.01f)
+
+        val zeroed = app.buildx.chat.ui.screens.updateProfilePullOffsetPx(
+            currentPx = 20f,
+            dragDeltaPx = -50f,
+            maxPullPx = maxPull
+        )
+        assertEquals(0f, zeroed, 0.01f)
     }
 }

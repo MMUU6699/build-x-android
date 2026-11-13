@@ -31,7 +31,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -64,6 +63,7 @@ import app.buildx.chat.data.model.DmParticipant
 import app.buildx.chat.data.model.PersonSearchResult
 import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.ui.chat.DmMediaViewerDialog
+import app.buildx.chat.ui.components.MarkLoader
 import app.buildx.chat.ui.components.VerifiedBadge
 import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.theme.BuildXTheme
@@ -604,10 +604,10 @@ private fun GroupIdentity(
                             .background(colors.pageBackground.copy(alpha = 0.55f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        CircularProgressIndicator(
-                            color = colors.primaryBlue,
-                            strokeWidth = 2.5.dp,
-                            modifier = Modifier.size(24.dp)
+                        MarkLoader(
+                            size = 24.dp,
+                            isSpinning = true,
+                            tint = colors.primaryBlue
                         )
                     }
                 }
@@ -931,10 +931,10 @@ private fun AddMembersPicker(
                     .height(48.dp),
                 contentAlignment = Alignment.Center
             ) {
-                CircularProgressIndicator(
-                    color = colors.primaryBlue,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(20.dp)
+                MarkLoader(
+                    size = 20.dp,
+                    isSpinning = true,
+                    tint = colors.primaryBlue
                 )
             }
         } else if (candidates.isEmpty()) {
@@ -1071,10 +1071,10 @@ private fun AddMembersPicker(
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 if (isSubmitting) {
-                    CircularProgressIndicator(
-                        color = Color.White,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(14.dp)
+                    MarkLoader(
+                        size = 14.dp,
+                        isSpinning = true,
+                        tint = Color.White
                     )
                 } else {
                     Text(

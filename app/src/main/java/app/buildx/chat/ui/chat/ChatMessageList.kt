@@ -23,7 +23,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import app.buildx.chat.R
 import app.buildx.chat.data.model.DmMessage
 import app.buildx.chat.ui.components.ActionMenuItem
+import app.buildx.chat.ui.components.MarkLoader
 import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.softShadow
@@ -186,16 +186,9 @@ fun ChatMessageList(
     }
 
     val hasActiveMenu = activeMenuMessageId != null
-    val menuBackdropColor by animateColorAsState(
-        targetValue = if (hasActiveMenu) BuildXTheme.colors.scrimColor else Color.Transparent,
-        animationSpec = tween(if (reduceMotion) 0 else 150),
-        label = "message_list_menu_scrim"
-    )
-    val nonMessageDimAlpha by animateFloatAsState(
-        targetValue = if (hasActiveMenu) 0.42f else 1f,
-        animationSpec = tween(if (reduceMotion) 0 else 150),
-        label = "non_message_dim_alpha"
-    )
+    // Zero full-screen backdrop dimming or sibling fading on message context menu
+    val menuBackdropColor = Color.Transparent
+    val nonMessageDimAlpha = 1f
 
     Box(
         modifier = modifier
@@ -218,10 +211,10 @@ fun ChatMessageList(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
-                CircularProgressIndicator(
-                    color = BuildXTheme.colors.primaryBlue,
-                    strokeWidth = 2.5.dp,
-                    modifier = Modifier.size(30.dp)
+                MarkLoader(
+                    size = 30.dp,
+                    isSpinning = true,
+                    tint = BuildXTheme.colors.primaryBlue
                 )
             }
         } else {
@@ -297,8 +290,9 @@ fun ChatMessageList(
                                 },
                                 onDismissMenu = onDismissMenu,
                                 onSwipeToReply = { onSwipeToReply(item.message) },
+                                onSenderProfileClick = onViewProfileClick,
                                 isHighlighted = item.message.id == highlightedMessageId || item.message.id == transientHighlightId,
-                                isDimmed = hasActiveMenu,
+                                isDimmed = false,
                                 modifier = placementModifier
                             )
                         }
@@ -333,10 +327,10 @@ fun ChatMessageList(
                                 .padding(vertical = 12.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            CircularProgressIndicator(
-                                color = BuildXTheme.colors.primaryBlue,
-                                strokeWidth = 2.dp,
-                                modifier = Modifier.size(22.dp)
+                            MarkLoader(
+                                size = 22.dp,
+                                isSpinning = true,
+                                tint = BuildXTheme.colors.primaryBlue
                             )
                         }
                     }

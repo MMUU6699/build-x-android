@@ -25,8 +25,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import app.buildx.chat.ui.components.MarkLoader
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -362,10 +362,10 @@ fun ImageCropScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(36.dp),
-                        color = Color(0xFF0063D3),
-                        strokeWidth = 3.dp
+                    MarkLoader(
+                        size = 36.dp,
+                        isSpinning = true,
+                        tint = Color(0xFF0063D3)
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(

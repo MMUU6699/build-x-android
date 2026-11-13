@@ -21,7 +21,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -53,6 +52,7 @@ import app.buildx.chat.R
 import app.buildx.chat.data.model.DmPeerSummary
 import app.buildx.chat.data.model.PublicNote
 import app.buildx.chat.data.model.UserProfile
+import app.buildx.chat.ui.components.MarkLoader
 import app.buildx.chat.ui.components.VerifiedBadge
 import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
@@ -279,10 +279,10 @@ fun PublicNoteSheet(
                     contentAlignment = Alignment.Center
                 ) {
                     if (isLoading) {
-                        CircularProgressIndicator(
-                            color = colors.onPrimaryBlue,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(20.dp)
+                        MarkLoader(
+                            size = 20.dp,
+                            isSpinning = true,
+                            tint = colors.onPrimaryBlue
                         )
                     } else {
                         Text(

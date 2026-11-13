@@ -129,15 +129,17 @@ fun MarkLoader(
     size: Dp = 68.dp,
     isSpinning: Boolean = false,
     useBrandGradient: Boolean = false,
-    tint: Color = BuildXTheme.colors.primaryText
+    tint: Color = BuildXTheme.colors.primaryText,
+    manualRotationDeg: Float? = null,
+    contentDescription: String? = null
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "markRotation")
-    val angle by infiniteTransition.animateFloat(
+    val autoAngle by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
             animation = tween(
-                durationMillis = if (isSpinning) 3600 else 14000,
+                durationMillis = if (isSpinning) 1500 else 14000,
                 easing = LinearEasing
             ),
             repeatMode = RepeatMode.Restart
@@ -145,23 +147,28 @@ fun MarkLoader(
         label = "markAngle"
     )
     val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.985f,
-        targetValue = 1.015f,
+        initialValue = if (isSpinning) 0.95f else 0.985f,
+        targetValue = if (isSpinning) 1.03f else 1.015f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2400, easing = FastOutSlowInEasing),
+            animation = tween(
+                durationMillis = if (isSpinning) 900 else 2400,
+                easing = FastOutSlowInEasing
+            ),
             repeatMode = RepeatMode.Reverse
         ),
         label = "markPulse"
     )
+    val effectiveScale = if (manualRotationDeg != null) 1f else pulseScale
+    val effectiveRotation = manualRotationDeg ?: autoAngle
 
     Icon(
         painter = painterResource(id = R.drawable.ic_buildx_mark),
-        contentDescription = "Build X Logo",
+        contentDescription = contentDescription,
         tint = tint,
         modifier = modifier
             .size(size)
-            .scale(pulseScale)
-            .rotate(angle)
+            .scale(effectiveScale)
+            .rotate(effectiveRotation)
     )
 }
 

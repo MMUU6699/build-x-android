@@ -20,7 +20,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -55,6 +54,7 @@ import app.buildx.chat.data.model.AccountInfo
 import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.ui.components.ActionMenuPopup
 import app.buildx.chat.ui.components.ActionMenuItem
+import app.buildx.chat.ui.components.MarkLoader
 import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.isRtlText
@@ -346,10 +346,10 @@ fun AboutAccountSheet(
                             .height(120.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        CircularProgressIndicator(
-                            color = colors.primaryBlue,
-                            strokeWidth = 2.5.dp,
-                            modifier = Modifier.size(28.dp)
+                        MarkLoader(
+                            size = 28.dp,
+                            isSpinning = true,
+                            tint = colors.primaryBlue
                         )
                     }
                 }
@@ -850,10 +850,10 @@ fun PillButton(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (loading) {
-                CircularProgressIndicator(
-                    color = contentColor,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(16.dp)
+                MarkLoader(
+                    size = 16.dp,
+                    isSpinning = true,
+                    tint = contentColor
                 )
                 Spacer(modifier = Modifier.width(8.dp))
             }

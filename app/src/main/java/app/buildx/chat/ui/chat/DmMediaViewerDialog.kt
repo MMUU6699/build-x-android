@@ -31,8 +31,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import app.buildx.chat.ui.components.MarkLoader
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -326,10 +326,10 @@ private fun ViewerOverlayCircleButton(
         contentAlignment = Alignment.Center
     ) {
         if (isLoading) {
-            CircularProgressIndicator(
-                color = Color.White,
-                strokeWidth = 2.dp,
-                modifier = Modifier.size(18.dp)
+            MarkLoader(
+                size = 18.dp,
+                isSpinning = true,
+                tint = Color.White
             )
         } else {
             Icon(

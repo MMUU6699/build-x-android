@@ -22,7 +22,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.buildx.chat.R
 import app.buildx.chat.data.model.FollowUserItem
+import app.buildx.chat.ui.components.MarkLoader
 import app.buildx.chat.ui.components.VerifiedBadge
 import app.buildx.chat.ui.theme.BuildXTheme
 import coil.compose.AsyncImage
@@ -284,10 +284,10 @@ fun CreateGroupSheet(
                 )
             ) {
                 if (isCreating) {
-                    CircularProgressIndicator(
-                        color = Color.White,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(20.dp)
+                    MarkLoader(
+                        size = 20.dp,
+                        isSpinning = true,
+                        tint = Color.White
                     )
                 } else {
                     Text(

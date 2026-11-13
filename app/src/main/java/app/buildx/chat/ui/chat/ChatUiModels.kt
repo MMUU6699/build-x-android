@@ -40,7 +40,10 @@ sealed interface ChatListItem {
         val formattedTime: String,
         val deliveryStatus: ChatDeliveryStatus,
         val replyPreview: DmReplyPreview?,
-        val seenParticipants: List<DmParticipant>
+        val seenParticipants: List<DmParticipant>,
+        val resolvedSenderName: String? = null,
+        val resolvedSenderHandle: String? = null,
+        val senderIsVerified: Boolean = false
     ) : ChatListItem
 
     @Immutable

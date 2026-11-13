@@ -35,6 +35,8 @@ import app.buildx.chat.ui.viewmodel.BuildXUiState
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import com.github.takahirom.roborazzi.RoborazziOptions
 import com.github.takahirom.roborazzi.captureRoboImage
+import org.junit.After
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -58,6 +60,16 @@ class ScreenFidelityScreenshotTest {
     val composeRule = createComposeRule()
 
     private val outputDir = File("../docs/design/screenshots").apply { mkdirs() }
+
+    @Before
+    fun setupImageLoader() {
+        TestBannerImageLoader.install()
+    }
+
+    @After
+    fun tearDownImageLoader() {
+        TestBannerImageLoader.reset()
+    }
 
     private fun captureScreen(fileName: String) {
         composeRule.mainClock.advanceTimeBy(600L)
@@ -361,7 +373,8 @@ class ScreenFidelityScreenshotTest {
                     profile = UserProfile(
                         id = "u1",
                         handle = "alex_dev",
-                        displayName = "Alex"
+                        displayName = "Alex",
+                        isVerified = true
                     ),
                     appearance = AppAppearance.AUTOMATIC,
                     language = AppLanguage.SYSTEM,
@@ -393,7 +406,8 @@ class ScreenFidelityScreenshotTest {
                     profile = UserProfile(
                         id = "u1",
                         handle = "musta_dev",
-                        displayName = "Mustafa"
+                        displayName = "Mustafa",
+                        isVerified = true
                     ),
                     appearance = AppAppearance.AUTOMATIC,
                     language = AppLanguage.ARABIC,
@@ -695,6 +709,109 @@ class ScreenFidelityScreenshotTest {
             }
         }
         captureScreen("p3_edit_profile_dark.png")
+    }
+
+    @Test
+    fun capture_P1_OwnProfile_Banner_Light() {
+        val user = UserProfile(
+            id = "u1",
+            handle = "alex_dev",
+            username = "alex_dev",
+            displayName = "Alex Developer",
+            bio = "Building intelligent systems with Kotlin & Supabase.\nhttps://github.com/alexdev",
+            avatarUrl = TestBannerImageLoader.TEST_AVATAR_URL,
+            bannerUrl = TestBannerImageLoader.TEST_BANNER_URL,
+            bannerType = "image",
+            followingCount = 142,
+            followersCount = 582,
+            isVerified = true
+        )
+        composeRule.setContent {
+            BuildXTheme(appearance = AppAppearance.LIGHT) {
+                ProfileScreen(
+                    currentProfile = user,
+                    targetUsername = null,
+                    publicProfile = null,
+                    isLoading = false,
+                    errorMessage = null,
+                    activeNote = null,
+                    onBackClick = {},
+                    onEditProfileClick = {},
+                    onOpenNoteSheet = {},
+                    onReviewUsernameClick = {},
+                    onFollowClick = {},
+                    onFollowingClick = {},
+                    onFollowersListClick = { _, _ -> },
+                    onRetry = {}
+                )
+            }
+        }
+        captureScreen("p1_own_profile_banner_light.png")
+    }
+
+    @Test
+    fun capture_P2_OtherProfile_Banner_Dark() {
+        val publicProfile = PublicProfile(
+            id = "u_drgzo",
+            username = "dr_gzo",
+            displayName = "دكتور غزو",
+            bio = "Dr Gzo\nدكتور غزو\nInstagram: dr.gzo0\nhttps://youtube.com/@drgzo0",
+            avatarUrl = TestBannerImageLoader.TEST_AVATAR_URL,
+            bannerUrl = TestBannerImageLoader.TEST_BANNER_URL,
+            bannerType = "image",
+            followingCount = 6,
+            followersCount = 7600000,
+            isVerified = true,
+            isFollowing = false
+        )
+        composeRule.setContent {
+            BuildXTheme(appearance = AppAppearance.DARK) {
+                ProfileScreen(
+                    currentProfile = UserProfile(id = "me", username = "alex_dev", displayName = "Alex"),
+                    targetUsername = "dr_gzo",
+                    publicProfile = publicProfile,
+                    isLoading = false,
+                    errorMessage = null,
+                    activeNote = null,
+                    onBackClick = {},
+                    onEditProfileClick = {},
+                    onOpenNoteSheet = {},
+                    onReviewUsernameClick = {},
+                    onFollowClick = {},
+                    onFollowingClick = {},
+                    onFollowersListClick = { _, _ -> },
+                    onRetry = {}
+                )
+            }
+        }
+        captureScreen("p2_other_profile_banner_dark.png")
+    }
+
+    @Test
+    fun capture_P3_EditProfile_Banner_Light() {
+        val user = UserProfile(
+            id = "u1",
+            handle = "alex_dev",
+            username = "alex_dev",
+            displayName = "Alex Developer",
+            bio = "Building intelligent systems with Kotlin & Supabase.\nhttps://github.com/alexdev",
+            avatarUrl = TestBannerImageLoader.TEST_AVATAR_URL,
+            bannerUrl = TestBannerImageLoader.TEST_BANNER_URL,
+            bannerType = "image",
+            isVerified = true
+        )
+        composeRule.setContent {
+            BuildXTheme(appearance = AppAppearance.LIGHT) {
+                EditProfileScreen(
+                    profile = user,
+                    onSaveProfile = { _, _, _ -> },
+                    onPickAvatarClick = {},
+                    onBackClick = {},
+                    checkUsernameAvailable = { true }
+                )
+            }
+        }
+        captureScreen("p3_edit_profile_banner_light.png")
     }
 
     @Test

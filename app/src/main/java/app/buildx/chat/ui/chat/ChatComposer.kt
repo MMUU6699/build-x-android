@@ -3,6 +3,7 @@ package app.buildx.chat.ui.chat
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -47,7 +48,9 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -275,16 +278,21 @@ fun ChatComposer(
                 }
             }
 
+            val scope = rememberCoroutineScope()
+            val sendPulseScale = remember { Animatable(1f) }
+
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.Bottom
                 ) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .defaultMinSize(minHeight = ChatDimens.ComposerMinHeight)
-                            .padding(start = 16.dp, end = 6.dp, top = 11.dp, bottom = 11.dp),
+                            .defaultMinSize(minHeight = ChatDimens.ComposerActionSize)
+                            .padding(start = 10.dp, end = 6.dp, top = 9.dp, bottom = 9.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
                         val placeholderAlpha by animateFloatAsState(
@@ -344,11 +352,9 @@ fun ChatComposer(
                         }
                     }
 
-                    // Right action tray: uniform 4dp top/right/bottom margin for 42dp circle inside 50dp capsule
+                    // Right action tray: uniform 5dp/6dp outer row ring around 42dp circle button
                     Row(
-                        modifier = Modifier
-                            .padding(top = 4.dp, bottom = 4.dp, end = 4.dp)
-                            .heightIn(min = ChatDimens.ComposerActionSize),
+                        modifier = Modifier.heightIn(min = ChatDimens.ComposerActionSize),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         AnimatedVisibility(
@@ -386,6 +392,10 @@ fun ChatComposer(
                         Box(
                             modifier = Modifier
                                 .size(ChatDimens.ComposerActionSize)
+                                .graphicsLayer {
+                                    scaleX = sendPulseScale.value
+                                    scaleY = sendPulseScale.value
+                                }
                                 .clip(CircleShape)
                                 .background(actionBg)
                                 .pressScaleClickable(
@@ -396,6 +406,18 @@ fun ChatComposer(
                                         if (hasSendableContent && now - lastSendClickMs > 250L) {
                                             lastSendClickMs = now
                                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            if (!reduceMotion) {
+                                                scope.launch {
+                                                    sendPulseScale.snapTo(0.84f)
+                                                    sendPulseScale.animateTo(
+                                                        targetValue = 1f,
+                                                        animationSpec = spring(
+                                                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                                                            stiffness = Spring.StiffnessMedium
+                                                        )
+                                                    )
+                                                }
+                                            }
                                             onSendClick()
                                         }
                                     } else {

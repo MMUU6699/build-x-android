@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import app.buildx.chat.R
 import app.buildx.chat.data.model.BlockedUser
 import app.buildx.chat.ui.components.HeaderCircleButton
+import app.buildx.chat.ui.components.MarkLoader
 import app.buildx.chat.ui.components.NameWithBadge
 import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.theme.BuildXTheme
@@ -115,10 +115,10 @@ fun BlockedAccountsScreen(
                         .height(220.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator(
-                        color = colors.primaryBlue,
-                        strokeWidth = 2.5.dp,
-                        modifier = Modifier.size(30.dp)
+                    MarkLoader(
+                        size = 30.dp,
+                        isSpinning = true,
+                        tint = colors.primaryBlue
                     )
                 }
             }
@@ -215,10 +215,10 @@ fun BlockedAccountsScreen(
                                     .padding(vertical = 14.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                CircularProgressIndicator(
-                                    color = colors.primaryBlue,
-                                    strokeWidth = 2.dp,
-                                    modifier = Modifier.size(22.dp)
+                                MarkLoader(
+                                    size = 22.dp,
+                                    isSpinning = true,
+                                    tint = colors.primaryBlue
                                 )
                             }
                         }

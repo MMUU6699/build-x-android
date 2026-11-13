@@ -733,12 +733,22 @@ fun BuildXRoot(
                             accountInfo = uiState.accountInfo,
                             isAccountInfoLoading = uiState.isAccountInfoLoading,
                             accountInfoError = uiState.accountInfoError,
-                            onLoadAccountInfo = { viewModel.loadAccountInfo(it) }
+                            onLoadAccountInfo = { viewModel.loadAccountInfo(it) },
+                            isRefreshing = uiState.isOwnProfileRefreshing,
+                            onRefreshProfile = { viewModel.refreshCurrentOrPublicProfile(null) }
                         )
                     }
 
                     composable("profile/{username}") { backStackEntry ->
                         val usernameArg = backStackEntry.arguments?.getString("username") ?: ""
+                        val isRefreshingThisProfile = if (
+                            usernameArg.equals(uiState.profile?.username, ignoreCase = true) ||
+                            usernameArg.equals(uiState.profile?.handle, ignoreCase = true)
+                        ) {
+                            uiState.isOwnProfileRefreshing
+                        } else {
+                            uiState.isPublicProfileRefreshing
+                        }
                         LaunchedEffect(usernameArg) {
                             viewModel.loadPublicProfile(usernameArg)
                         }
@@ -814,7 +824,9 @@ fun BuildXRoot(
                                         navController.navigate("dm/$convId")
                                     }
                                 }
-                            }
+                            },
+                            isRefreshing = isRefreshingThisProfile,
+                            onRefreshProfile = { viewModel.refreshCurrentOrPublicProfile(usernameArg) }
                         )
                     }
 
@@ -838,6 +850,7 @@ fun BuildXRoot(
                         EditProfileScreen(
                             profile = uiState.profile,
                             isUploadingAvatar = uiState.isUploadingAvatar,
+                            isUploadingBanner = uiState.isUploadingBanner,
                             onSaveProfile = { displayName, newUsername, bio ->
                                 viewModel.updateProfile(displayName, newUsername, bio) {
                                     navController.popBackStack()
@@ -848,11 +861,16 @@ fun BuildXRoot(
                                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                                 )
                             },
+                            onRemoveAvatarClick = { viewModel.removeProfileAvatar() },
+                            onUploadAvatarBytes = { bytes, uri -> viewModel.uploadProfileAvatar(bytes, uri) },
+                            onUploadBanner = { uri, isVideo -> viewModel.uploadProfileBanner(uri, isVideo) },
+                            onRemoveBannerClick = { viewModel.removeProfileBanner() },
                             onBackClick = { navController.popBackStack() },
                             checkUsernameAvailable = { candidate ->
                                 viewModel.repository.checkUsernameAvailable(candidate).getOrDefault(false)
                             },
-                            onCountrySelected = { code -> viewModel.updateCountry(code) }
+                            onCountrySelected = { code -> viewModel.updateCountry(code) },
+                            viewModel = viewModel
                         )
                     }
 

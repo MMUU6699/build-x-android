@@ -83,6 +83,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import app.buildx.chat.R
 import app.buildx.chat.data.model.DmMessage
+import app.buildx.chat.data.model.DmSendStatus
 import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.ui.chat.ChatComposer
@@ -307,11 +308,8 @@ fun DmConversationScreen(
         }
     }
 
-    val chromeScrimColor by animateColorAsState(
-        targetValue = if (activeMenuMessage != null) colors.scrimColor else Color.Transparent,
-        animationSpec = tween(if (reduceMotion) 0 else 150),
-        label = "chrome_menu_scrim"
-    )
+    // Transparent tap-outside dismiss layer when menu is open — zero grey dimming
+    val chromeScrimColor = Color.Transparent
 
     Box(
         modifier = modifier
@@ -368,8 +366,19 @@ fun DmConversationScreen(
             },
             onLoadOlderMessages = onLoadOlderMessages,
             onConsumeJustSent = onConsumeJustSent,
-            onMessageTap = { msg -> activeMenuMessage = msg },
-            onMessageLongPress = { msg -> activeMenuMessage = msg },
+            onMessageTap = { msg ->
+                if (activeMenuMessage != null) {
+                    activeMenuMessage = null
+                } else if (msg.localSendStatus == DmSendStatus.FAILED) {
+                    onRetryFailedMessage(msg)
+                }
+            },
+            onMessageLongPress = { msg ->
+                val hasMenu = msg.deletedAt == null || msg.senderId != currentUserId
+                if (hasMenu) {
+                    activeMenuMessage = msg
+                }
+            },
             onImageClick = { msg -> viewerMessage = msg },
             onRetryFailedMessage = onRetryFailedMessage,
             onDismissMenu = { activeMenuMessage = null },

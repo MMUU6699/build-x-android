@@ -26,6 +26,8 @@ import app.buildx.chat.ui.theme.BuildXTheme
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import com.github.takahirom.roborazzi.RoborazziOptions
 import com.github.takahirom.roborazzi.captureRoboImage
+import org.junit.After
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -52,6 +54,16 @@ class ProfileV2ScreenshotTest {
     val composeRule = createComposeRule()
 
     private val outputDir = File("../docs/design/screenshots/profile_v2").apply { mkdirs() }
+
+    @Before
+    fun setupImageLoader() {
+        TestBannerImageLoader.install()
+    }
+
+    @After
+    fun tearDownImageLoader() {
+        TestBannerImageLoader.reset()
+    }
 
     private fun capture(fileName: String) {
         composeRule.mainClock.advanceTimeBy(700L)
@@ -484,5 +496,121 @@ class ProfileV2ScreenshotTest {
             }
         }
         capture("pv2_360_edit_profile_dark_rtl_font13.png")
+    }
+
+    @Test
+    @Config(qualifiers = RobolectricDeviceQualifiers.Pixel6)
+    fun pv2_411_light_ltr_banner_own() {
+        composeRule.setContent {
+            LocalizedContent(Locale.ENGLISH, 1f) {
+                BuildXTheme(appearance = AppAppearance.LIGHT) {
+                    ProfileScreen(
+                        currentProfile = ownProfile().copy(
+                            avatarUrl = TestBannerImageLoader.TEST_AVATAR_URL,
+                            bannerUrl = TestBannerImageLoader.TEST_BANNER_URL,
+                            bannerType = "image",
+                            isVerified = true
+                        ),
+                        targetUsername = null,
+                        publicProfile = null,
+                        isLoading = false,
+                        errorMessage = null,
+                        activeNote = null,
+                        onBackClick = {},
+                        onEditProfileClick = {},
+                        onOpenNoteSheet = {},
+                        onReviewUsernameClick = {},
+                        onFollowClick = {},
+                        onFollowingClick = {},
+                        onFollowersListClick = { _, _ -> },
+                        onRetry = {}
+                    )
+                }
+            }
+        }
+        capture("pv2_411_light_ltr_banner_own.png")
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h800dp-xhdpi")
+    fun pv2_360_dark_rtl_banner_visited_font_1_3() {
+        composeRule.setContent {
+            LocalizedContent(Locale("ar"), 1.3f) {
+                BuildXTheme(appearance = AppAppearance.DARK, language = AppLanguage.ARABIC) {
+                    ProfileScreen(
+                        currentProfile = ownProfile(),
+                        targetUsername = "omar_f",
+                        publicProfile = visitedProfile().copy(
+                            avatarUrl = TestBannerImageLoader.TEST_AVATAR_URL,
+                            bannerUrl = TestBannerImageLoader.TEST_BANNER_URL,
+                            bannerType = "image",
+                            isVerified = true
+                        ),
+                        isLoading = false,
+                        errorMessage = null,
+                        activeNote = null,
+                        onBackClick = {},
+                        onEditProfileClick = {},
+                        onOpenNoteSheet = {},
+                        onReviewUsernameClick = {},
+                        onFollowClick = {},
+                        onFollowingClick = {},
+                        onFollowersListClick = { _, _ -> },
+                        onRetry = {}
+                    )
+                }
+            }
+        }
+        capture("pv2_360_dark_rtl_banner_visited_font13.png")
+    }
+
+    @Test
+    @Config(qualifiers = RobolectricDeviceQualifiers.Pixel6)
+    fun pv2_411_edit_profile_banner_light() {
+        composeRule.setContent {
+            LocalizedContent(Locale.ENGLISH, 1f) {
+                BuildXTheme(appearance = AppAppearance.LIGHT) {
+                    EditProfileScreen(
+                        profile = ownProfile().copy(
+                            avatarUrl = TestBannerImageLoader.TEST_AVATAR_URL,
+                            bannerUrl = TestBannerImageLoader.TEST_BANNER_URL,
+                            bannerType = "image",
+                            isVerified = true
+                        ),
+                        onSaveProfile = { _, _, _ -> },
+                        onPickAvatarClick = {},
+                        onBackClick = {},
+                        checkUsernameAvailable = { true },
+                        onCountrySelected = {}
+                    )
+                }
+            }
+        }
+        capture("pv2_411_edit_profile_banner_light.png")
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h800dp-xhdpi")
+    fun pv2_360_edit_profile_banner_dark_rtl_font_1_3() {
+        composeRule.setContent {
+            LocalizedContent(Locale("ar"), 1.3f) {
+                BuildXTheme(appearance = AppAppearance.DARK, language = AppLanguage.ARABIC) {
+                    EditProfileScreen(
+                        profile = ownProfile().copy(
+                            avatarUrl = TestBannerImageLoader.TEST_AVATAR_URL,
+                            bannerUrl = TestBannerImageLoader.TEST_BANNER_URL,
+                            bannerType = "image",
+                            isVerified = true
+                        ),
+                        onSaveProfile = { _, _, _ -> },
+                        onPickAvatarClick = {},
+                        onBackClick = {},
+                        checkUsernameAvailable = { true },
+                        onCountrySelected = {}
+                    )
+                }
+            }
+        }
+        capture("pv2_360_edit_profile_banner_dark_rtl_font13.png")
     }
 }

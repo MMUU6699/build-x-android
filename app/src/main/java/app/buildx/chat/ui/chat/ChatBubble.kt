@@ -58,7 +58,13 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.IntrinsicMeasurable
+import androidx.compose.ui.layout.IntrinsicMeasureScope
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasurePolicy
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -95,7 +101,10 @@ import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.softShadow
 import coil.compose.AsyncImage
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlin.math.ceil
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
@@ -156,6 +165,7 @@ fun ChatMessageRow(
     modifier: Modifier = Modifier,
     onImageClick: () -> Unit = onBubbleTap,
     onBubbleLongPress: () -> Unit = onBubbleTap,
+    onSenderProfileClick: (String) -> Unit = {},
     isHighlighted: Boolean = false,
     isDimmed: Boolean = false
 ) {
@@ -164,11 +174,7 @@ fun ChatMessageRow(
     } else {
         ChatDimens.InterGroupSpacing
     }
-    val rowDimAlpha by animateFloatAsState(
-        targetValue = if (isDimmed && !isMenuOpen) 0.42f else 1f,
-        animationSpec = tween(if (reduceMotion) 0 else 150),
-        label = "row_dim_alpha"
-    )
+    val rowDimAlpha = 1f
 
     ChatBubbleEntryWrapper(
         isOwn = item.isOwn,
@@ -197,8 +203,11 @@ fun ChatMessageRow(
                         if (item.showSenderAvatar) {
                             ChatGroupSenderAvatar(
                                 avatarUrl = item.message.senderAvatarUrl,
-                                displayName = item.message.senderDisplayName,
-                                chatColors = chatColors
+                                displayName = item.resolvedSenderName,
+                                chatColors = chatColors,
+                                onClick = item.resolvedSenderHandle?.let { handle ->
+                                    { onSenderProfileClick(handle) }
+                                }
                             )
                         } else {
                             Spacer(modifier = Modifier.width(ChatDimens.GroupAvatarSize))
@@ -210,18 +219,6 @@ fun ChatMessageRow(
                         horizontalAlignment = if (item.isOwn) Alignment.End else Alignment.Start,
                         modifier = Modifier.weight(1f, fill = false)
                     ) {
-                        if (item.showSenderName) {
-                            Text(
-                                text = item.message.senderDisplayName ?: "",
-                                color = BuildXTheme.colors.secondaryText,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(start = 8.dp, bottom = 3.dp)
-                            )
-                        }
-
                         ChatBubbleContent(
                             item = item,
                             chatColors = chatColors,
@@ -234,6 +231,7 @@ fun ChatMessageRow(
                             onImageClick = onImageClick,
                             onRetryClick = onRetryClick,
                             onReplyPreviewClick = onReplyPreviewClick,
+                            onSenderProfileClick = onSenderProfileClick,
                             onDismissMenu = onDismissMenu
                         )
 
@@ -267,25 +265,41 @@ private fun ChatBubbleEntryWrapper(
     val animProgress = remember {
         Animatable(if ((isJustSent || isNewlyReceived) && !reduceMotion) 0f else 1f)
     }
+    val sendAlpha = remember {
+        Animatable(if (isJustSent && !reduceMotion) ChatMotion.SendLiftStartAlpha else 1f)
+    }
 
     LaunchedEffect(isJustSent, isNewlyReceived, reduceMotion) {
         if (reduceMotion) {
             animProgress.snapTo(1f)
+            sendAlpha.snapTo(1f)
             if (isJustSent) onConsumeJustSent()
             if (isNewlyReceived) onConsumeNewlyReceived()
             return@LaunchedEffect
         }
         if (isJustSent) {
             animProgress.snapTo(0f)
-            animProgress.animateTo(
-                targetValue = 1f,
-                animationSpec = spring(
-                    dampingRatio = ChatMotion.SendLiftDampingRatio,
-                    stiffness = ChatMotion.SendLiftStiffness
-                )
-            )
+            sendAlpha.snapTo(ChatMotion.SendLiftStartAlpha)
+            coroutineScope {
+                launch {
+                    sendAlpha.animateTo(
+                        targetValue = 1f,
+                        animationSpec = tween(durationMillis = ChatMotion.SendFadeDurationMs)
+                    )
+                }
+                launch {
+                    animProgress.animateTo(
+                        targetValue = 1f,
+                        animationSpec = spring(
+                            dampingRatio = ChatMotion.SendLiftDampingRatio,
+                            stiffness = ChatMotion.SendLiftStiffness
+                        )
+                    )
+                }
+            }
             onConsumeJustSent()
         } else if (isNewlyReceived) {
+            sendAlpha.snapTo(1f)
             animProgress.snapTo(0f)
             animProgress.animateTo(
                 targetValue = 1f,
@@ -299,19 +313,21 @@ private fun ChatBubbleEntryWrapper(
     }
 
     val p = animProgress.value
-    val graphicsModifier = if (p >= 0.999f) {
+    val graphicsModifier = if (p >= 0.999f && sendAlpha.value >= 0.999f) {
         Modifier
     } else if (isJustSent) {
-        val startOffsetPx = with(density) { ChatMotion.SendLiftStartTranslationY.toPx() }
-        val scale = ChatMotion.SendLiftStartScale + (1f - ChatMotion.SendLiftStartScale) * p
-        val alphaVal = ChatMotion.SendLiftStartAlpha +
-            (1f - ChatMotion.SendLiftStartAlpha) * (p * 1.35f).coerceAtMost(1f)
+        val startYPx = with(density) { ChatMotion.SendLiftStartTranslationY.toPx() }
+        val startXPx = with(density) { ChatMotion.SendLiftStartTranslationX.toPx() }
+        val signedStartX = if (isOwn xor isScreenRtl) startXPx else -startXPx
+        val sx = ChatMotion.SendLiftStartScaleX + (1f - ChatMotion.SendLiftStartScaleX) * p
+        val sy = ChatMotion.SendLiftStartScaleY + (1f - ChatMotion.SendLiftStartScaleY) * p
         val originX = if (isOwn xor isScreenRtl) 1f else 0f
         Modifier.graphicsLayer {
-            scaleX = scale
-            scaleY = scale
-            translationY = startOffsetPx * (1f - p)
-            alpha = alphaVal
+            scaleX = sx
+            scaleY = sy
+            translationX = signedStartX * (1f - p)
+            translationY = startYPx * (1f - p)
+            alpha = sendAlpha.value.coerceIn(0f, 1f)
             transformOrigin = TransformOrigin(originX, 1f)
         }
     } else {
@@ -345,11 +361,16 @@ private fun ChatBubbleContent(
     onImageClick: () -> Unit,
     onRetryClick: () -> Unit,
     onReplyPreviewClick: (String) -> Unit,
+    onSenderProfileClick: (String) -> Unit,
     onDismissMenu: () -> Unit
 ) {
     val msg = item.message
     val shape = chatBubbleShape(isOwn = item.isOwn, position = item.position)
     val hasAttachment = !msg.attachmentPath.isNullOrBlank() && !item.isDeleted
+    val hasSenderHeader = item.showSenderName && !item.resolvedSenderName.isNullOrBlank()
+    val hasQuote = !item.isDeleted && item.replyPreview != null
+    val hasNoteReply = !item.isDeleted && msg.messageType == "note_reply" && !msg.noteSnapshotText.isNullOrBlank()
+    val isDark = BuildXTheme.colors.isDark
     val haptic = LocalHapticFeedback.current
     val focusScale by animateFloatAsState(
         targetValue = if (isMenuOpen && !reduceMotion) 1.02f else 1f,
@@ -364,6 +385,7 @@ private fun ChatBubbleContent(
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val maxBubbleWidth = maxWidth * ChatDimens.BubbleMaxWidthFraction
+        val maxTextWidth = (maxBubbleWidth - ChatDimens.BubbleHorizontalPadding * 2).coerceAtLeast(120.dp)
 
         Column(
             horizontalAlignment = if (item.isOwn) Alignment.End else Alignment.Start,
@@ -377,54 +399,87 @@ private fun ChatBubbleContent(
                     animationSpec = if (reduceMotion) tween(0) else tween(ChatMotion.DeleteCrossfadeMs)
                 )
         ) {
-            if (!item.isDeleted && item.replyPreview != null) {
-                ChatQuotedReplyCard(
-                    reply = item.replyPreview,
-                    isOwn = item.isOwn,
-                    chatColors = chatColors,
-                    maxBubbleWidth = maxBubbleWidth,
-                    onClick = { onReplyPreviewClick(item.replyPreview.id) }
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-            } else if (!item.isDeleted && msg.messageType == "note_reply" && !msg.noteSnapshotText.isNullOrBlank()) {
-                ChatNoteReplyPill(
-                    snapshotText = msg.noteSnapshotText,
-                    chatColors = chatColors,
-                    maxBubbleWidth = maxBubbleWidth
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-            }
-
-            if (hasAttachment) {
-                val mediaShape = RoundedCornerShape(ChatDimens.MediaBubbleCorner)
+            if (item.isDeleted) {
+                Box(
+                    modifier = Modifier
+                        .widthIn(max = maxBubbleWidth)
+                        .clip(shape)
+                        .background(chatColors.deletedPillBg)
+                        .border(0.8.dp, chatColors.deletedPillBorder, shape)
+                        .pointerInput(msg.id) {
+                            detectTapGestures(
+                                onTap = { onBubbleTap() },
+                                onLongPress = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onBubbleLongPress()
+                                }
+                            )
+                        }
+                        .padding(
+                            horizontal = ChatDimens.BubbleHorizontalPadding,
+                            vertical = ChatDimens.BubbleVerticalPadding
+                        )
+                ) {
+                    Text(
+                        text = stringResource(R.string.dm_message_deleted),
+                        color = chatColors.deletedPillText,
+                        fontSize = ChatDimens.DeletedFontSize,
+                        fontStyle = FontStyle.Italic,
+                        fontFamily = BuildXFontFamily
+                    )
+                    if (isMenuOpen && menuItems.isNotEmpty()) {
+                        ChatBubbleActionPopup(items = menuItems, onDismiss = onDismissMenu)
+                    }
+                }
+            } else if (hasAttachment) {
+                val bubbleBg = if (item.isOwn) chatColors.sentBubbleBg else chatColors.receivedBubbleBg
+                val textColor = if (item.isOwn) chatColors.sentBubbleText else chatColors.receivedBubbleText
+                val metaTint = if (item.isOwn) chatColors.sentMetaText else chatColors.receivedMetaText
+                val isStandaloneMedia = msg.content.isBlank() && !hasSenderHeader && !hasQuote && !hasNoteReply
+                val containerShape = if (isStandaloneMedia) RoundedCornerShape(ChatDimens.MediaBubbleCorner) else shape
                 val focusShadowModifier = if (isMenuOpen) {
                     Modifier.softShadow(
-                        color = BuildXTheme.colors.scrimColor.copy(alpha = 0.45f),
-                        cornerRadius = ChatDimens.MediaBubbleCorner,
-                        blurRadius = 16.dp,
+                        color = BuildXTheme.colors.composerShadowColor,
+                        cornerRadius = if (isStandaloneMedia) ChatDimens.MediaBubbleCorner else ChatDimens.BubbleCornerLarge,
+                        blurRadius = 14.dp,
                         offsetY = 4.dp
                     )
                 } else {
                     Modifier
                 }
-                Box(
+
+                Column(
                     modifier = Modifier
                         .widthIn(max = ChatDimens.MediaMaxWidth.coerceAtMost(maxBubbleWidth))
-                        .heightIn(min = ChatDimens.MediaMinHeight, max = ChatDimens.MediaMaxHeight)
+                        .width(IntrinsicSize.Max)
                         .then(focusShadowModifier)
-                        .clip(mediaShape)
-                        .background(chatColors.receivedBubbleBg)
-                        .border(0.8.dp, chatColors.headerGlassBorder, mediaShape)
+                        .clip(containerShape)
+                        .background(if (isStandaloneMedia) chatColors.receivedBubbleBg else bubbleBg)
                         .then(
-                            if (highlightAlpha > 0.01f) {
-                                Modifier.border(2.dp, BuildXTheme.colors.primaryBlue.copy(alpha = highlightAlpha), mediaShape)
-                            } else {
-                                Modifier
+                            when {
+                                highlightAlpha > 0.01f -> Modifier.border(
+                                    2.dp,
+                                    BuildXTheme.colors.primaryBlue.copy(alpha = highlightAlpha),
+                                    containerShape
+                                )
+                                isMenuOpen -> Modifier.border(
+                                    0.8.dp,
+                                    if (item.isOwn) Color.White.copy(alpha = 0.28f) else BuildXTheme.colors.subtleSurfaceBorder,
+                                    containerShape
+                                )
+                                isStandaloneMedia -> Modifier.border(0.8.dp, chatColors.headerGlassBorder, containerShape)
+                                else -> Modifier
                             }
                         )
-                        .pointerInput(msg.id) {
+                        .pointerInput(msg.id, item.deliveryStatus) {
                             detectTapGestures(
-                                onTap = { onImageClick() },
+                                onTap = {
+                                    if (item.deliveryStatus == ChatDeliveryStatus.FAILED) {
+                                        onRetryClick()
+                                    } else {
+                                        onBubbleTap()
+                                    }
+                                },
                                 onLongPress = {
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     onBubbleLongPress()
@@ -432,140 +487,105 @@ private fun ChatBubbleContent(
                             )
                         }
                 ) {
-                    AsyncImage(
-                        model = msg.attachmentPath,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-
-                    if (msg.content.isBlank()) {
-                        Box(
+                    if (hasSenderHeader || hasQuote || hasNoteReply) {
+                        Column(
                             modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(8.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color.Black.copy(alpha = 0.52f))
-                                .padding(horizontal = 7.dp, vertical = 3.dp)
-                        ) {
-                            ChatBubbleMetaCluster(
-                                timeText = item.formattedTime,
-                                isEdited = item.isEdited,
-                                isOwn = item.isOwn,
-                                status = item.deliveryStatus,
-                                tint = Color.White,
-                                readTint = chatColors.readCheckAccent,
-                                failedTint = chatColors.failedAccent,
-                                reduceMotion = reduceMotion
-                            )
-                        }
-                    }
-
-                    if (isMenuOpen && msg.content.isBlank()) {
-                        ChatBubbleActionPopup(items = menuItems, onDismiss = onDismissMenu)
-                    }
-                }
-
-                if (msg.content.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                }
-            }
-
-            if (item.isDeleted || msg.content.isNotBlank()) {
-                AnimatedContent(
-                    targetState = item.isDeleted,
-                    transitionSpec = {
-                        if (reduceMotion) {
-                            fadeIn(tween(0)) togetherWith fadeOut(tween(0))
-                        } else {
-                            fadeIn(tween(ChatMotion.DeleteCrossfadeMs)) togetherWith
-                                fadeOut(tween(ChatMotion.DeleteCrossfadeMs))
-                        }
-                    },
-                    label = "bubble_delete_crossfade"
-                ) { deleted ->
-                    if (deleted) {
-                        Box(
-                            modifier = Modifier
-                                .widthIn(max = maxBubbleWidth)
-                                .clip(shape)
-                                .background(chatColors.deletedPillBg)
-                                .border(0.8.dp, chatColors.deletedPillBorder, shape)
-                                .pointerInput(msg.id) {
-                                    detectTapGestures(
-                                        onTap = { onBubbleTap() },
-                                        onLongPress = {
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            onBubbleLongPress()
-                                        }
-                                    )
-                                }
+                                .fillMaxWidth()
                                 .padding(
-                                    horizontal = ChatDimens.BubbleHorizontalPadding,
-                                    vertical = ChatDimens.BubbleVerticalPadding
+                                    start = ChatDimens.BubbleHorizontalPadding,
+                                    end = ChatDimens.BubbleHorizontalPadding,
+                                    top = ChatDimens.BubbleVerticalPadding,
+                                    bottom = 6.dp
                                 )
                         ) {
-                            Text(
-                                text = stringResource(R.string.dm_message_deleted),
-                                color = chatColors.deletedPillText,
-                                fontSize = ChatDimens.DeletedFontSize,
-                                fontStyle = FontStyle.Italic,
-                                fontFamily = BuildXFontFamily
-                            )
-                            if (isMenuOpen) {
-                                ChatBubbleActionPopup(items = menuItems, onDismiss = onDismissMenu)
+                            if (hasSenderHeader) {
+                                ChatGroupSenderHeader(
+                                    name = item.resolvedSenderName!!,
+                                    senderId = msg.senderId,
+                                    isVerified = item.senderIsVerified,
+                                    handle = item.resolvedSenderHandle,
+                                    isDark = isDark,
+                                    onSenderProfileClick = onSenderProfileClick,
+                                    modifier = Modifier
+                                        .widthIn(max = maxTextWidth)
+                                        .padding(bottom = if (hasQuote || hasNoteReply) 4.dp else 2.dp)
+                                )
+                            }
+                            if (hasQuote) {
+                                ChatQuotedReplyCard(
+                                    reply = item.replyPreview!!,
+                                    isOwn = item.isOwn,
+                                    chatColors = chatColors,
+                                    maxContentWidth = maxTextWidth,
+                                    onClick = { onReplyPreviewClick(item.replyPreview.id) }
+                                )
+                            } else if (hasNoteReply) {
+                                ChatNoteReplyPill(
+                                    snapshotText = msg.noteSnapshotText!!,
+                                    isOwn = item.isOwn,
+                                    chatColors = chatColors,
+                                    maxContentWidth = maxTextWidth
+                                )
                             }
                         }
-                    } else {
-                        val bubbleBg = if (item.isOwn) chatColors.sentBubbleBg else chatColors.receivedBubbleBg
-                        val textColor = if (item.isOwn) chatColors.sentBubbleText else chatColors.receivedBubbleText
-                        val metaTint = if (item.isOwn) chatColors.sentMetaText else chatColors.receivedMetaText
-                        val focusShadowModifier = if (isMenuOpen) {
-                            Modifier.softShadow(
-                                color = BuildXTheme.colors.scrimColor.copy(alpha = 0.45f),
-                                cornerRadius = ChatDimens.BubbleCornerLarge,
-                                blurRadius = 16.dp,
-                                offsetY = 4.dp
-                            )
-                        } else {
-                            Modifier
-                        }
+                    }
 
-                        Box(
-                            modifier = Modifier
-                                .widthIn(max = maxBubbleWidth)
-                                .then(focusShadowModifier)
-                                .clip(shape)
-                                .background(bubbleBg)
-                                .then(
-                                    if (highlightAlpha > 0.01f) {
-                                        Modifier.border(2.dp, BuildXTheme.colors.primaryBlue.copy(alpha = highlightAlpha), shape)
-                                    } else {
-                                        Modifier
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = ChatDimens.MediaMinHeight, max = ChatDimens.MediaMaxHeight)
+                            .let { mod ->
+                                if (isStandaloneMedia) mod else mod.padding(horizontal = 4.dp).clip(RoundedCornerShape(14.dp))
+                            }
+                            .pointerInput(msg.id) {
+                                detectTapGestures(
+                                    onTap = { onImageClick() },
+                                    onLongPress = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        onBubbleLongPress()
                                     }
                                 )
-                                .pointerInput(msg.id, item.deliveryStatus) {
-                                    detectTapGestures(
-                                        onTap = {
-                                            if (item.deliveryStatus == ChatDeliveryStatus.FAILED) {
-                                                onRetryClick()
-                                            } else {
-                                                onBubbleTap()
-                                            }
-                                        },
-                                        onLongPress = {
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            onBubbleLongPress()
-                                        }
-                                    )
-                                }
+                            }
+                    ) {
+                        AsyncImage(
+                            model = msg.attachmentPath,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+
+                        if (msg.content.isBlank()) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(8.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color.Black.copy(alpha = 0.52f))
+                                    .padding(horizontal = 7.dp, vertical = 3.dp)
+                            ) {
+                                ChatBubbleMetaCluster(
+                                    timeText = item.formattedTime,
+                                    isEdited = item.isEdited,
+                                    isOwn = item.isOwn,
+                                    status = item.deliveryStatus,
+                                    tint = Color.White,
+                                    readTint = chatColors.readCheckAccent,
+                                    failedTint = chatColors.failedAccent,
+                                    reduceMotion = reduceMotion
+                                )
+                            }
+                        }
+                    }
+
+                    if (msg.content.isNotBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
                                 .padding(
                                     horizontal = ChatDimens.BubbleHorizontalPadding,
                                     vertical = ChatDimens.BubbleVerticalPadding
                                 )
                         ) {
-                            val maxTextWidth = (maxBubbleWidth - ChatDimens.BubbleHorizontalPadding * 2)
-                                .coerceAtLeast(120.dp)
                             ChatInlineMetaTextBlock(
                                 text = msg.content,
                                 textColor = textColor,
@@ -580,11 +600,124 @@ private fun ChatBubbleContent(
                                 failedTint = chatColors.failedAccent,
                                 reduceMotion = reduceMotion
                             )
-
-                            if (isMenuOpen) {
-                                ChatBubbleActionPopup(items = menuItems, onDismiss = onDismissMenu)
-                            }
                         }
+                    } else if (!isStandaloneMedia) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+
+                    if (isMenuOpen && menuItems.isNotEmpty()) {
+                        ChatBubbleActionPopup(items = menuItems, onDismiss = onDismissMenu)
+                    }
+                }
+            } else if (msg.content.isNotBlank()) {
+                val bubbleBg = if (item.isOwn) chatColors.sentBubbleBg else chatColors.receivedBubbleBg
+                val textColor = if (item.isOwn) chatColors.sentBubbleText else chatColors.receivedBubbleText
+                val metaTint = if (item.isOwn) chatColors.sentMetaText else chatColors.receivedMetaText
+                val focusShadowModifier = if (isMenuOpen) {
+                    Modifier.softShadow(
+                        color = BuildXTheme.colors.composerShadowColor,
+                        cornerRadius = ChatDimens.BubbleCornerLarge,
+                        blurRadius = 14.dp,
+                        offsetY = 4.dp
+                    )
+                } else {
+                    Modifier
+                }
+
+                Box(
+                    modifier = Modifier
+                        .widthIn(max = maxBubbleWidth)
+                        .then(focusShadowModifier)
+                        .clip(shape)
+                        .background(bubbleBg)
+                        .then(
+                            when {
+                                highlightAlpha > 0.01f -> Modifier.border(
+                                    2.dp,
+                                    BuildXTheme.colors.primaryBlue.copy(alpha = highlightAlpha),
+                                    shape
+                                )
+                                isMenuOpen -> Modifier.border(
+                                    0.8.dp,
+                                    if (item.isOwn) Color.White.copy(alpha = 0.28f) else BuildXTheme.colors.subtleSurfaceBorder,
+                                    shape
+                                )
+                                else -> Modifier
+                            }
+                        )
+                        .pointerInput(msg.id, item.deliveryStatus) {
+                            detectTapGestures(
+                                onTap = {
+                                    if (item.deliveryStatus == ChatDeliveryStatus.FAILED) {
+                                        onRetryClick()
+                                    } else {
+                                        onBubbleTap()
+                                    }
+                                },
+                                onLongPress = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onBubbleLongPress()
+                                }
+                            )
+                        }
+                        .padding(
+                            horizontal = ChatDimens.BubbleHorizontalPadding,
+                            vertical = ChatDimens.BubbleVerticalPadding
+                        )
+                ) {
+                    Column(
+                        modifier = Modifier.width(IntrinsicSize.Max)
+                    ) {
+                        if (hasSenderHeader) {
+                            ChatGroupSenderHeader(
+                                name = item.resolvedSenderName!!,
+                                senderId = msg.senderId,
+                                isVerified = item.senderIsVerified,
+                                handle = item.resolvedSenderHandle,
+                                isDark = isDark,
+                                onSenderProfileClick = onSenderProfileClick,
+                                modifier = Modifier
+                                    .widthIn(max = maxTextWidth)
+                                    .padding(bottom = if (hasQuote || hasNoteReply) 4.dp else 2.dp)
+                            )
+                        }
+                        if (hasQuote) {
+                            ChatQuotedReplyCard(
+                                reply = item.replyPreview!!,
+                                isOwn = item.isOwn,
+                                chatColors = chatColors,
+                                maxContentWidth = maxTextWidth,
+                                onClick = { onReplyPreviewClick(item.replyPreview.id) }
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                        } else if (hasNoteReply) {
+                            ChatNoteReplyPill(
+                                snapshotText = msg.noteSnapshotText!!,
+                                isOwn = item.isOwn,
+                                chatColors = chatColors,
+                                maxContentWidth = maxTextWidth
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                        }
+
+                        ChatInlineMetaTextBlock(
+                            text = msg.content,
+                            textColor = textColor,
+                            isRtlContent = item.isRtlContent,
+                            maxTextWidth = maxTextWidth,
+                            timeText = item.formattedTime,
+                            isEdited = item.isEdited,
+                            isOwn = item.isOwn,
+                            status = item.deliveryStatus,
+                            metaTint = metaTint,
+                            readTint = chatColors.readCheckAccent,
+                            failedTint = chatColors.failedAccent,
+                            reduceMotion = reduceMotion
+                        )
+                    }
+
+                    if (isMenuOpen && menuItems.isNotEmpty()) {
+                        ChatBubbleActionPopup(items = menuItems, onDismiss = onDismissMenu)
                     }
                 }
             }
@@ -604,12 +737,54 @@ private fun ChatBubbleContent(
     }
 }
 
+@Composable
+private fun ChatGroupSenderHeader(
+    name: String,
+    senderId: String,
+    isVerified: Boolean,
+    handle: String?,
+    isDark: Boolean,
+    onSenderProfileClick: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = modifier.then(
+            if (!handle.isNullOrBlank()) {
+                Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = { onSenderProfileClick(handle) }
+                )
+            } else {
+                Modifier
+            }
+        )
+    ) {
+        Text(
+            text = name,
+            color = senderNameColor(senderId, isDark),
+            fontSize = 13.sp,
+            lineHeight = 16.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = BuildXFontFamily,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false)
+        )
+        if (isVerified) {
+            VerifiedBadge(size = 13.dp)
+        }
+    }
+}
+
 /**
  * Custom Compose [Layout] pairing message text + metadata cluster (time + optional status icon).
  *
- * Uses [rememberTextMeasurer] for synchronous last-line measurement and places metadata with
- * disjoint coordinates via [ChatMessageMapper.computeBubbleMetaPlacement], so overlap between
- * RTL/LTR text and timestamps is impossible by construction and bubbles tightly hug their content.
+ * Uses [rememberTextMeasurer] for synchronous measurement and an explicit [MeasurePolicy]
+ * supporting `IntrinsicSize.Max` parent columns, placing metadata cleanly at the bottom-right
+ * edge of the bubble across both LTR and RTL content without overlapping text.
  */
 @Composable
 private fun ChatInlineMetaTextBlock(
@@ -652,8 +827,130 @@ private fun ChatInlineMetaTextBlock(
         )
     }
 
+    val measurePolicy = remember(layoutResult, maxWidthPx, inlineGapPx, wrapTopGapPx, isRtlContent) {
+        object : MeasurePolicy {
+            private fun effectiveLastLineWidth(textWidth: Int): Int {
+                val lastLineIndex = (layoutResult.lineCount - 1).coerceAtLeast(0)
+                val measuredLastLinePx = if (layoutResult.lineCount > 0) {
+                    ceil((layoutResult.getLineRight(lastLineIndex) - layoutResult.getLineLeft(lastLineIndex)).toDouble())
+                        .toInt()
+                        .coerceAtLeast(0)
+                } else {
+                    textWidth
+                }
+                return if (layoutResult.lineCount <= 1) {
+                    textWidth
+                } else {
+                    measuredLastLinePx.coerceAtMost(textWidth)
+                }
+            }
+
+            override fun MeasureScope.measure(
+                measurables: List<Measurable>,
+                constraints: Constraints
+            ): MeasureResult {
+                val childMaxWidth = constraints.maxWidth.coerceAtMost(maxWidthPx).coerceAtLeast(1)
+                val looseConstraints = Constraints(minWidth = 0, maxWidth = childMaxWidth)
+                val textPlaceable = measurables[0].measure(looseConstraints)
+                val metaPlaceable = measurables[1].measure(looseConstraints)
+
+                val effectiveLastLinePx = effectiveLastLineWidth(textPlaceable.width)
+                val spec = ChatMessageMapper.computeBubbleMetaPlacement(
+                    textWidthPx = textPlaceable.width,
+                    textHeightPx = textPlaceable.height,
+                    lineCount = layoutResult.lineCount.coerceAtLeast(1),
+                    lastLineWidthPx = effectiveLastLinePx,
+                    metaWidthPx = metaPlaceable.width,
+                    metaHeightPx = metaPlaceable.height,
+                    maxWidthPx = childMaxWidth,
+                    inlineGapPx = inlineGapPx,
+                    wrapTopGapPx = wrapTopGapPx,
+                    isRtlContent = isRtlContent
+                )
+
+                val minW = constraints.minWidth.coerceAtMost(constraints.maxWidth)
+                val boxWidth = spec.widthPx.coerceIn(minW, constraints.maxWidth)
+                val minH = constraints.minHeight.coerceAtMost(constraints.maxHeight)
+                val boxHeight = spec.heightPx.coerceIn(minH, constraints.maxHeight)
+
+                val finalMetaX = (boxWidth - metaPlaceable.width).coerceAtLeast(0)
+                val finalTextX = if (isRtlContent) {
+                    if (spec.isInline) {
+                        (finalMetaX - inlineGapPx - textPlaceable.width).coerceAtLeast(0)
+                    } else {
+                        (boxWidth - textPlaceable.width).coerceAtLeast(0)
+                    }
+                } else {
+                    0
+                }
+
+                return layout(boxWidth, boxHeight) {
+                    textPlaceable.place(finalTextX, spec.textY)
+                    metaPlaceable.place(finalMetaX, spec.metaY)
+                }
+            }
+
+            override fun IntrinsicMeasureScope.maxIntrinsicWidth(
+                measurables: List<IntrinsicMeasurable>,
+                height: Int
+            ): Int {
+                val metaW = measurables[1].maxIntrinsicWidth(height).coerceAtMost(maxWidthPx)
+                val metaH = measurables[1].maxIntrinsicHeight(metaW.coerceAtLeast(1))
+                val textW = layoutResult.size.width.coerceAtMost(maxWidthPx)
+                val textH = layoutResult.size.height
+                return ChatMessageMapper.computeBubbleMetaPlacement(
+                    textWidthPx = textW,
+                    textHeightPx = textH,
+                    lineCount = layoutResult.lineCount.coerceAtLeast(1),
+                    lastLineWidthPx = effectiveLastLineWidth(textW),
+                    metaWidthPx = metaW,
+                    metaHeightPx = metaH,
+                    maxWidthPx = maxWidthPx,
+                    inlineGapPx = inlineGapPx,
+                    wrapTopGapPx = wrapTopGapPx,
+                    isRtlContent = isRtlContent
+                ).widthPx
+            }
+
+            override fun IntrinsicMeasureScope.minIntrinsicWidth(
+                measurables: List<IntrinsicMeasurable>,
+                height: Int
+            ): Int = maxIntrinsicWidth(measurables, height)
+
+            override fun IntrinsicMeasureScope.maxIntrinsicHeight(
+                measurables: List<IntrinsicMeasurable>,
+                width: Int
+            ): Int {
+                val clampedW = width.coerceAtMost(maxWidthPx).coerceAtLeast(1)
+                val textH = measurables[0].maxIntrinsicHeight(clampedW)
+                val metaW = measurables[1].maxIntrinsicWidth(Constraints.Infinity).coerceAtMost(clampedW)
+                val metaH = measurables[1].maxIntrinsicHeight(metaW.coerceAtLeast(1))
+                val textW = layoutResult.size.width.coerceAtMost(clampedW)
+                return ChatMessageMapper.computeBubbleMetaPlacement(
+                    textWidthPx = textW,
+                    textHeightPx = textH,
+                    lineCount = layoutResult.lineCount.coerceAtLeast(1),
+                    lastLineWidthPx = effectiveLastLineWidth(textW),
+                    metaWidthPx = metaW,
+                    metaHeightPx = metaH,
+                    maxWidthPx = clampedW,
+                    inlineGapPx = inlineGapPx,
+                    wrapTopGapPx = wrapTopGapPx,
+                    isRtlContent = isRtlContent
+                ).heightPx
+            }
+
+            override fun IntrinsicMeasureScope.minIntrinsicHeight(
+                measurables: List<IntrinsicMeasurable>,
+                width: Int
+            ): Int = maxIntrinsicHeight(measurables, width)
+        }
+    }
+
     Layout(
-        modifier = Modifier.widthIn(max = maxTextWidth),
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = maxTextWidth),
         content = {
             CompositionLocalProvider(
                 LocalLayoutDirection provides if (isRtlContent) LayoutDirection.Rtl else LayoutDirection.Ltr
@@ -673,46 +970,9 @@ private fun ChatInlineMetaTextBlock(
                 failedTint = failedTint,
                 reduceMotion = reduceMotion
             )
-        }
-    ) { measurables, constraints ->
-        val childMaxWidth = constraints.maxWidth.coerceAtMost(maxWidthPx).coerceAtLeast(1)
-        val looseConstraints = Constraints(minWidth = 0, maxWidth = childMaxWidth)
-        val textPlaceable = measurables[0].measure(looseConstraints)
-        val metaPlaceable = measurables[1].measure(looseConstraints)
-
-        val lastLineIndex = (layoutResult.lineCount - 1).coerceAtLeast(0)
-        val measuredLastLinePx = if (layoutResult.lineCount > 0) {
-            ceil((layoutResult.getLineRight(lastLineIndex) - layoutResult.getLineLeft(lastLineIndex)).toDouble())
-                .toInt()
-                .coerceAtLeast(0)
-        } else {
-            textPlaceable.width
-        }
-        val effectiveLastLinePx = if (layoutResult.lineCount <= 1) {
-            textPlaceable.width
-        } else {
-            measuredLastLinePx.coerceAtMost(textPlaceable.width)
-        }
-
-        val spec = ChatMessageMapper.computeBubbleMetaPlacement(
-            textWidthPx = textPlaceable.width,
-            textHeightPx = textPlaceable.height,
-            lineCount = layoutResult.lineCount.coerceAtLeast(1),
-            lastLineWidthPx = effectiveLastLinePx,
-            metaWidthPx = metaPlaceable.width,
-            metaHeightPx = metaPlaceable.height,
-            maxWidthPx = childMaxWidth,
-            inlineGapPx = inlineGapPx,
-            wrapTopGapPx = wrapTopGapPx,
-            isRtlContent = isRtlContent
-        )
-
-        layout(spec.widthPx, spec.heightPx) {
-            // Use raw physical coordinates (x, y) because spec already handles RTL vs LTR geometry
-            textPlaceable.place(spec.textX, spec.textY)
-            metaPlaceable.place(spec.metaX, spec.metaY)
-        }
-    }
+        },
+        measurePolicy = measurePolicy
+    )
 }
 
 /**
@@ -763,7 +1023,6 @@ private fun ChatBubbleMetaCluster(
             if (isOwn) {
                 ChatStatusIcon(
                     status = status,
-                    defaultTint = Color.White.copy(alpha = 0.88f),
                     readTint = readTint,
                     failedTint = failedTint,
                     reduceMotion = reduceMotion
@@ -776,13 +1035,12 @@ private fun ChatBubbleMetaCluster(
 @Composable
 private fun ChatStatusIcon(
     status: ChatDeliveryStatus,
-    defaultTint: Color,
     readTint: Color,
     failedTint: Color,
     reduceMotion: Boolean
 ) {
     Box(
-        modifier = Modifier.size(ChatDimens.StatusIconSize),
+        modifier = Modifier.size(15.dp),
         contentAlignment = Alignment.Center
     ) {
         AnimatedContent(
@@ -816,18 +1074,18 @@ private fun ChatStatusIcon(
                     )
                 }
             } else {
-                val (iconRes, iconTint) = when (target) {
-                    ChatDeliveryStatus.SENDING -> R.drawable.ic_dm_clock to defaultTint
-                    ChatDeliveryStatus.SENT -> R.drawable.ic_check to defaultTint
-                    ChatDeliveryStatus.DELIVERED -> R.drawable.ic_dm_double_check to defaultTint
-                    ChatDeliveryStatus.READ -> R.drawable.ic_dm_double_check to readTint
-                    ChatDeliveryStatus.FAILED -> R.drawable.ic_dm_error to failedTint
+                val (iconRes, iconTint, iconSize) = when (target) {
+                    ChatDeliveryStatus.SENDING -> Triple(R.drawable.ic_dm_clock, Color.White.copy(alpha = 0.70f), 13.dp)
+                    ChatDeliveryStatus.SENT,
+                    ChatDeliveryStatus.DELIVERED -> Triple(R.drawable.ic_dm_single_check, Color.White.copy(alpha = 0.82f), 14.dp)
+                    ChatDeliveryStatus.READ -> Triple(R.drawable.ic_dm_double_check, readTint, 15.dp)
+                    ChatDeliveryStatus.FAILED -> Triple(R.drawable.ic_dm_error, failedTint, ChatDimens.StatusIconSize)
                 }
                 Icon(
                     painter = painterResource(id = iconRes),
                     contentDescription = target.name,
                     tint = iconTint,
-                    modifier = Modifier.size(ChatDimens.StatusIconSize)
+                    modifier = Modifier.size(iconSize)
                 )
             }
         }
@@ -839,21 +1097,28 @@ private fun ChatQuotedReplyCard(
     reply: DmReplyPreview,
     isOwn: Boolean,
     chatColors: ChatColors,
-    maxBubbleWidth: androidx.compose.ui.unit.Dp,
+    maxContentWidth: androidx.compose.ui.unit.Dp,
     onClick: () -> Unit
 ) {
-    val bg = if (isOwn) chatColors.quotedBgSent else chatColors.quotedBgReceived
-    val bar = if (isOwn) chatColors.quotedBarSent else chatColors.quotedBarReceived
-    val secondary = BuildXTheme.colors.secondaryText
-    val primary = BuildXTheme.colors.primaryText
+    val isDark = BuildXTheme.colors.isDark
+    val incomingAccent = senderNameColor(reply.senderId, isDark)
+    val bgColor = if (isOwn) chatColors.quotedBgSent else incomingAccent.copy(alpha = if (isDark) 0.14f else 0.10f)
+    val barColor = if (isOwn) Color.White else incomingAccent
+    val nameColor = if (isOwn) Color.White else incomingAccent
+    val bodyColor = if (isOwn) {
+        Color.White.copy(alpha = 0.88f)
+    } else {
+        BuildXTheme.colors.primaryText.copy(alpha = 0.84f)
+    }
+    val quoteShape = RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 10.dp, bottomEnd = 10.dp)
 
     Row(
         modifier = Modifier
-            .widthIn(max = maxBubbleWidth)
-            .clip(RoundedCornerShape(12.dp))
-            .background(bg)
+            .fillMaxWidth()
+            .widthIn(min = 140.dp, max = maxContentWidth)
+            .clip(quoteShape)
+            .background(bgColor)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 7.dp)
             .height(IntrinsicSize.Min),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -861,16 +1126,19 @@ private fun ChatQuotedReplyCard(
             modifier = Modifier
                 .width(3.dp)
                 .fillMaxHeight()
-                .heightIn(min = 28.dp)
-                .clip(RoundedCornerShape(1.5.dp))
-                .background(bar)
+                .heightIn(min = 32.dp)
+                .background(barColor)
         )
-        Spacer(modifier = Modifier.width(8.dp))
-        Column {
+        Column(
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .padding(start = 8.dp, end = 10.dp, top = 5.dp, bottom = 5.dp)
+        ) {
             Text(
-                text = reply.senderDisplayName ?: stringResource(R.string.dm_you),
-                color = bar,
-                fontSize = 12.sp,
+                text = reply.senderDisplayName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.dm_you),
+                color = nameColor,
+                fontSize = 12.5.sp,
+                lineHeight = 16.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = BuildXFontFamily,
                 maxLines = 1,
@@ -882,7 +1150,7 @@ private fun ChatQuotedReplyCard(
                 } else {
                     reply.content.ifBlank { stringResource(R.string.dm_media_attachment) }
                 },
-                color = if (reply.isDeleted) secondary else if (isOwn) primary.copy(alpha = 0.85f) else secondary,
+                color = if (reply.isDeleted) BuildXTheme.colors.secondaryText else bodyColor,
                 style = TextStyle(
                     fontFamily = BuildXFontFamily,
                     fontSize = 12.5.sp,
@@ -890,7 +1158,7 @@ private fun ChatQuotedReplyCard(
                     fontStyle = if (reply.isDeleted) FontStyle.Italic else FontStyle.Normal,
                     textDirection = TextDirection.Content
                 ),
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
         }
@@ -900,22 +1168,26 @@ private fun ChatQuotedReplyCard(
 @Composable
 private fun ChatNoteReplyPill(
     snapshotText: String,
+    isOwn: Boolean,
     chatColors: ChatColors,
-    maxBubbleWidth: androidx.compose.ui.unit.Dp
+    maxContentWidth: androidx.compose.ui.unit.Dp
 ) {
+    val bgColor = if (isOwn) chatColors.quotedBgSent else chatColors.quotedBgReceived
+    val textColor = if (isOwn) Color.White.copy(alpha = 0.90f) else chatColors.receivedBubbleText.copy(alpha = 0.80f)
     Box(
         modifier = Modifier
-            .widthIn(max = maxBubbleWidth)
-            .clip(RoundedCornerShape(12.dp))
-            .background(chatColors.dateChipBg)
-            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .fillMaxWidth()
+            .widthIn(min = 140.dp, max = maxContentWidth)
+            .clip(RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 10.dp, bottomEnd = 10.dp))
+            .background(bgColor)
+            .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text(
             text = "${stringResource(R.string.dm_replied_to_note)}: \"$snapshotText\"",
-            color = chatColors.dateChipText,
-            fontSize = 11.5.sp,
+            color = textColor,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
-            maxLines = 2,
+            maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
     }
@@ -925,14 +1197,18 @@ private fun ChatNoteReplyPill(
 private fun ChatGroupSenderAvatar(
     avatarUrl: String?,
     displayName: String?,
-    chatColors: ChatColors
+    chatColors: ChatColors,
+    onClick: (() -> Unit)? = null
 ) {
     Box(
         modifier = Modifier
             .size(ChatDimens.GroupAvatarSize)
             .clip(CircleShape)
             .background(chatColors.receivedBubbleBg)
-            .border(0.8.dp, chatColors.headerGlassBorder, CircleShape),
+            .border(0.8.dp, chatColors.headerGlassBorder, CircleShape)
+            .let { mod ->
+                if (onClick != null) mod.clickable(onClick = onClick) else mod
+            },
         contentAlignment = Alignment.Center
     ) {
         if (!avatarUrl.isNullOrBlank()) {
@@ -1230,6 +1506,7 @@ private fun ChatBubbleActionPopup(
     items: List<ActionMenuItem>,
     onDismiss: () -> Unit
 ) {
+    if (items.isEmpty()) return
     val strings = BuildXTheme.strings
     Popup(
         popupPositionProvider = remember(strings.isRtl) { BubblePopupPositionProvider(strings.isRtl) },
@@ -1240,7 +1517,12 @@ private fun ChatBubbleActionPopup(
             dismissOnClickOutside = true
         )
     ) {
-        ActionMenuPopup(items = items)
+        ActionMenuPopup(
+            items = items,
+            popupWidth = 200.dp,
+            borderWidth = 0.8.dp,
+            shadowBlurRadius = 18.dp
+        )
     }
 }
 

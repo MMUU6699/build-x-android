@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -225,21 +226,24 @@ data class ActionMenuItem(
 @Composable
 fun ActionMenuPopup(
     items: List<ActionMenuItem>,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    popupWidth: Dp = 188.dp,
+    borderWidth: Dp = 1.dp,
+    shadowBlurRadius: Dp = 22.dp
 ) {
     val colors = BuildXTheme.colors
     Column(
         modifier = modifier
-            .width(188.dp)
+            .width(popupWidth)
             .softShadow(
                 color = colors.composerShadowColor,
                 cornerRadius = 16.dp,
-                blurRadius = 22.dp,
+                blurRadius = shadowBlurRadius,
                 offsetY = 6.dp
             )
             .clip(RoundedCornerShape(16.dp))
             .background(colors.cardBackground)
-            .border(1.dp, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
+            .border(borderWidth, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
             .padding(vertical = 4.dp)
     ) {
         items.forEachIndexed { index, item ->

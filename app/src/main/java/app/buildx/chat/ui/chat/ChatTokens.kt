@@ -66,15 +66,15 @@ fun BuildXColors.toChatColors(): ChatColors = if (isDark) {
         sentBubbleBg = Color(0xFF1668E3),
         sentBubbleText = Color(0xFFFFFFFF),
         sentMetaText = Color(0xFFFFFFFF).copy(alpha = 0.72f),
-        readCheckAccent = Color(0xFFB5ECFF),
+        readCheckAccent = Color(0xFFFFFFFF),
         failedAccent = destructiveRed,
         deletedPillBg = Color(0xFF15181C),
         deletedPillBorder = Color(0xFF282D34),
         deletedPillText = secondaryText,
-        quotedBarSent = Color(0xFFFFFFFF).copy(alpha = 0.80f),
+        quotedBarSent = Color(0xFFFFFFFF),
         quotedBarReceived = primaryBlue,
-        quotedBgSent = Color(0xFF000000).copy(alpha = 0.16f),
-        quotedBgReceived = Color(0xFFFFFFFF).copy(alpha = 0.06f),
+        quotedBgSent = Color(0xFFFFFFFF).copy(alpha = 0.16f),
+        quotedBgReceived = primaryBlue.copy(alpha = 0.14f),
         dateChipBg = Color(0xFF1A1E23),
         dateChipText = secondaryText,
         headerGlassBg = Color(0xFA171A1E),
@@ -103,15 +103,15 @@ fun BuildXColors.toChatColors(): ChatColors = if (isDark) {
         sentBubbleBg = Color(0xFF0064E0),
         sentBubbleText = Color(0xFFFFFFFF),
         sentMetaText = Color(0xFFFFFFFF).copy(alpha = 0.70f),
-        readCheckAccent = Color(0xFFB5ECFF),
+        readCheckAccent = Color(0xFFFFFFFF),
         failedAccent = destructiveRed,
         deletedPillBg = Color(0xFFF8F9F8),
         deletedPillBorder = Color(0xFFE1E4E2),
         deletedPillText = secondaryText,
-        quotedBarSent = Color(0xFFFFFFFF).copy(alpha = 0.85f),
+        quotedBarSent = Color(0xFFFFFFFF),
         quotedBarReceived = Color(0xFF0064E0),
-        quotedBgSent = Color(0xFF000000).copy(alpha = 0.14f),
-        quotedBgReceived = Color(0xFF000000).copy(alpha = 0.05f),
+        quotedBgSent = Color(0xFFFFFFFF).copy(alpha = 0.16f),
+        quotedBgReceived = Color(0xFF0064E0).copy(alpha = 0.10f),
         dateChipBg = Color(0xFFF1F3F2),
         dateChipText = secondaryText,
         headerGlassBg = Color(0xFCFFFFFF),
@@ -203,8 +203,8 @@ object ChatDimens {
     val ComposerOuterPaddingBottom: Dp = 8.dp
     val ComposerMinHeight: Dp = 50.dp
     val ComposerCorner: Dp = 26.dp
-    val ComposerExpandedCorner: Dp = 22.dp
-    val ComposerBorderWidth: Dp = 1.dp
+    val ComposerExpandedCorner: Dp = 20.dp
+    val ComposerBorderWidth: Dp = 0.8.dp
     val ComposerAttachButtonSize: Dp = 40.dp
     val ComposerActionSize: Dp = 42.dp
     val ComposerTextMaxLines: Int = 6
@@ -220,17 +220,51 @@ object ChatDimens {
 }
 
 /**
+ * Deterministic high-contrast sender accent colors for group message headers and quoted reply bars.
+ */
+private val DarkSenderNamePalette = listOf(
+    Color(0xFF4ADE80), // Mint Green
+    Color(0xFFFB7185), // Rose
+    Color(0xFF60A5FA), // Sky Blue
+    Color(0xFFFBBF24), // Amber Gold
+    Color(0xFFC084FC), // Soft Violet
+    Color(0xFFF472B6), // Coral Pink
+    Color(0xFF22D3EE), // Cyan
+    Color(0xFFFB923C)  // Warm Peach
+)
+
+private val LightSenderNamePalette = listOf(
+    Color(0xFF0F7B43), // Emerald
+    Color(0xFFBE123C), // Deep Rose
+    Color(0xFF1D4ED8), // Cobalt Blue
+    Color(0xFFB45309), // Deep Amber
+    Color(0xFF6D28D9), // Rich Violet
+    Color(0xFF9D174D), // Magenta Berry
+    Color(0xFF0E7490), // Deep Teal
+    Color(0xFFC2410C)  // Burnt Sienna
+)
+
+fun senderNameColor(senderId: String, isDark: Boolean): Color {
+    val palette = if (isDark) DarkSenderNamePalette else LightSenderNamePalette
+    val idx = (senderId.hashCode() and Int.MAX_VALUE) % palette.size
+    return palette[idx]
+}
+
+/**
  * Tunable animation durations, springs, and motion curves.
  * Change values here to tune the feel of the entire DM chat experience.
  */
 object ChatMotion {
-    // Bubble send transition ("composer -> bubble" lift)
-    const val SendLiftStartScale: Float = 0.86f
-    const val SendLiftStartAlpha: Float = 0.20f
-    val SendLiftStartTranslationY: Dp = 36.dp
-    const val SendLiftDampingRatio: Float = 0.82f
-    const val SendLiftStiffness: Float = Spring.StiffnessMediumLow
-    const val SendFadeDurationMs: Int = 200
+    // Bubble send transition ("composer -> bubble" spring launch)
+    const val SendLiftStartScale: Float = 0.78f
+    const val SendLiftStartScaleX: Float = 0.78f
+    const val SendLiftStartScaleY: Float = 0.72f
+    const val SendLiftStartAlpha: Float = 0f
+    val SendLiftStartTranslationY: Dp = 48.dp
+    val SendLiftStartTranslationX: Dp = 18.dp
+    const val SendLiftDampingRatio: Float = 0.76f
+    const val SendLiftStiffness: Float = Spring.StiffnessMedium
+    const val SendFadeDurationMs: Int = 120
 
     // List item placement & receive entry
     const val ItemPlacementDamping: Float = 0.85f

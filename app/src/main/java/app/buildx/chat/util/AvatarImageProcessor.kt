@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -24,6 +25,16 @@ object AvatarImageProcessor {
     private const val DEFAULT_TARGET_SIZE = 512
     private const val DEFAULT_JPEG_QUALITY = 88
     private const val MAX_FILE_SIZE_BYTES = 300 * 1024 // 300 KB
+    const val MAX_BANNER_IMAGE_EDGE = 1600
+    const val MAX_BANNER_VIDEO_DURATION_MS = 10_500L
+    const val MAX_BANNER_VIDEO_BYTES = 15L * 1024L * 1024L // 15 MB
+
+    sealed class BannerVideoValidation {
+        data class Valid(val bytes: ByteArray, val durationMs: Long) : BannerVideoValidation()
+        data class TooLong(val durationMs: Long) : BannerVideoValidation()
+        data class TooLarge(val sizeBytes: Long) : BannerVideoValidation()
+        data object Unreadable : BannerVideoValidation()
+    }
 
     /**
      * Decode image dimensions and compute power-of-2 sample size to prevent OOM.
@@ -287,4 +298,91 @@ object AvatarImageProcessor {
             null
         }
     }
+
+    /**
+     * Downscales and compresses a banner image (longest edge <= 1600px, JPEG 88% quality)
+     * reusing [processWallpaperJpeg] to avoid duplicating EXIF/scaling logic.
+     */
+    fun processBannerJpeg(
+        context: Context,
+        uri: Uri,
+        maxEdge: Int = MAX_BANNER_IMAGE_EDGE,
+        quality: Int = DEFAULT_JPEG_QUALITY,
+        maxBytes: Int = 1_800_000
+    ): ByteArray? = processWallpaperJpeg(
+        context = context,
+        uri = uri,
+        maxEdge = maxEdge,
+        quality = quality,
+        maxBytes = maxBytes
+    )
+
+    /**
+     * Validates banner video constraints (duration <= 10.5s, size <= 15 MB).
+     */
+    fun validateBannerVideoLimits(durationMs: Long, sizeBytes: Long): BannerVideoValidation? {
+        if (durationMs < 0L || sizeBytes <= 0L) return BannerVideoValidation.Unreadable
+        if (durationMs > MAX_BANNER_VIDEO_DURATION_MS) return BannerVideoValidation.TooLong(durationMs)
+        if (sizeBytes > MAX_BANNER_VIDEO_BYTES) return BannerVideoValidation.TooLarge(sizeBytes)
+        return null
+    }
+
+    /**
+     * Inspects a picked video Uri on IO using MediaMetadataRetriever, verifies duration
+     * (<= 10.5s) and size (<= 15 MB), and reads raw bytes once ready for upload.
+     */
+    fun inspectAndReadBannerVideo(context: Context, uri: Uri): BannerVideoValidation {
+        val retriever = MediaMetadataRetriever()
+        val durationMs = try {
+            retriever.setDataSource(context, uri)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: -1L
+        } catch (_: Throwable) {
+            -1L
+        } finally {
+            runCatching { retriever.release() }
+        }
+        if (durationMs < 0L) return BannerVideoValidation.Unreadable
+        if (durationMs > MAX_BANNER_VIDEO_DURATION_MS) return BannerVideoValidation.TooLong(durationMs)
+
+        val declaredSize = try {
+            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+        } catch (_: Throwable) {
+            -1L
+        }
+        if (declaredSize > MAX_BANNER_VIDEO_BYTES) {
+            return BannerVideoValidation.TooLarge(declaredSize)
+        }
+
+        val bytes = try {
+            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        } catch (_: Throwable) {
+            null
+        } ?: return BannerVideoValidation.Unreadable
+
+        val rejection = validateBannerVideoLimits(durationMs, bytes.size.toLong())
+        return rejection ?: BannerVideoValidation.Valid(bytes, durationMs)
+    }
+
+    /**
+     * Persists a temporary banner file (jpg or mp4) in cacheDir for immediate optimistic UI preview.
+     */
+    fun saveTempBannerFile(context: Context, bytes: ByteArray, isVideo: Boolean): Uri? {
+        return try {
+            val ext = if (isVideo) "mp4" else "jpg"
+            val tempFile = File(context.cacheDir, "banner_preview_${System.currentTimeMillis()}.$ext")
+            FileOutputStream(tempFile).use { fos ->
+                fos.write(bytes)
+                fos.flush()
+            }
+            Uri.fromFile(tempFile)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /**
+     * Returns a deterministic disk-cache File for a remote looping banner video.
+     */
+    fun getBannerVideoCacheFile(cacheDir: File, videoUrl: String): File =
+        File(cacheDir, "banner_cache_${videoUrl.hashCode()}.mp4")
 }

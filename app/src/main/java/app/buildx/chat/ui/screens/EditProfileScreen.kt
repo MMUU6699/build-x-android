@@ -33,8 +33,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -52,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
@@ -63,6 +64,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -71,8 +73,11 @@ import app.buildx.chat.R
 import app.buildx.chat.data.model.UserProfile
 import app.buildx.chat.ui.components.GroupedCard
 import app.buildx.chat.ui.components.HeaderCircleButton
+import app.buildx.chat.ui.components.MarkLoader
+import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
+import app.buildx.chat.ui.theme.softShadow
 import app.buildx.chat.ui.viewmodel.BuildXViewModel
 import app.buildx.chat.util.AuthValidation
 import coil.compose.AsyncImage
@@ -100,10 +105,13 @@ import java.time.temporal.ChronoUnit
 fun EditProfileScreen(
     profile: UserProfile?,
     isUploadingAvatar: Boolean = false,
+    isUploadingBanner: Boolean = false,
     onSaveProfile: (displayName: String, username: String?, bio: String?) -> Unit,
     onPickAvatarClick: (() -> Unit)? = null,
     onRemoveAvatarClick: (() -> Unit)? = null,
     onUploadAvatarBytes: ((ByteArray, Uri?) -> Unit)? = null,
+    onUploadBanner: ((Uri, Boolean) -> Unit)? = null,
+    onRemoveBannerClick: (() -> Unit)? = null,
     onBackClick: () -> Unit,
     checkUsernameAvailable: suspend (String) -> Boolean,
     onCountrySelected: ((String?) -> Unit)? = null,
@@ -152,6 +160,30 @@ fun EditProfileScreen(
                         selectedCropBytes = bytes
                     }
                 }
+            }
+        }
+    }
+
+    val bannerImagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            if (onUploadBanner != null) {
+                onUploadBanner(uri, false)
+            } else {
+                localViewModel?.uploadProfileBanner(uri, isVideo = false)
+            }
+        }
+    }
+
+    val bannerVideoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            if (onUploadBanner != null) {
+                onUploadBanner(uri, true)
+            } else {
+                localViewModel?.uploadProfileBanner(uri, isVideo = true)
             }
         }
     }
@@ -291,111 +323,289 @@ fun EditProfileScreen(
                     .fillMaxWidth()
                     .verticalScroll(scrollState)
             ) {
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // Avatar circle with camera edit badge
+                // Unified Banner & Avatar Studio Preview Card
+                val hasExistingAvatar = !profile?.avatarUrl.isNullOrBlank()
+                val hasExistingBanner = profile?.hasBanner == true
+                val effectiveBannerType = profile?.normalizedBannerType ?: "none"
+
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .softShadow(
+                            color = colors.headerHaloShadowColor,
+                            cornerRadius = 22.dp,
+                            blurRadius = 14.dp,
+                            offsetY = 3.dp
+                        )
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(colors.cardBackground)
+                        .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(22.dp))
                 ) {
-                    val hasExistingAvatar = !profile?.avatarUrl.isNullOrBlank()
-
+                    // Integrated 176dp Live Banner + Overlapping 92dp Avatar
                     Box(
-                        modifier = Modifier
-                            .size(92.dp)
-                            .clickable(enabled = !isUploadingAvatar) {
-                                if (hasExistingAvatar) {
-                                    showAvatarOptionsSheet = true
-                                } else {
-                                    photoPickerLauncher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                    )
-                                }
-                            },
-                        contentAlignment = Alignment.BottomEnd
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.TopCenter
                     ) {
-                        if (hasExistingAvatar) {
-                            AsyncImage(
-                                model = profile?.avatarUrl,
-                                contentDescription = stringResource(R.string.edit_profile_change_photo),
-                                modifier = Modifier
-                                    .size(92.dp)
-                                    .clip(CircleShape)
-                                    .border(2.dp, colors.cardBackground, CircleShape),
-                                contentScale = ContentScale.Crop
-                            )
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .size(92.dp)
-                                    .clip(CircleShape)
-                                    .background(colors.cardBackground),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.ic_user),
-                                    contentDescription = stringResource(R.string.edit_profile_change_photo),
-                                    tint = colors.secondaryText,
-                                    modifier = Modifier.size(46.dp)
-                                )
-                            }
-                        }
-
-                        // Uploading overlay indicator
-                        if (isUploadingAvatar) {
-                            Box(
-                                modifier = Modifier
-                                    .size(92.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.Black.copy(alpha = 0.45f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(28.dp),
-                                    color = Color.White,
-                                    strokeWidth = 2.5.dp
-                                )
-                            }
-                        }
-
-                        // Camera badge
                         Box(
                             modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .background(colors.primaryBlue)
-                                .border(2.dp, colors.cardBackground, CircleShape),
+                                .fillMaxWidth()
+                                .height(176.dp)
+                                .background(
+                                    Brush.verticalGradient(
+                                        colors = listOf(colors.surfaceMuted, colors.cardBackground)
+                                    )
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_camera),
-                                contentDescription = stringResource(R.string.edit_profile_change_photo),
-                                tint = colors.onPrimaryBlue,
-                                modifier = Modifier.size(16.dp)
+                            if (hasExistingBanner) {
+                                ProfileHeroBanner(
+                                    bannerUrl = profile?.bannerUrl,
+                                    bannerType = effectiveBannerType,
+                                    isDarkTheme = colors.isDark,
+                                    pageBackground = colors.cardBackground,
+                                    topScrimEnabled = false,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentDescription = stringResource(R.string.edit_profile_banner_section)
+                                )
+                            } else {
+                                Row(
+                                    modifier = Modifier.padding(bottom = 44.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_image),
+                                        contentDescription = null,
+                                        tint = colors.secondaryText.copy(alpha = 0.7f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.edit_profile_banner_section),
+                                        fontSize = 13.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = colors.secondaryText.copy(alpha = 0.8f)
+                                    )
+                                }
+                            }
+
+                            if (isUploadingBanner) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color.Black.copy(alpha = 0.36f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    MarkLoader(
+                                        size = 28.dp,
+                                        isSpinning = true,
+                                        tint = Color.White
+                                    )
+                                }
+                            }
+                        }
+
+                        // Avatar circle with camera edit badge overlapping banner dissolve
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 122.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(92.dp)
+                                    .clickable(enabled = !isUploadingAvatar) {
+                                        if (hasExistingAvatar) {
+                                            showAvatarOptionsSheet = true
+                                        } else {
+                                            photoPickerLauncher.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                            )
+                                        }
+                                    },
+                                contentAlignment = Alignment.BottomEnd
+                            ) {
+                                if (hasExistingAvatar) {
+                                    AsyncImage(
+                                        model = profile?.avatarUrl,
+                                        contentDescription = stringResource(R.string.edit_profile_change_photo),
+                                        modifier = Modifier
+                                            .size(92.dp)
+                                            .clip(CircleShape)
+                                            .border(3.dp, colors.cardBackground, CircleShape),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(92.dp)
+                                            .clip(CircleShape)
+                                            .background(colors.surfaceMuted)
+                                            .border(3.dp, colors.cardBackground, CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.ic_user),
+                                            contentDescription = stringResource(R.string.edit_profile_change_photo),
+                                            tint = colors.secondaryText,
+                                            modifier = Modifier.size(44.dp)
+                                        )
+                                    }
+                                }
+
+                                // Uploading overlay indicator
+                                if (isUploadingAvatar) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(92.dp)
+                                            .clip(CircleShape)
+                                            .background(Color.Black.copy(alpha = 0.45f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        MarkLoader(
+                                            size = 28.dp,
+                                            isSpinning = true,
+                                            tint = Color.White
+                                        )
+                                    }
+                                }
+
+                                // Camera badge
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(colors.primaryBlue)
+                                        .border(2.dp, colors.cardBackground, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_camera),
+                                        contentDescription = stringResource(R.string.edit_profile_change_photo),
+                                        tint = colors.onPrimaryBlue,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                text = stringResource(R.string.edit_profile_change_photo),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.primaryBlue,
+                                modifier = Modifier.clickable(enabled = !isUploadingAvatar) {
+                                    if (hasExistingAvatar) {
+                                        showAvatarOptionsSheet = true
+                                    } else {
+                                        photoPickerLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    }
+                                }
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
+                    HorizontalDivider(color = colors.hairlineBorder, thickness = 0.8.dp)
 
-                    Text(
-                        text = stringResource(R.string.edit_profile_change_photo),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = colors.primaryBlue,
-                        modifier = Modifier.clickable(enabled = !isUploadingAvatar) {
-                            if (hasExistingAvatar) {
-                                showAvatarOptionsSheet = true
-                            } else {
-                                photoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
+                    // Banner Media Studio Controls
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.edit_profile_banner_section),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = colors.primaryText
+                            )
+                            Text(
+                                text = stringResource(R.string.edit_profile_banner_hint),
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = colors.secondaryText
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            BannerPickerPill(
+                                iconRes = R.drawable.ic_image,
+                                label = stringResource(R.string.edit_profile_banner_choose_image),
+                                enabled = !isUploadingBanner,
+                                onClick = {
+                                    bannerImagePickerLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                    )
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                            BannerPickerPill(
+                                iconRes = R.drawable.ic_video,
+                                label = stringResource(R.string.edit_profile_banner_choose_video),
+                                enabled = !isUploadingBanner,
+                                onClick = {
+                                    bannerVideoPickerLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                                    )
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        if (hasExistingBanner) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(colors.destructiveRed.copy(alpha = 0.08f))
+                                    .pressScaleClickable(enabled = !isUploadingBanner) {
+                                        if (onRemoveBannerClick != null) {
+                                            onRemoveBannerClick()
+                                        } else {
+                                            localViewModel?.removeProfileBanner()
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_trash),
+                                        contentDescription = null,
+                                        tint = colors.destructiveRed,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.edit_profile_banner_remove),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = colors.destructiveRed
+                                    )
+                                }
                             }
                         }
-                    )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
                 // Form Cards
                 Column(
@@ -464,10 +674,10 @@ fun EditProfileScreen(
                                 )
 
                                 if (isCheckingUsername) {
-                                    CircularProgressIndicator(
-                                        color = colors.primaryBlue,
-                                        strokeWidth = 2.dp,
-                                        modifier = Modifier.size(14.dp)
+                                    MarkLoader(
+                                        size = 14.dp,
+                                        isSpinning = true,
+                                        tint = colors.primaryBlue
                                     )
                                 }
                             }
@@ -917,5 +1127,46 @@ fun EditProfileScreen(
             containerColor = colors.cardBackground,
             shape = RoundedCornerShape(20.dp)
         )
+    }
+}
+
+@Composable
+private fun BannerPickerPill(
+    iconRes: Int,
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colors = BuildXTheme.colors
+    Box(
+        modifier = modifier
+            .height(42.dp)
+            .clip(RoundedCornerShape(13.dp))
+            .background(colors.surfaceMuted)
+            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(13.dp))
+            .pressScaleClickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(horizontal = 8.dp)
+        ) {
+            Icon(
+                painter = painterResource(id = iconRes),
+                contentDescription = null,
+                tint = colors.primaryText,
+                modifier = Modifier.size(16.dp)
+            )
+            Text(
+                text = label,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = colors.primaryText,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }

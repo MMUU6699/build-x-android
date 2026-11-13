@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Tab
@@ -57,6 +56,7 @@ import app.buildx.chat.data.model.Conversation
 import app.buildx.chat.data.model.PersonSearchResult
 import app.buildx.chat.ui.components.DrawerChatRow
 import app.buildx.chat.ui.components.HeaderCircleButton
+import app.buildx.chat.ui.components.MarkLoader
 import app.buildx.chat.ui.components.NameWithBadge
 import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
@@ -239,10 +239,10 @@ fun FullScreenSearchScreen(
                         .weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator(
-                        color = colors.primaryBlue,
-                        strokeWidth = 3.dp,
-                        modifier = Modifier.size(36.dp)
+                    MarkLoader(
+                        size = 36.dp,
+                        isSpinning = true,
+                        tint = colors.primaryBlue
                     )
                 }
             } else if (errorMessage != null) {

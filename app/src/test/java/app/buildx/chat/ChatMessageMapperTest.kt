@@ -9,6 +9,7 @@ import app.buildx.chat.ui.chat.ChatListItem
 import app.buildx.chat.ui.chat.ChatMessageMapper
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -225,8 +226,8 @@ class ChatMessageMapperTest {
     }
 
     @Test
-    fun `computeBubbleMetaPlacement keeps short Arabic RTL text and meta strictly disjoint and snug`() {
-        // Simulates 1-word Arabic "هلا" (narrow text, wider meta "7:07 PM + check")
+    fun `computeBubbleMetaPlacement keeps short Arabic RTL text and meta strictly disjoint at bottom right`() {
+        // Simulates 1-word Arabic text (narrow text, wider meta "23:01 + check")
         val rtlSpec = ChatMessageMapper.computeBubbleMetaPlacement(
             textWidthPx = 36,
             textHeightPx = 42,
@@ -241,10 +242,127 @@ class ChatMessageMapperTest {
         )
         assertTrue(rtlSpec.isInline)
         assertEquals(36 + 10 + 72, rtlSpec.widthPx)
-        // Meta sits at physical left [0, 72); text sits at physical right [82, 118)
-        assertEquals(0, rtlSpec.metaX)
-        assertTrue("RTL textX (${rtlSpec.textX}) must be >= metaWidth + gap", rtlSpec.textX >= 72 + 10)
+        // Meta sits at bottom-right [46, 118); 1-line text sits cleanly before gap [0, 36)
+        assertEquals(rtlSpec.widthPx - 72, rtlSpec.metaX)
+        assertEquals(0, rtlSpec.textX)
+        assertTrue("RTL metaX (${rtlSpec.metaX}) must clear text + gap", rtlSpec.metaX >= rtlSpec.textX + 36 + 10)
         assertEquals(42 - 20, rtlSpec.metaY)
+    }
+
+    @Test
+    fun `computeBubbleMetaPlacement wraps multi-line RTL below text at bottom right`() {
+        val multiRtl = ChatMessageMapper.computeBubbleMetaPlacement(
+            textWidthPx = 240,
+            textHeightPx = 88,
+            lineCount = 2,
+            lastLineWidthPx = 90,
+            metaWidthPx = 64,
+            metaHeightPx = 18,
+            maxWidthPx = 420,
+            inlineGapPx = 10,
+            wrapTopGapPx = 4,
+            isRtlContent = true
+        )
+        assertFalse(multiRtl.isInline)
+        assertEquals(240, multiRtl.widthPx)
+        assertEquals(88 + 4 + 18, multiRtl.heightPx)
+        assertEquals(240 - 64, multiRtl.metaX)
+        assertEquals(88 + 4, multiRtl.metaY)
+    }
+
+    @Test
+    fun `formatShortTime outputs 24-hour HH mm without AM or PM`() {
+        assertEquals("09:05", ChatMessageMapper.formatShortTime("2026-11-12T09:05:00Z", ZoneOffset.UTC, Locale.US))
+        assertEquals("23:01", ChatMessageMapper.formatShortTime("2026-11-12T23:01:00Z", ZoneOffset.UTC, Locale.US))
+        assertEquals("00:00", ChatMessageMapper.formatShortTime("2026-11-12T00:00:00Z", ZoneOffset.UTC, Locale.US))
+    }
+
+    @Test
+    fun `mapToReversedListItems resolves display name strictly and never leaks handle into name`() {
+        val participants = listOf(
+            DmParticipant(
+                userId = "u-display",
+                displayName = "Ali Hassan",
+                handle = "alihassan",
+                username = "ali_user",
+                isVerified = true
+            ),
+            DmParticipant(
+                userId = "u-handle-only",
+                displayName = null,
+                handle = "ghosthandle",
+                username = "ghostuser",
+                isVerified = false
+            )
+        )
+        val messages = listOf(
+            msg("m1", "u-display", "2026-11-12T23:00:00Z"),
+            msg("m2", "u-handle-only", "2026-11-12T23:01:00Z")
+        )
+
+        val items = ChatMessageMapper.mapToReversedListItems(
+            messages = messages,
+            currentUserId = "me",
+            isDirect = false,
+            participants = participants,
+            peerIntro = null,
+            defaultRtl = false,
+            zoneId = ZoneOffset.UTC
+        ).filterIsInstance<ChatListItem.MessageItem>().reversed()
+
+        assertEquals("Ali Hassan", items[0].resolvedSenderName)
+        assertEquals("alihassan", items[0].resolvedSenderHandle)
+        assertTrue(items[0].senderIsVerified)
+
+        assertNull(items[1].resolvedSenderName)
+        assertEquals("ghosthandle", items[1].resolvedSenderHandle)
+        assertFalse(items[1].senderIsVerified)
+    }
+
+    @Test
+    fun `mergeParticipantReadState and mergeMonotonicParticipants never regress read watermarks`() {
+        val initial = listOf(
+            DmParticipant(
+                userId = "peer",
+                lastReadAt = "2026-11-12T23:05:00Z",
+                lastReadMessageId = "msg-5"
+            )
+        )
+
+        // Older read receipt must be ignored
+        val afterOlder = ChatMessageMapper.mergeParticipantReadState(
+            currentParticipants = initial,
+            readerUserId = "peer",
+            readAtIso = "2026-11-12T23:01:00Z",
+            lastReadMessageId = "msg-2"
+        )
+        assertEquals("2026-11-12T23:05:00Z", afterOlder.single().lastReadAt)
+        assertEquals("msg-5", afterOlder.single().lastReadMessageId)
+
+        // Newer read receipt with blank message id advances timestamp and preserves msg-5
+        val afterNewerBlankId = ChatMessageMapper.mergeParticipantReadState(
+            currentParticipants = afterOlder,
+            readerUserId = "peer",
+            readAtIso = "2026-11-12T23:08:00Z",
+            lastReadMessageId = null
+        )
+        assertEquals("2026-11-12T23:08:00Z", afterNewerBlankId.single().lastReadAt)
+        assertEquals("msg-5", afterNewerBlankId.single().lastReadMessageId)
+
+        // Stale server fetch must not roll back newer in-memory read state
+        val staleServer = listOf(
+            DmParticipant(
+                userId = "peer",
+                lastReadAt = "2026-11-12T23:02:00Z",
+                lastReadMessageId = "msg-3"
+            )
+        )
+        val merged = ChatMessageMapper.mergeMonotonicParticipants(
+            existing = afterNewerBlankId,
+            incoming = staleServer
+        )
+        assertEquals("2026-11-12T23:08:00Z", merged.single().lastReadAt)
+        assertEquals("msg-5", merged.single().lastReadMessageId)
     }
 
     @Test

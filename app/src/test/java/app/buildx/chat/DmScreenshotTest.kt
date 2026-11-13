@@ -643,7 +643,7 @@ class DmScreenshotTest {
             conversationId = "conv-direct",
             senderId = "user-sara",
             senderDisplayName = "Sara Ahmed",
-            content = "\uD83C\uDF89\uD83D\uDD25",
+            content = "Approved!",
             createdAt = "2026-11-12T09:10:10Z"
         ),
         DmMessage(

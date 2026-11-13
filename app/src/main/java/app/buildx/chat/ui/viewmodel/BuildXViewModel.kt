@@ -62,6 +62,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -69,6 +70,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.util.Locale
 import java.util.UUID
@@ -93,6 +95,7 @@ data class BuildXUiState(
     val authError: String? = null,
     val profile: UserProfile? = null,
     val isUploadingAvatar: Boolean = false,
+    val isUploadingBanner: Boolean = false,
     val appearance: AppAppearance = AppAppearance.AUTOMATIC,
     val language: AppLanguage = AppLanguage.SYSTEM,
     val activeSurfacePane: MainSurfacePane = MainSurfacePane.CHAT,
@@ -134,6 +137,8 @@ data class BuildXUiState(
     val viewedPublicProfile: PublicProfile? = null,
     val isSubscribedToNotes: Boolean = false,
     val isPublicProfileLoading: Boolean = false,
+    val isPublicProfileRefreshing: Boolean = false,
+    val isOwnProfileRefreshing: Boolean = false,
     val publicProfileError: String? = null,
     val activeOwnNote: PublicNote? = null,
     val isNoteSheetOpen: Boolean = false,
@@ -1764,6 +1769,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             repository.updateProfileDetails(displayName.trim(), bio?.trim()?.ifEmpty { null }, null).onSuccess { updated ->
+                cacheUserProfile(updated)
                 _uiState.update {
                     it.copy(
                         profile = updated,
@@ -1797,6 +1803,11 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 R.string.edit_profile_photo_updated -> if (isArabic) "تم تحديث الصورة الشخصية" else "Profile photo updated"
                 R.string.edit_profile_photo_removed -> if (isArabic) "تمت إزالة الصورة الشخصية" else "Profile photo removed"
                 R.string.edit_profile_updated -> if (isArabic) "تم تحديث الملف الشخصي" else "Profile updated"
+                R.string.edit_profile_banner_updated -> if (isArabic) "تم تحديث غلاف الملف الشخصي" else "Profile banner updated"
+                R.string.edit_profile_banner_removed -> if (isArabic) "تمت إزالة غلاف الملف الشخصي" else "Profile banner removed"
+                R.string.edit_profile_banner_video_too_long -> if (isArabic) "يجب ألا تتجاوز مدة الفيديو 10 ثوانٍ" else "Video must be 10 seconds or shorter"
+                R.string.edit_profile_banner_file_too_large -> if (isArabic) "يجب ألا يتجاوز حجم الملف 15 ميجابايت" else "File size must be 15 MB or smaller"
+                R.string.edit_profile_banner_load_error -> if (isArabic) "تعذر معالجة وسائط الغلاف" else "Could not process banner media"
                 R.string.profile_notifications_enabled -> {
                     val user = formatArgs.firstOrNull()?.toString() ?: ""
                     if (isArabic) "تم تفعيل الإشعارات لـ @$user" else "Notifications turned on for @$user"
@@ -1903,6 +1914,118 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     it.copy(
                         profile = previousProfile,
                         isUploadingAvatar = false
+                    )
+                }
+                showSnackbar(mapError(err))
+            }
+        }
+    }
+
+    fun uploadProfileBanner(uri: Uri, isVideo: Boolean) {
+        viewModelScope.launch {
+            val previousProfile = _uiState.value.profile
+            _uiState.update { it.copy(isUploadingBanner = true) }
+
+            val processedBytes = withContext(Dispatchers.IO) {
+                if (isVideo) {
+                    when (val res = AvatarImageProcessor.inspectAndReadBannerVideo(getApplication(), uri)) {
+                        is AvatarImageProcessor.BannerVideoValidation.Valid -> Result.success(res.bytes)
+                        is AvatarImageProcessor.BannerVideoValidation.TooLong ->
+                            Result.failure(IllegalArgumentException("BANNER_VIDEO_TOO_LONG"))
+                        is AvatarImageProcessor.BannerVideoValidation.TooLarge ->
+                            Result.failure(IllegalArgumentException("BANNER_FILE_TOO_LARGE"))
+                        AvatarImageProcessor.BannerVideoValidation.Unreadable ->
+                            Result.failure(IllegalArgumentException("BANNER_LOAD_ERROR"))
+                    }
+                } else {
+                    val bytes = AvatarImageProcessor.processBannerJpeg(getApplication(), uri)
+                    if (bytes != null) {
+                        Result.success(bytes)
+                    } else {
+                        Result.failure(IllegalArgumentException("BANNER_LOAD_ERROR"))
+                    }
+                }
+            }
+
+            val bytes = processedBytes.getOrElse { err ->
+                _uiState.update { it.copy(isUploadingBanner = false) }
+                val message = when (err.message) {
+                    "BANNER_VIDEO_TOO_LONG" -> getLocalizedText(R.string.edit_profile_banner_video_too_long)
+                    "BANNER_FILE_TOO_LARGE" -> getLocalizedText(R.string.edit_profile_banner_file_too_large)
+                    else -> getLocalizedText(R.string.edit_profile_banner_load_error)
+                }
+                showSnackbar(message)
+                return@launch
+            }
+
+            val optimisticType = if (isVideo) "video" else "image"
+            val optimisticUri = withContext(Dispatchers.IO) {
+                AvatarImageProcessor.saveTempBannerFile(getApplication(), bytes, isVideo)?.toString()
+            } ?: uri.toString()
+
+            _uiState.update { state ->
+                state.copy(
+                    profile = state.profile?.copy(
+                        bannerUrl = optimisticUri,
+                        bannerType = optimisticType
+                    ),
+                    isUploadingBanner = true
+                )
+            }
+
+            repository.uploadProfileBannerBytes(bytes, isVideo).onSuccess { (remoteUrl, remoteType) ->
+                val refreshed = runCatching { repository.ensureUserProfile() }.getOrNull()
+                val merged = (refreshed ?: _uiState.value.profile)?.let { prof ->
+                    if (prof.bannerUrl.isNullOrBlank()) {
+                        prof.copy(bannerUrl = remoteUrl, bannerType = remoteType)
+                    } else prof
+                }
+                if (merged != null) cacheUserProfile(merged)
+                _uiState.update {
+                    it.copy(
+                        profile = merged ?: it.profile,
+                        isUploadingBanner = false,
+                        snackbarMessage = getLocalizedText(R.string.edit_profile_banner_updated)
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        profile = previousProfile,
+                        isUploadingBanner = false
+                    )
+                }
+                showSnackbar(mapError(err))
+            }
+        }
+    }
+
+    fun removeProfileBanner() {
+        viewModelScope.launch {
+            val previousProfile = _uiState.value.profile
+            _uiState.update { state ->
+                state.copy(
+                    profile = state.profile?.copy(bannerUrl = null, bannerType = "none"),
+                    isUploadingBanner = true
+                )
+            }
+            repository.removeProfileBanner().onSuccess {
+                val updated = runCatching { repository.ensureUserProfile() }.getOrNull()
+                    ?.copy(bannerUrl = null, bannerType = "none")
+                    ?: previousProfile?.copy(bannerUrl = null, bannerType = "none")
+                if (updated != null) cacheUserProfile(updated)
+                _uiState.update {
+                    it.copy(
+                        profile = updated,
+                        isUploadingBanner = false,
+                        snackbarMessage = getLocalizedText(R.string.edit_profile_banner_removed)
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        profile = previousProfile,
+                        isUploadingBanner = false
                     )
                 }
                 showSnackbar(mapError(err))
@@ -2130,9 +2253,63 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun refreshProfile() {
+        refreshCurrentOrPublicProfile(null)
+    }
+
+    fun refreshCurrentOrPublicProfile(targetUsername: String? = null) {
+        val current = _uiState.value
+        val ownUsername = current.profile?.username
+        val ownHandle = current.profile?.handle
+        val isOwnTarget = targetUsername.isNullOrBlank() ||
+            targetUsername.equals(ownUsername, ignoreCase = true) ||
+            targetUsername.equals(ownHandle, ignoreCase = true)
+
+        if (isOwnTarget) {
+            if (current.isOwnProfileRefreshing) return
+            _uiState.update { it.copy(isOwnProfileRefreshing = true) }
+            viewModelScope.launch {
+                try {
+                    repository.getOwnProfile().onSuccess { p ->
+                        cacheUserProfile(p)
+                        _uiState.update { it.copy(profile = p) }
+                    }
+                    repository.getMyActiveNote().onSuccess { note ->
+                        _uiState.update { it.copy(activeOwnNote = note) }
+                    }
+                } finally {
+                    _uiState.update { it.copy(isOwnProfileRefreshing = false) }
+                }
+            }
+            return
+        }
+
+        if (current.isPublicProfileRefreshing || current.isPublicProfileLoading) return
+        _uiState.update { it.copy(isPublicProfileRefreshing = true) }
         viewModelScope.launch {
-            repository.getOwnProfile().onSuccess { p ->
-                _uiState.update { it.copy(profile = p) }
+            try {
+                repository.getPublicProfile(targetUsername!!).onSuccess { pub ->
+                    _uiState.update {
+                        it.copy(
+                            viewedPublicProfile = pub,
+                            isSubscribedToNotes = pub?.noteSubscribed == true,
+                            isProfileUnavailable = pub == null,
+                            publicProfileError = null
+                        )
+                    }
+                }.onFailure { err ->
+                    if (_uiState.value.viewedPublicProfile == null) {
+                        _uiState.update {
+                            it.copy(
+                                publicProfileError = mapError(err),
+                                isProfileUnavailable = false
+                            )
+                        }
+                    } else {
+                        showSnackbar(mapError(err))
+                    }
+                }
+            } finally {
+                _uiState.update { it.copy(isPublicProfileRefreshing = false) }
             }
         }
     }
@@ -2142,6 +2319,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update {
                 it.copy(
                     isPublicProfileLoading = true,
+                    isPublicProfileRefreshing = false,
                     publicProfileError = null,
                     isProfileUnavailable = false
                 )
@@ -2176,6 +2354,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 viewedPublicProfile = null,
                 isSubscribedToNotes = false,
                 isPublicProfileLoading = false,
+                isPublicProfileRefreshing = false,
                 publicProfileError = null,
                 isProfileUnavailable = false,
                 isFollowPending = false
@@ -2385,7 +2564,9 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             repository.updateCountry(countryCode).onSuccess {
                 _uiState.update { state ->
-                    state.copy(profile = state.profile?.copy(countryCode = countryCode))
+                    val updated = state.profile?.copy(countryCode = countryCode)
+                    if (updated != null) cacheUserProfile(updated)
+                    state.copy(profile = updated)
                 }
             }.onFailure { err ->
                 showSnackbar(mapError(err))
@@ -2728,12 +2909,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 it.copy(activeDmWallpaper = repository.getEffectiveWallpaperLocal(conversationId))
             }
             repository.getDmConversationDetail(conversationId).onSuccess { detail ->
-                _uiState.update {
-                    it.copy(
-                        activeDmDetail = detail,
-                        activeDmWallpaper = repository.getEffectiveWallpaperLocal(conversationId)
-                    )
-                }
+                applyDetailMonotonic(conversationId, detail, allowWhenInactive = true)
             }
             repository.getDmMessages(conversationId).onSuccess { msgs ->
                 _uiState.update { it.copy(dmMessages = msgs) }
@@ -2811,6 +2987,9 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             }
             repository.markDmRead(conversationId, lastMsgId).onFailure {
                 loadDmInbox()
+            }
+            if (_uiState.value.activeDmConversationId == conversationId) {
+                broadcastDmReadReceipt(conversationId, lastMsgId)
             }
         }
     }
@@ -2998,12 +3177,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             repository.getDmConversationDetail(conversationId).onSuccess { detail ->
-                _uiState.update {
-                    it.copy(
-                        activeDmDetail = detail,
-                        activeDmWallpaper = repository.getEffectiveWallpaperLocal(conversationId)
-                    )
-                }
+                applyDetailMonotonic(conversationId, detail, allowWhenInactive = true)
             }
 
             repository.getDmMessages(conversationId, limit = 50).fold(
@@ -3096,9 +3270,17 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 val typingFlow = channel.broadcastFlow<JsonObject>(event = "typing")
+                val readReceiptFlow = channel.broadcastFlow<JsonObject>(event = "read_receipt")
 
                 dmRoomChannel = channel
                 channel.subscribe()
+
+                val initialReadId = _uiState.value.dmMessages.lastOrNull {
+                    it.localSendStatus == DmSendStatus.SENT
+                }?.id
+                if (!initialReadId.isNullOrBlank()) {
+                    broadcastDmReadReceipt(conversationId, initialReadId)
+                }
 
                 launch {
                     msgFlow.collect {
@@ -3113,6 +3295,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                             val latest = msgs.lastOrNull()
                             if (latest != null) {
                                 repository.markDmRead(conversationId, latest.id)
+                                broadcastDmReadReceipt(conversationId, latest.id)
                             }
                         }
                     }
@@ -3121,12 +3304,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 launch {
                     partFlow.collect {
                         repository.getDmConversationDetail(conversationId).onSuccess { detail ->
-                            _uiState.update {
-                                it.copy(
-                                    activeDmDetail = detail,
-                                    activeDmWallpaper = repository.getEffectiveWallpaperLocal(conversationId)
-                                )
-                            }
+                            applyDetailMonotonic(conversationId, detail)
                         }
                     }
                 }
@@ -3134,12 +3312,30 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 launch {
                     convFlow.collect {
                         repository.getDmConversationDetail(conversationId).onSuccess { detail ->
-                            _uiState.update {
-                                it.copy(
-                                    activeDmDetail = detail,
-                                    activeDmWallpaper = repository.getEffectiveWallpaperLocal(conversationId)
-                                )
-                            }
+                            applyDetailMonotonic(conversationId, detail)
+                        }
+                    }
+                }
+
+                launch {
+                    readReceiptFlow.collect { payload ->
+                        val readerId = payload["user_id"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                        val targetConv = payload["conversation_id"]?.jsonPrimitive?.contentOrNull
+                        if (!targetConv.isNullOrBlank() && targetConv != conversationId) return@collect
+                        val myUid = repository.currentUserId()
+                        if (readerId.isBlank() || readerId == myUid) return@collect
+
+                        val readMsgId = payload["last_read_message_id"]?.jsonPrimitive?.contentOrNull
+                        val readAtIso = payload["read_at"]?.jsonPrimitive?.contentOrNull ?: Instant.now().toString()
+                        _uiState.update { state ->
+                            val currentDetail = state.activeDmDetail ?: return@update state
+                            val updatedParticipants = app.buildx.chat.ui.chat.ChatMessageMapper.mergeParticipantReadState(
+                                currentParticipants = currentDetail.participants,
+                                readerUserId = readerId,
+                                readAtIso = readAtIso,
+                                lastReadMessageId = readMsgId
+                            )
+                            state.copy(activeDmDetail = currentDetail.copy(participants = updatedParticipants))
                         }
                     }
                 }
@@ -3166,6 +3362,50 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                 }
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun applyDetailMonotonic(
+        conversationId: String,
+        detail: DmConversationDetail,
+        allowWhenInactive: Boolean = false
+    ) {
+        _uiState.update { current ->
+            if (!allowWhenInactive && current.activeDmConversationId != conversationId) {
+                return@update current
+            }
+            val existingParticipants = current.activeDmDetail
+                ?.takeIf { it.conversation?.id == conversationId }
+                ?.participants
+                .orEmpty()
+            val mergedParticipants = app.buildx.chat.ui.chat.ChatMessageMapper.mergeMonotonicParticipants(
+                existing = existingParticipants,
+                incoming = detail.participants
+            )
+            current.copy(
+                activeDmDetail = detail.copy(participants = mergedParticipants),
+                activeDmWallpaper = repository.getEffectiveWallpaperLocal(conversationId)
+            )
+        }
+    }
+
+    private fun broadcastDmReadReceipt(conversationId: String, lastReadMessageId: String?) {
+        val channel = dmRoomChannel ?: return
+        val uid = repository.currentUserId() ?: return
+        viewModelScope.launch {
+            try {
+                channel.broadcast(
+                    event = "read_receipt",
+                    message = buildJsonObject {
+                        put("user_id", uid)
+                        put("conversation_id", conversationId)
+                        if (!lastReadMessageId.isNullOrBlank()) {
+                            put("last_read_message_id", lastReadMessageId)
+                        }
+                        put("read_at", Instant.now().toString())
+                    }
+                )
             } catch (_: Exception) {}
         }
     }

@@ -21,6 +21,16 @@
     <string name="edit_profile_photo_updated">Profile photo updated</string>
     <string name="edit_profile_photo_removed">Profile photo removed</string>
     <string name="edit_profile_updated">Profile updated</string>
+    <string name="edit_profile_banner_section">Profile banner</string>
+    <string name="edit_profile_banner_hint">Photo or looping video up to 10 seconds</string>
+    <string name="edit_profile_banner_choose_image">Choose image</string>
+    <string name="edit_profile_banner_choose_video">Choose video</string>
+    <string name="edit_profile_banner_remove">Remove banner</string>
+    <string name="edit_profile_banner_updated">Profile banner updated</string>
+    <string name="edit_profile_banner_removed">Profile banner removed</string>
+    <string name="edit_profile_banner_video_too_long">Video must be 10 seconds or shorter</string>
+    <string name="edit_profile_banner_file_too_large">File size must be 15 MB or smaller</string>
+    <string name="edit_profile_banner_load_error">Could not process banner media</string>
     <string name="crop_screen_title">Move and scale</string>
     <string name="crop_screen_subtitle">Drag to position • Pinch to zoom</string>
     <string name="crop_screen_cancel">Cancel</string>

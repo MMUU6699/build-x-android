@@ -21,6 +21,16 @@
     <string name="edit_profile_photo_updated">تم تحديث الصورة الشخصية</string>
     <string name="edit_profile_photo_removed">تمت إزالة الصورة الشخصية</string>
     <string name="edit_profile_updated">تم تحديث الملف الشخصي</string>
+    <string name="edit_profile_banner_section">غلاف الملف الشخصي</string>
+    <string name="edit_profile_banner_hint">صورة أو فيديو متكرر بحد أقصى 10 ثوانٍ</string>
+    <string name="edit_profile_banner_choose_image">اختيار صورة</string>
+    <string name="edit_profile_banner_choose_video">اختيار فيديو</string>
+    <string name="edit_profile_banner_remove">إزالة الغلاف</string>
+    <string name="edit_profile_banner_updated">تم تحديث غلاف الملف الشخصي</string>
+    <string name="edit_profile_banner_removed">تمت إزالة غلاف الملف الشخصي</string>
+    <string name="edit_profile_banner_video_too_long">يجب ألا تتجاوز مدة الفيديو 10 ثوانٍ</string>
+    <string name="edit_profile_banner_file_too_large">يجب ألا يتجاوز حجم الملف 15 ميجابايت</string>
+    <string name="edit_profile_banner_load_error">تعذر معالجة وسائط الغلاف</string>
     <string name="crop_screen_title">تحريك وتكبير</string>
     <string name="crop_screen_subtitle">اسحب للتحريك • قرّب للتكبير</string>
     <string name="crop_screen_cancel">إلغاء</string>

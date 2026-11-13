@@ -29,7 +29,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -57,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import app.buildx.chat.R
 import app.buildx.chat.data.model.FollowUserItem
 import app.buildx.chat.data.model.PersonSearchResult
+import app.buildx.chat.ui.components.MarkLoader
 import app.buildx.chat.ui.components.VerifiedBadge
 import app.buildx.chat.ui.theme.BuildXTheme
 import coil.compose.AsyncImage
@@ -227,10 +227,10 @@ fun NewMessageOrGroupSheet(
                             .height(180.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        CircularProgressIndicator(
-                            color = colors.primaryBlue,
-                            strokeWidth = 2.5.dp,
-                            modifier = Modifier.size(28.dp)
+                        MarkLoader(
+                            size = 28.dp,
+                            isSpinning = true,
+                            tint = colors.primaryBlue
                         )
                     }
                 } else {
@@ -564,10 +564,10 @@ fun NewMessageOrGroupSheet(
                     )
                 ) {
                     if (isCreatingGroup) {
-                        CircularProgressIndicator(
-                            color = Color.White,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(20.dp)
+                        MarkLoader(
+                            size = 20.dp,
+                            isSpinning = true,
+                            tint = Color.White
                         )
                     } else {
                         Text(

@@ -33,6 +33,7 @@ import app.buildx.chat.data.model.ReasoningStep
 import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.data.model.UserProfile
+import app.buildx.chat.data.model.resolveProfileBannerType
 import app.buildx.chat.data.model.VerificationStatusInfo
 import app.buildx.chat.data.model.DmInboxItem
 import app.buildx.chat.data.model.DmConversationDetail
@@ -190,6 +191,35 @@ class BuildXRepository(val context: Context) {
             getSavedConversationWallpaper(conversationId)?.let { return it }
         }
         return getSavedDefaultWallpaper()
+    }
+
+    fun getLocalProfileBanner(uid: String): Pair<String?, String> {
+        if (uid.isBlank()) return null to "none"
+        val url = prefs.getString("profile_banner_url_$uid", null)
+        val rawType = prefs.getString("profile_banner_type_$uid", "none") ?: "none"
+        return url to resolveProfileBannerType(url, rawType)
+    }
+
+    fun saveLocalProfileBanner(uid: String, bannerUrl: String?, bannerType: String) {
+        if (uid.isBlank()) return
+        val normalizedType = resolveProfileBannerType(bannerUrl, bannerType)
+        prefs.edit().apply {
+            if (bannerUrl.isNullOrBlank() || normalizedType == "none") {
+                remove("profile_banner_url_$uid")
+                putString("profile_banner_type_$uid", "none")
+            } else {
+                putString("profile_banner_url_$uid", bannerUrl)
+                putString("profile_banner_type_$uid", normalizedType)
+            }
+        }.apply()
+    }
+
+    fun clearLocalProfileBanner(uid: String) {
+        if (uid.isBlank()) return
+        prefs.edit()
+            .remove("profile_banner_url_$uid")
+            .remove("profile_banner_type_$uid")
+            .apply()
     }
 
     val json = Json {
@@ -434,6 +464,11 @@ class BuildXRepository(val context: Context) {
             val remoteDefault = existing.defaultWallpaper
             if (!remoteDefault.isDefault) {
                 saveDefaultWallpaperLocal(remoteDefault)
+            }
+            if (existing.hasBanner) {
+                saveLocalProfileBanner(uid, existing.bannerUrl, existing.normalizedBannerType)
+            } else {
+                clearLocalProfileBanner(uid)
             }
             existing
         } else {
@@ -686,14 +721,17 @@ class BuildXRepository(val context: Context) {
             // Remove real storage objects first: the SQL RPC only deletes metadata rows,
             // and the bucket policies require the owner session that still exists here.
             for (bucketName in listOf("avatars", "attachments")) {
-                runCatching {
-                    val bucket = supabase.storage.from(bucketName)
-                    val files = bucket.list(prefix = uid)
-                    val paths = files.mapNotNull { file ->
-                        val name = file.name ?: return@mapNotNull null
-                        if (name.contains('/')) name else "$uid/$name"
+                val prefixes = if (bucketName == "attachments") listOf(uid, "$uid/banners", "$uid/wallpapers") else listOf(uid)
+                for (prefix in prefixes) {
+                    runCatching {
+                        val bucket = supabase.storage.from(bucketName)
+                        val files = bucket.list(prefix = prefix)
+                        val paths = files.mapNotNull { file ->
+                            val name = file.name ?: return@mapNotNull null
+                            if (name.contains('/')) name else "$prefix/$name"
+                        }
+                        if (paths.isNotEmpty()) bucket.delete(paths)
                     }
-                    if (paths.isNotEmpty()) bucket.delete(paths)
                 }
             }
             supabase.postgrest.rpc("delete_my_account")
@@ -1140,6 +1178,107 @@ class BuildXRepository(val context: Context) {
         }
     }
 
+    private suspend fun persistProfileBannerRemote(
+        uid: String,
+        bannerUrl: String?,
+        bannerType: String
+    ) {
+        val rpcResult = runCatching {
+            supabase.postgrest.rpc(
+                "set_profile_banner",
+                buildJsonObject {
+                    if (bannerUrl != null) put("p_banner_url", bannerUrl) else put("p_banner_url", JsonNull)
+                    put("p_banner_type", bannerType)
+                }
+            )
+        }
+        if (rpcResult.isFailure) {
+            val nowIso = Instant.now().toString()
+            val payload = buildJsonObject {
+                if (bannerUrl != null) put("banner_url", bannerUrl) else put("banner_url", JsonNull)
+                put("banner_type", bannerType)
+                put("banner_updated_at", nowIso)
+                put("updated_at", nowIso)
+            }
+            supabase.from("profiles").update(payload) {
+                filter { eq("id", uid) }
+            }
+        }
+    }
+
+    private suspend fun deleteOwnedBannerObject(uid: String, bannerUrl: String?) {
+        if (bannerUrl.isNullOrBlank() || !bannerUrl.contains("/attachments/$uid/banners/")) return
+        runCatching {
+            val oldFile = bannerUrl.substringAfter("/attachments/$uid/banners/").substringBefore("?")
+            if (oldFile.isNotBlank()) {
+                supabase.storage.from("attachments").delete("$uid/banners/$oldFile")
+            }
+        }
+    }
+
+    suspend fun uploadProfileBannerBytes(
+        bytes: ByteArray,
+        isVideo: Boolean
+    ): Result<Pair<String, String>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val uid = currentUserId() ?: error("Not authenticated")
+            val previousBannerUrl = runCatching { ensureUserProfile().bannerUrl }.getOrNull()
+                ?: getLocalProfileBanner(uid).first
+            val now = System.currentTimeMillis()
+            val ext = if (isVideo) "mp4" else "jpg"
+            val bannerType = if (isVideo) "video" else "image"
+            val objectPath = "$uid/banners/banner_${now}.$ext"
+
+            val bucket = supabase.storage.from("attachments")
+            bucket.upload(objectPath, bytes) {
+                upsert = true
+            }
+            val publicUrl = bucket.publicUrl(objectPath) + "?v=$now"
+
+            persistProfileBannerRemote(uid, publicUrl, bannerType)
+            saveLocalProfileBanner(uid, publicUrl, bannerType)
+            deleteOwnedBannerObject(uid, previousBannerUrl)
+            ensureUserProfile()
+            publicUrl to bannerType
+        }
+    }
+
+    suspend fun uploadProfileBanner(
+        mediaUri: Uri,
+        isVideo: Boolean
+    ): Result<Pair<String, String>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val bytes = if (isVideo) {
+                when (val result = AvatarImageProcessor.inspectAndReadBannerVideo(context, mediaUri)) {
+                    is AvatarImageProcessor.BannerVideoValidation.Valid -> result.bytes
+                    is AvatarImageProcessor.BannerVideoValidation.TooLong ->
+                        error("Video must be 10 seconds or shorter")
+                    is AvatarImageProcessor.BannerVideoValidation.TooLarge ->
+                        error("File size must be 15 MB or smaller")
+                    AvatarImageProcessor.BannerVideoValidation.Unreadable ->
+                        error("Could not process banner media")
+                }
+            } else {
+                AvatarImageProcessor.processBannerJpeg(context, mediaUri)
+                    ?: error("Could not process banner media")
+            }
+            uploadProfileBannerBytes(bytes, isVideo).getOrThrow()
+        }
+    }
+
+    suspend fun removeProfileBanner(): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val uid = currentUserId() ?: error("Not authenticated")
+            val previousBannerUrl = runCatching { ensureUserProfile().bannerUrl }.getOrNull()
+                ?: getLocalProfileBanner(uid).first
+            persistProfileBannerRemote(uid, null, "none")
+            clearLocalProfileBanner(uid)
+            deleteOwnedBannerObject(uid, previousBannerUrl)
+            ensureUserProfile()
+            Unit
+        }
+    }
+
     suspend fun fetchUserUploadedAttachments(): Result<List<AttachmentRow>> =
         withContext(Dispatchers.IO) {
             runCatching {
@@ -1523,15 +1662,63 @@ class BuildXRepository(val context: Context) {
 
     suspend fun toggleNoteLike(noteId: String): Result<NoteLikeToggleResult> = withContext(Dispatchers.IO) {
         runCatching {
+            val cleanId = noteId.trim()
             val params = buildJsonObject {
-                put("p_note_id", noteId)
+                put("p_note_id", cleanId)
             }
-            val response = supabase.postgrest.rpc("toggle_note_like", params)
-            val result = json.decodeFromString<NoteLikeToggleResult>(response.data)
-            if (!result.success) {
-                error(result.error ?: "Failed to update note like")
+            val rpcAttempt = kotlin.runCatching {
+                val response = supabase.postgrest.rpc("toggle_note_like", params)
+                json.decodeFromString<NoteLikeToggleResult>(response.data)
             }
-            result
+            val rpcResult = rpcAttempt.getOrNull()
+            if (rpcResult != null) {
+                if (!rpcResult.success) {
+                    error(rpcResult.error ?: "Failed to update note like")
+                }
+                return@runCatching rpcResult
+            }
+            val rpcError = rpcAttempt.exceptionOrNull()
+            if (rpcError is kotlinx.coroutines.CancellationException) throw rpcError
+
+            // Fallback: direct RLS-protected PostgREST access on public.note_likes
+            val uid = currentUserId() ?: error("Not authenticated")
+            val existing = supabase.from("note_likes")
+                .select {
+                    filter {
+                        eq("note_id", cleanId)
+                        eq("user_id", uid)
+                    }
+                }
+                .decodeList<JsonObject>()
+            val nowLiked = if (existing.isNotEmpty()) {
+                supabase.from("note_likes").delete {
+                    filter {
+                        eq("note_id", cleanId)
+                        eq("user_id", uid)
+                    }
+                }
+                false
+            } else {
+                supabase.from("note_likes").insert(
+                    buildJsonObject {
+                        put("note_id", cleanId)
+                        put("user_id", uid)
+                    }
+                )
+                true
+            }
+            val updatedCount = supabase.from("note_likes")
+                .select {
+                    filter { eq("note_id", cleanId) }
+                }
+                .decodeList<JsonObject>()
+                .size
+            NoteLikeToggleResult(
+                success = true,
+                noteId = cleanId,
+                liked = nowLiked,
+                likesCount = updatedCount
+            )
         }
     }
 
@@ -1801,10 +1988,24 @@ class BuildXRepository(val context: Context) {
         }
     }
 
+    private fun persistWallpaperLocally(
+        conversationId: String?,
+        applyToAll: Boolean,
+        config: ChatWallpaperConfig
+    ) {
+        if (applyToAll || conversationId.isNullOrBlank()) {
+            saveDefaultWallpaperLocal(config)
+            clearAllPerChatWallpapersLocal()
+        } else {
+            saveConversationWallpaperLocal(conversationId, config)
+        }
+    }
+
     /**
      * Persists either a per-conversation wallpaper override or the user's global
      * default wallpaper via `set_chat_wallpaper`, keeping local SharedPreferences
-     * synchronized for instantaneous cold-start rendering.
+     * saved immediately and falling back cleanly to direct RLS table updates
+     * if the PostgREST schema cache has not yet exposed the RPC.
      */
     suspend fun setChatWallpaper(
         conversationId: String?,
@@ -1815,41 +2016,87 @@ class BuildXRepository(val context: Context) {
         applyToAll: Boolean = false
     ): Result<ChatWallpaperConfig> = withContext(Dispatchers.IO) {
         runCatching {
-            val normalizedId = wallpaperId.trim().lowercase().ifBlank { "default" }
-            val normalizedCustom = customUrl?.trim()?.takeIf { it.isNotBlank() }
+            val rawId = wallpaperId.trim().lowercase().ifBlank { "default" }
+            val normalizedCustom = if (rawId == "custom") {
+                customUrl?.trim()?.takeIf { it.isNotBlank() }
+            } else null
+            val effectiveId = if (rawId == "custom" && normalizedCustom == null) "default" else rawId
             val normalizedDim = dim.coerceIn(0f, 0.70f)
+            val resolvedLocal = ChatWallpaperConfig(
+                wallpaperId = effectiveId,
+                customUrl = normalizedCustom,
+                dim = normalizedDim,
+                blur = blur
+            )
+            // Persist locally first so the user never loses chosen wallpaper styling
+            persistWallpaperLocally(conversationId, applyToAll, resolvedLocal)
+
             val params = buildJsonObject {
-                if (!conversationId.isNullOrBlank()) {
-                    put("p_conversation_id", conversationId)
-                }
-                put("p_wallpaper_id", normalizedId)
-                if (normalizedCustom != null) {
-                    put("p_custom_url", normalizedCustom)
-                }
+                if (!conversationId.isNullOrBlank()) put("p_conversation_id", conversationId) else put("p_conversation_id", JsonNull)
+                put("p_wallpaper_id", effectiveId)
+                if (normalizedCustom != null) put("p_custom_url", normalizedCustom) else put("p_custom_url", JsonNull)
                 put("p_dim", normalizedDim)
                 put("p_blur", blur)
                 put("p_apply_to_all", applyToAll)
             }
-            val response = supabase.postgrest.rpc("set_chat_wallpaper", params)
-            val obj = json.decodeFromString<JsonObject>(response.data)
-            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
-            if (!success) {
-                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to update wallpaper")
+            val rpcAttempt = kotlin.runCatching {
+                val response = supabase.postgrest.rpc("set_chat_wallpaper", params)
+                val obj = json.decodeFromString<JsonObject>(response.data)
+                val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+                if (!success) {
+                    error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to update wallpaper")
+                }
+                ChatWallpaperConfig(
+                    wallpaperId = obj["wallpaper_id"]?.jsonPrimitive?.contentOrNull ?: effectiveId,
+                    customUrl = obj["wallpaper_custom_url"]?.jsonPrimitive?.contentOrNull ?: normalizedCustom,
+                    dim = obj["wallpaper_dim"]?.jsonPrimitive?.contentOrNull?.toFloatOrNull()?.coerceIn(0f, 0.70f)
+                        ?: normalizedDim,
+                    blur = obj["wallpaper_blur"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: blur
+                )
             }
-            val resolved = ChatWallpaperConfig(
-                wallpaperId = obj["wallpaper_id"]?.jsonPrimitive?.contentOrNull ?: normalizedId,
-                customUrl = obj["wallpaper_custom_url"]?.jsonPrimitive?.contentOrNull ?: normalizedCustom,
-                dim = obj["wallpaper_dim"]?.jsonPrimitive?.contentOrNull?.toFloatOrNull()?.coerceIn(0f, 0.70f)
-                    ?: normalizedDim,
-                blur = obj["wallpaper_blur"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: blur
-            )
-            if (applyToAll) {
-                saveDefaultWallpaperLocal(resolved)
-                clearAllPerChatWallpapersLocal()
-            } else if (!conversationId.isNullOrBlank()) {
-                saveConversationWallpaperLocal(conversationId, resolved)
+            val serverResolved = rpcAttempt.getOrNull()
+            if (serverResolved != null) {
+                persistWallpaperLocally(conversationId, applyToAll, serverResolved)
+                return@runCatching serverResolved
             }
-            resolved
+            val rpcErr = rpcAttempt.exceptionOrNull()
+            if (rpcErr is kotlinx.coroutines.CancellationException) throw rpcErr
+
+            // Resilient best-effort direct table fallback via RLS-protected tables
+            val uid = currentUserId()
+            if (!uid.isNullOrBlank()) {
+                val fallbackAttempt = kotlin.runCatching {
+                    if (applyToAll || conversationId.isNullOrBlank()) {
+                        val profilePayload = buildJsonObject {
+                            put("default_wallpaper_id", effectiveId)
+                            if (normalizedCustom != null) put("default_wallpaper_custom_url", normalizedCustom)
+                            else put("default_wallpaper_custom_url", JsonNull)
+                            put("default_wallpaper_dim", normalizedDim)
+                            put("default_wallpaper_blur", blur)
+                        }
+                        supabase.from("profiles").update(profilePayload) {
+                            filter { eq("id", uid) }
+                        }
+                    } else {
+                        val participantPayload = buildJsonObject {
+                            put("wallpaper_id", effectiveId)
+                            if (normalizedCustom != null) put("wallpaper_custom_url", normalizedCustom)
+                            else put("wallpaper_custom_url", JsonNull)
+                            put("wallpaper_dim", normalizedDim)
+                            put("wallpaper_blur", blur)
+                        }
+                        supabase.from("dm_participants").update(participantPayload) {
+                            filter {
+                                eq("conversation_id", conversationId)
+                                eq("user_id", uid)
+                            }
+                        }
+                    }
+                }
+                val fbErr = fallbackAttempt.exceptionOrNull()
+                if (fbErr is kotlinx.coroutines.CancellationException) throw fbErr
+            }
+            resolvedLocal
         }
     }
 }

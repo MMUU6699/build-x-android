@@ -12,6 +12,8 @@ data class UserProfile(
     @SerialName("display_name") val displayName: String = "User",
     val bio: String? = null,
     @SerialName("avatar_url") val avatarUrl: String? = null,
+    @SerialName("banner_url") val bannerUrl: String? = null,
+    @SerialName("banner_type") val bannerType: String = "none",
     @SerialName("is_verified") val isVerified: Boolean = false,
     @SerialName("verified_at") val verifiedAt: String? = null,
     @SerialName("following_count") val followingCount: Int = 0,
@@ -29,6 +31,12 @@ data class UserProfile(
 ) {
     val effectiveUsername: String
         get() = username.ifBlank { handle.ifBlank { "user" } }
+
+    val normalizedBannerType: String
+        get() = resolveProfileBannerType(bannerUrl, bannerType)
+
+    val hasBanner: Boolean
+        get() = !bannerUrl.isNullOrBlank() && normalizedBannerType != "none"
 
     val defaultWallpaper: ChatWallpaperConfig
         get() = ChatWallpaperConfig(
@@ -59,6 +67,8 @@ data class PublicProfile(
     @SerialName("display_name") val displayName: String,
     @SerialName("avatar_url") val avatarUrl: String? = null,
     val bio: String? = null,
+    @SerialName("banner_url") val bannerUrl: String? = null,
+    @SerialName("banner_type") val bannerType: String = "none",
     @SerialName("is_verified") val isVerified: Boolean = false,
     @SerialName("verified_at") val verifiedAt: String? = null,
     @SerialName("following_count") val followingCount: Int = 0,
@@ -70,7 +80,29 @@ data class PublicProfile(
     @SerialName("country_code") val countryCode: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("blocked_by_me") val blockedByMe: Boolean = false
-)
+) {
+    val normalizedBannerType: String
+        get() = resolveProfileBannerType(bannerUrl, bannerType)
+
+    val hasBanner: Boolean
+        get() = !bannerUrl.isNullOrBlank() && normalizedBannerType != "none"
+}
+
+/**
+ * Shared normalizer resolving "image", "video", or "none" consistently across
+ * own and public profile models, inferring media type when metadata is omitted.
+ */
+fun resolveProfileBannerType(bannerUrl: String?, rawBannerType: String?): String {
+    if (bannerUrl.isNullOrBlank()) return "none"
+    val cleanType = rawBannerType?.trim()?.lowercase().orEmpty()
+    if (cleanType == "image" || cleanType == "video") return cleanType
+    val lowerUrl = bannerUrl.substringBefore('?').trim().lowercase()
+    return if (lowerUrl.endsWith(".mp4") || lowerUrl.endsWith(".mov") || lowerUrl.endsWith(".webm")) {
+        "video"
+    } else {
+        "image"
+    }
+}
 
 /**
  * Real account metadata returned by the `get_account_info` RPC.

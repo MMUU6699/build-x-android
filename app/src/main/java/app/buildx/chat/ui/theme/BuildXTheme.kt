@@ -1,5 +1,7 @@
 package app.buildx.chat.ui.theme
 
+import android.graphics.BlurMaskFilter
+import android.graphics.Paint
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
@@ -11,10 +13,11 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.TextStyle
@@ -75,9 +78,9 @@ val LightBuildXColors = BuildXColors(
     markPurpleStart = Color(0xFFC24DFB),       // [OBSERVED] brand mark gradient start
     markVioletMid = Color(0xFF8842FA),         // [OBSERVED] brand mark gradient mid
     markBlueEnd = Color(0xFF4B3EF6),           // [OBSERVED] brand mark gradient end
-    composerShadowColor = Color(0x1E000000),   // [OBSERVED] rich diffuse downward shadow under composer
-    headerHaloShadowColor = Color(0x16000000), // [OBSERVED] soft floating shadow on header/drawer circle buttons
-    innerControlShadowColor = Color(0x10000000), // [OBSERVED] subtle shadow under +, Thinking, Mic
+    composerShadowColor = Color(0x0D000000),   // subtle Gaussian shadow (~5% black) under composer
+    headerHaloShadowColor = Color(0x0D000000), // subtle halo (~5% black) on floating buttons
+    innerControlShadowColor = Color(0x09000000), // subtle inner depth (~3.5% black)
     stopHaloBackground = Color(0xFFE8F0FE)     // [OBSERVED] f_0090 36dp light halo around stop square
 )
 
@@ -98,9 +101,9 @@ val DarkBuildXColors = BuildXColors(
     markPurpleStart = Color(0xFFC24DFB),       // [OBSERVED]
     markVioletMid = Color(0xFF8842FA),         // [OBSERVED]
     markBlueEnd = Color(0xFF4B3EF6),           // [OBSERVED]
-    composerShadowColor = Color(0x55000000),   // [INFERRED]
-    headerHaloShadowColor = Color(0x3D000000), // [INFERRED]
-    innerControlShadowColor = Color(0x2E000000), // [INFERRED]
+    composerShadowColor = Color(0x33000000),   // clean Gaussian dark-mode composer shadow (~20% black)
+    headerHaloShadowColor = Color(0x38000000), // clean floating header shadow (~22% black)
+    innerControlShadowColor = Color(0x24000000), // subtle inner shadow (~14% black)
     stopHaloBackground = Color(0xFF1E324D)     // [INFERRED]
 )
 
@@ -780,36 +783,50 @@ fun BuildXTheme(
 }
 
 /**
- * Hardware-independent multi-layer soft shadow modifier.
- * Renders a smooth, realistic Gaussian-like diffused shadow on both Android HWUI GPUs
- * and Robolectric/Skia software canvases without clipping or alpha-zero suppression.
+ * Smooth Gaussian shadow modifier using [BlurMaskFilter].
+ * Eliminates stepped concentric `drawRoundRect` banding while working cleanly across
+ * hardware-accelerated Android canvases and Robolectric Native Graphics.
  */
 fun Modifier.softShadow(
     color: Color,
     cornerRadius: Dp,
     blurRadius: Dp,
     offsetY: Dp = 4.dp,
-    offsetX: Dp = 0.dp
-): Modifier = this.drawBehind {
-    val maxBlurPx = blurRadius.toPx().coerceAtLeast(1f)
+    offsetX: Dp = 0.dp,
+    spread: Dp = 0.dp
+): Modifier = this.drawWithCache {
+    val blurPx = blurRadius.toPx()
+    val cornerPx = cornerRadius.toPx()
+    val spreadPx = spread.toPx()
     val dx = offsetX.toPx()
     val dy = offsetY.toPx()
-    val baseCornerPx = cornerRadius.toPx()
-    val baseAlpha = color.alpha
-    val layers = 10
 
-    for (i in 1..layers) {
-        val fraction = i.toFloat() / layers.toFloat()
-        val spread = maxBlurPx * fraction * 0.55f
-        val falloff = (1f - fraction) * (1f - fraction)
-        val layerAlpha = (baseAlpha * falloff * 0.34f).coerceIn(0f, 1f)
-        if (layerAlpha > 0.002f) {
-            val cr = baseCornerPx + spread
-            drawRoundRect(
-                color = color.copy(alpha = layerAlpha),
-                topLeft = Offset(-spread + dx, -spread * 0.55f + dy * (0.4f + 0.6f * fraction)),
-                size = Size(size.width + spread * 2f, size.height + spread * 1.65f),
-                cornerRadius = CornerRadius(cr, cr)
+    val frameworkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color.toArgb()
+        if (blurPx > 0.5f) {
+            maskFilter = BlurMaskFilter(blurPx, BlurMaskFilter.Blur.NORMAL)
+        }
+    }
+
+    onDrawBehind {
+        if (color.alpha <= 0.002f || size.width <= 0f || size.height <= 0f) {
+            return@onDrawBehind
+        }
+        frameworkPaint.color = color.toArgb()
+        val left = -spreadPx + dx
+        val top = -spreadPx + dy
+        val right = size.width + spreadPx + dx
+        val bottom = size.height + spreadPx + dy
+        val r = (cornerPx + spreadPx).coerceAtLeast(0f)
+        drawIntoCanvas { canvas ->
+            canvas.nativeCanvas.drawRoundRect(
+                left,
+                top,
+                right,
+                bottom,
+                r,
+                r,
+                frameworkPaint
             )
         }
     }

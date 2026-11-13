@@ -44,6 +44,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.buildx.chat.BuildConfig
@@ -199,8 +200,10 @@ fun SettingsScreen(
                 }
                 Spacer(modifier = Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
+                    val settingsDisplayName = profile?.displayName?.takeIf { it.isNotBlank() }
+                        ?: rawHandle.removePrefix("@")
                     NameWithBadge(
-                        name = strings.viewProfile,
+                        name = settingsDisplayName,
                         isVerified = profile?.isVerified == true,
                         color = colors.primaryText,
                         fontSize = 16.sp,
@@ -210,10 +213,12 @@ fun SettingsScreen(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = handleText,
-                        color = colors.primaryBlue,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold
+                        text = "$handleText  \u00B7  ${strings.viewProfile}",
+                        color = colors.secondaryText,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 Icon(
