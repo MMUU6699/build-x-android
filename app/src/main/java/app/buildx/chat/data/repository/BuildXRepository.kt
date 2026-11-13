@@ -505,8 +505,10 @@ class BuildXRepository(val context: Context) {
      * UI never reveals that a block exists.
      */
     suspend fun getPublicProfile(targetUsername: String): Result<PublicProfile?> = withContext(Dispatchers.IO) {
-        runCatching {
-            val clean = targetUsername.trim().removePrefix("@")
+        val clean = targetUsername.trim().removePrefix("@").trim()
+        if (clean.isBlank()) return@withContext Result.success(null)
+
+        val rpcAttempt = runCatching {
             val params = buildJsonObject { put("target_username", clean) }
             val response = supabase.postgrest.rpc("get_public_profile", params)
             val element = response.decodeAs<JsonElement>()
@@ -516,14 +518,210 @@ class BuildXRepository(val context: Context) {
                 json.decodeFromJsonElement(PublicProfile.serializer(), element)
             }
         }
+        if (rpcAttempt.isSuccess) return@withContext rpcAttempt
+        val rpcError = rpcAttempt.exceptionOrNull()
+        if (rpcError is kotlinx.coroutines.CancellationException) throw rpcError
+
+        // Direct RLS-protected PostgREST fallback: a schema-cache or SQL failure in
+        // the RPC must never surface as an "invalid request" dead end.
+        runCatching { fetchPublicProfileDirect(clean) }
     }
 
-    suspend fun getAccountInfo(targetUserId: String): Result<AccountInfo> = withContext(Dispatchers.IO) {
-        runCatching {
-            val params = buildJsonObject { put("target_user_id", targetUserId) }
+    suspend fun getAccountInfo(
+        targetUserId: String?,
+        targetUsername: String? = null
+    ): Result<AccountInfo> = withContext(Dispatchers.IO) {
+        val resolvedId = targetUserId?.takeIf { it.isNotBlank() }
+            ?: resolveProfileIdByUsername(targetUsername)
+        if (resolvedId == null) {
+            return@withContext Result.failure(IllegalStateException("PROFILE_NOT_FOUND"))
+        }
+
+        val rpcAttempt = runCatching {
+            val params = buildJsonObject { put("target_user_id", resolvedId) }
             val response = supabase.postgrest.rpc("get_account_info", params)
+            if (response.data.isBlank() || response.data.trim() == "null") {
+                error("PROFILE_NOT_FOUND")
+            }
             response.decodeAs<AccountInfo>()
         }
+        if (rpcAttempt.isSuccess) return@withContext rpcAttempt
+        val rpcError = rpcAttempt.exceptionOrNull()
+        if (rpcError is kotlinx.coroutines.CancellationException) throw rpcError
+
+        runCatching { fetchAccountInfoDirect(resolvedId) }
+    }
+
+    private suspend fun resolveProfileIdByUsername(rawUsername: String?): String? {
+        val clean = rawUsername?.trim()?.removePrefix("@")?.trim().orEmpty()
+        if (clean.isBlank()) return null
+        return runCatching {
+            supabase.from("profiles").select {
+                filter {
+                    or {
+                        eq("username", clean)
+                        eq("handle", clean)
+                    }
+                }
+                limit(1)
+            }.decodeList<JsonObject>().firstOrNull()?.stringOrNull("id")
+        }.getOrNull()
+    }
+
+    private suspend fun fetchPublicProfileDirect(clean: String): PublicProfile? {
+        val row = supabase.from("profiles").select {
+            filter {
+                or {
+                    eq("username", clean)
+                    eq("handle", clean)
+                }
+            }
+            limit(1)
+        }.decodeList<JsonObject>().firstOrNull() ?: return null
+
+        val targetId = row.stringOrNull("id") ?: return null
+        val callerId = currentUserId()
+        val blockedByMe = if (callerId != null && callerId != targetId) {
+            runCatching {
+                supabase.from("blocks").select {
+                    filter {
+                        eq("blocker_id", callerId)
+                        eq("blocked_id", targetId)
+                    }
+                    limit(1)
+                }.decodeList<JsonObject>().isNotEmpty()
+            }.getOrDefault(false)
+        } else {
+            false
+        }
+
+        val followersCount = runCatching {
+            supabase.from("follows").select {
+                filter { eq("following_id", targetId) }
+            }.decodeList<JsonObject>().size
+        }.getOrDefault(0)
+
+        val followingCount = runCatching {
+            supabase.from("follows").select {
+                filter { eq("follower_id", targetId) }
+            }.decodeList<JsonObject>().size
+        }.getOrDefault(0)
+
+        val isFollowing = if (callerId != null && callerId != targetId) {
+            runCatching {
+                supabase.from("follows").select {
+                    filter {
+                        eq("follower_id", callerId)
+                        eq("following_id", targetId)
+                    }
+                    limit(1)
+                }.decodeList<JsonObject>().isNotEmpty()
+            }.getOrDefault(false)
+        } else {
+            false
+        }
+
+        val followsYou = if (callerId != null && callerId != targetId) {
+            runCatching {
+                supabase.from("follows").select {
+                    filter {
+                        eq("follower_id", targetId)
+                        eq("following_id", callerId)
+                    }
+                    limit(1)
+                }.decodeList<JsonObject>().isNotEmpty()
+            }.getOrDefault(false)
+        } else {
+            false
+        }
+
+        return PublicProfile(
+            id = targetId,
+            username = row.stringOrNull("username") ?: clean,
+            displayName = row.stringOrNull("display_name") ?: clean,
+            avatarUrl = row.stringOrNull("avatar_url"),
+            bio = row.stringOrNull("bio"),
+            bannerUrl = row.stringOrNull("banner_url"),
+            bannerType = row.stringOrNull("banner_type") ?: "none",
+            isVerified = row.booleanOrNull("is_verified") ?: false,
+            verifiedAt = row.stringOrNull("verified_at"),
+            followingCount = followingCount,
+            followersCount = followersCount,
+            isFollowing = isFollowing,
+            followsYou = followsYou,
+            countryCode = row.stringOrNull("country_code"),
+            createdAt = row.stringOrNull("created_at"),
+            blockedByMe = blockedByMe
+        )
+    }
+
+    private suspend fun fetchAccountInfoDirect(userId: String): AccountInfo {
+        val profile = supabase.from("profiles").select {
+            filter { eq("id", userId) }
+            limit(1)
+        }.decodeList<JsonObject>().firstOrNull() ?: error("PROFILE_NOT_FOUND")
+
+        val auditRows = runCatching {
+            supabase.from("profile_audit_log").select {
+                filter {
+                    eq("user_id", userId)
+                    eq("field_changed", "username")
+                }
+                limit(50)
+            }.decodeList<JsonObject>()
+        }.getOrDefault(emptyList())
+
+        val formerUsernames = auditRows
+            .sortedByDescending { it.stringOrNull("created_at").orEmpty() }
+            .mapNotNull { it.stringOrNull("old_value")?.trim()?.takeIf(String::isNotEmpty) }
+            .distinct()
+            .take(20)
+
+        val callerId = currentUserId()
+        val followsYou = if (callerId != null && callerId != userId) {
+            runCatching {
+                supabase.from("follows").select {
+                    filter {
+                        eq("follower_id", userId)
+                        eq("following_id", callerId)
+                    }
+                    limit(1)
+                }.decodeList<JsonObject>().isNotEmpty()
+            }.getOrDefault(false)
+        } else {
+            false
+        }
+
+        val followingSince = if (callerId != null && callerId != userId) {
+            runCatching {
+                supabase.from("follows").select {
+                    filter {
+                        eq("follower_id", callerId)
+                        eq("following_id", userId)
+                    }
+                    limit(1)
+                }.decodeList<JsonObject>().firstOrNull()?.stringOrNull("created_at")
+            }.getOrNull()
+        } else {
+            null
+        }
+
+        return AccountInfo(
+            joinedAt = profile.stringOrNull("created_at"),
+            countryCode = profile.stringOrNull("country_code"),
+            verifiedAt = profile.stringOrNull("verified_at"),
+            usernameChangeCount = formerUsernames.size,
+            followsYou = followsYou,
+            followingSince = followingSince,
+            isSelf = callerId == userId,
+            userId = userId,
+            username = profile.stringOrNull("username"),
+            displayName = profile.stringOrNull("display_name"),
+            avatarUrl = profile.stringOrNull("avatar_url"),
+            bio = profile.stringOrNull("bio"),
+            isVerified = profile.booleanOrNull("is_verified") ?: false,
+            formerUsernames = formerUsernames
+        )
     }
 
     suspend fun blockUser(targetUserId: String): Result<Unit> = withContext(Dispatchers.IO) {
@@ -598,8 +796,8 @@ class BuildXRepository(val context: Context) {
     }
 
     suspend fun searchPeople(query: String, limit: Int = 30, offset: Int = 0): Result<List<PersonSearchResult>> = withContext(Dispatchers.IO) {
-        runCatching {
-            val clean = query.trim()
+        val clean = query.trim().removePrefix("@").trim()
+        val rpcAttempt = runCatching {
             val params = buildJsonObject {
                 put("query", clean)
                 put("p_limit", limit)
@@ -607,6 +805,45 @@ class BuildXRepository(val context: Context) {
             }
             val response = supabase.postgrest.rpc("search_people", params)
             response.decodeList<PersonSearchResult>()
+        }
+        if (rpcAttempt.isSuccess) return@withContext rpcAttempt
+        val rpcError = rpcAttempt.exceptionOrNull()
+        if (rpcError is kotlinx.coroutines.CancellationException) throw rpcError
+
+        runCatching { searchPeopleDirect(clean, limit, offset) }
+    }
+
+    private suspend fun searchPeopleDirect(
+        clean: String,
+        limit: Int,
+        offset: Int
+    ): List<PersonSearchResult> {
+        val callerId = currentUserId()
+        val rows = supabase.from("profiles").select {
+            if (clean.isNotEmpty()) {
+                filter {
+                    or {
+                        ilike("username", "%$clean%")
+                        ilike("display_name", "%$clean%")
+                        ilike("handle", "%$clean%")
+                    }
+                }
+            }
+            limit((limit.coerceIn(1, 50) + offset).toLong())
+        }.decodeList<JsonObject>().drop(offset.coerceAtLeast(0))
+
+        return rows.mapNotNull { row ->
+            val id = row.stringOrNull("id") ?: return@mapNotNull null
+            if (callerId != null && id == callerId) return@mapNotNull null
+            PersonSearchResult(
+                id = id,
+                username = row.stringOrNull("username").orEmpty(),
+                displayName = row.stringOrNull("display_name").orEmpty(),
+                avatarUrl = row.stringOrNull("avatar_url"),
+                isVerified = row.booleanOrNull("is_verified") ?: false,
+                followersCount = 0,
+                isFollowing = false
+            )
         }
     }
 
@@ -2099,4 +2336,29 @@ class BuildXRepository(val context: Context) {
             resolvedLocal
         }
     }
+
+    /**
+     * Registers this device's push token so the backend can address the handset
+     * directly. Safe to call repeatedly: the RPC upserts on (user_id, token).
+     */
+    suspend fun registerPushToken(
+        fcmToken: String,
+        deviceInfo: String = "android"
+    ): Result<Boolean> = withContext(Dispatchers.IO) {
+        runCatching {
+            val params = buildJsonObject {
+                put("p_fcm_token", fcmToken.trim())
+                put("p_device_info", deviceInfo)
+            }
+            val response = supabase.postgrest.rpc("register_push_token", params)
+            response.decodeAs<JsonObject>()["success"]?.jsonPrimitive?.contentOrNull
+                ?.toBooleanStrictOrNull() ?: false
+        }
+    }
+
+    private fun JsonObject.stringOrNull(key: String): String? =
+        this[key]?.jsonPrimitive?.contentOrNull
+
+    private fun JsonObject.booleanOrNull(key: String): Boolean? =
+        this[key]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
 }

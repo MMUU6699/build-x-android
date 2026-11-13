@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- System notification channels and bodies -->
+    <string name="notif_channel_messages_name">Messages</string>
+    <string name="notif_channel_messages_desc">Direct messages, group chats and note replies</string>
+    <string name="notif_channel_social_name">Activity</string>
+    <string name="notif_channel_social_desc">New followers, note likes and notes you follow</string>
+    <string name="notif_channel_ai_name">Build X assistant</string>
+    <string name="notif_channel_ai_desc">Replies from the Build X assistant</string>
+
+    <string name="notif_follow_title">%1$s started following you</string>
+    <string name="notif_note_like_title">%1$s liked your note</string>
+    <string name="notif_note_title">%1$s shared a note</string>
+    <string name="notif_follow_body">Tap to open their profile</string>
+    <string name="notif_note_body">Open Build X to see it</string>
+
+    <string name="notif_ai_title">Build X</string>
+    <string name="notif_me_label">You</string>
+    <string name="notif_initial_fallback">X</string>
+
+    <string name="notif_message_generic">Sent a message</string>
+    <string name="notif_message_photo">Sent a photo</string>
+    <string name="notif_message_voice">Sent a voice message</string>
+    <string name="notif_message_file">Sent a file</string>
+    <string name="notif_message_deleted">This message was deleted</string>
+</resources>

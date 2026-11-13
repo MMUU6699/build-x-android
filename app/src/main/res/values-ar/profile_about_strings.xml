@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- قائمة الملف الشخصي -->
+    <string name="pabout_menu_about">حول هذا الملف الشخصي</string>
+    <string name="pabout_menu_share">مشاركة الملف الشخصي</string>
+    <string name="pabout_menu_copy">نسخ اسم المستخدم</string>
+    <string name="pabout_menu_report">إبلاغ</string>
+    <string name="pabout_menu_block">حظر</string>
+    <string name="pabout_copied">تم نسخ اسم المستخدم</string>
+
+    <!-- صفحة حول هذا الملف الشخصي -->
+    <string name="pabout_title">حول هذا الملف الشخصي</string>
+    <string name="pabout_footnote">للحفاظ على مصداقية مجتمعنا، نعرض هذه المعلومات حول الملفات الشخصية في Build X.</string>
+    <string name="pabout_joined">تاريخ الانضمام</string>
+    <string name="pabout_based_in">المنطقة</string>
+    <string name="pabout_former_usernames">أسماء المستخدمين السابقة</string>
+    <string name="pabout_not_specified">غير محدد</string>
+    <string name="pabout_verified_since">موثق منذ</string>
+    <string name="pabout_no_former">لم يغيّر هذا الحساب اسم المستخدم.</string>
+    <string name="pabout_former_count">%1$d</string>
+    <string name="pabout_error_title">تعذّر تحميل هذا الملف الشخصي</string>
+    <string name="pabout_retry">إعادة المحاولة</string>
+</resources>

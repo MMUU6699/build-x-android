@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- قنوات الإشعارات ونصوصها -->
+    <string name="notif_channel_messages_name">الرسائل</string>
+    <string name="notif_channel_messages_desc">الرسائل المباشرة والمجموعات والردود على الملاحظات</string>
+    <string name="notif_channel_social_name">النشاط</string>
+    <string name="notif_channel_social_desc">المتابعون الجدد وإعجابات الملاحظات والملاحظات التي تتابعها</string>
+    <string name="notif_channel_ai_name">مساعد Build X</string>
+    <string name="notif_channel_ai_desc">ردود مساعد Build X</string>
+
+    <string name="notif_follow_title">بدأ %1$s بمتابعتك</string>
+    <string name="notif_note_like_title">أعجب %1$s بملاحظتك</string>
+    <string name="notif_note_title">شارك %1$s ملاحظة</string>
+    <string name="notif_follow_body">اضغط لعرض الملف الشخصي</string>
+    <string name="notif_note_body">افتح Build X لعرضها</string>
+
+    <string name="notif_ai_title">Build X</string>
+    <string name="notif_me_label">أنت</string>
+    <string name="notif_initial_fallback">X</string>
+
+    <string name="notif_message_generic">أرسل رسالة</string>
+    <string name="notif_message_photo">أرسل صورة</string>
+    <string name="notif_message_voice">أرسل رسالة صوتية</string>
+    <string name="notif_message_file">أرسل ملفاً</string>
+    <string name="notif_message_deleted">تم حذف هذه الرسالة</string>
+</resources>

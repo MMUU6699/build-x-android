@@ -41,8 +41,10 @@ import app.buildx.chat.data.model.DmParticipant
 import app.buildx.chat.data.model.DmReplyPreview
 import app.buildx.chat.data.model.DmPeerIntro
 import app.buildx.chat.data.repository.BuildXRepository
+import app.buildx.chat.util.AppForegroundTracker
 import app.buildx.chat.util.AuthValidation
 import app.buildx.chat.util.AvatarImageProcessor
+import app.buildx.chat.util.BuildXSystemNotificationManager
 import app.buildx.chat.data.util.ErrorMapper
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.handleDeeplinks
@@ -410,10 +412,99 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 realtimeNotificationChannel = channel
                 channel.subscribe()
-                changeFlow.collect {
+                changeFlow.collect { action ->
                     loadInAppNotifications()
+                    if (action is PostgresAction.Insert) {
+                        dispatchSocialNotification(action.record)
+                    }
                 }
             } catch (_: Exception) {}
+        }
+    }
+
+    private fun dispatchIncomingDmNotification(record: JsonObject) {
+        val conversationId = record["conversation_id"]?.jsonPrimitive?.contentOrNull ?: return
+        val senderId = record["sender_id"]?.jsonPrimitive?.contentOrNull ?: return
+        val currentUserId = repository.currentUserId()
+        if (!currentUserId.isNullOrBlank() && senderId == currentUserId) return
+
+        val state = _uiState.value
+        val inboxItem = state.dmInboxItems.firstOrNull { it.effectiveId == conversationId }
+        val detail = state.activeDmDetail?.takeIf { it.conversation?.id == conversationId }
+        val isGroup = inboxItem?.kind == "group" || detail?.conversation?.kind == "group"
+        val conversationTitle = inboxItem?.effectiveTitle
+            ?: detail?.conversation?.title?.takeIf { it.isNotBlank() }
+            ?: "Build X"
+        val isMuted = inboxItem?.isMuted == true ||
+            (inboxItem?.mutedUntil?.let { runCatching { Instant.parse(it).isAfter(Instant.now()) }.getOrDefault(false) } == true)
+        val isVisible = state.activeDmConversationId == conversationId &&
+            AppForegroundTracker.isViewing("dm/")
+
+        val messageType = record["message_type"]?.jsonPrimitive?.contentOrNull ?: "text"
+        val content = record["content"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val preview = when {
+            record["deleted_at"] != null && record["deleted_at"]?.jsonPrimitive?.contentOrNull != null ->
+                getApplication<Application>().getString(R.string.notif_message_deleted)
+            content.isNotBlank() -> content
+            messageType == "image" -> getApplication<Application>().getString(R.string.notif_message_photo)
+            messageType == "voice" || messageType == "audio" ->
+                getApplication<Application>().getString(R.string.notif_message_voice)
+            messageType == "file" || messageType == "document" ->
+                getApplication<Application>().getString(R.string.notif_message_file)
+            else -> getApplication<Application>().getString(R.string.notif_message_generic)
+        }
+
+        viewModelScope.launch {
+            var senderName = ""
+            var senderAvatar: String? = null
+            if (isGroup) {
+                val participant = detail?.participants?.firstOrNull { it.userId == senderId }
+                senderName = participant?.displayName
+                    ?: participant?.username
+                    ?: repository.getPublicProfile(senderId).getOrNull()?.let { it.displayName.ifBlank { it.username } }
+                    ?: ""
+                senderAvatar = participant?.avatarUrl
+                    ?: repository.getPublicProfile(senderId).getOrNull()?.avatarUrl
+            } else {
+                senderName = inboxItem?.effectiveTitle ?: conversationTitle
+                senderAvatar = inboxItem?.effectiveAvatarUrl
+            }
+
+            BuildXSystemNotificationManager.notifyConversationMessage(
+                context = getApplication(),
+                conversationId = conversationId,
+                conversationTitle = conversationTitle,
+                isGroup = isGroup,
+                senderId = senderId,
+                senderName = senderName,
+                senderAvatarUrl = senderAvatar,
+                messagePreview = preview,
+                currentUserId = currentUserId,
+                isMuted = isMuted,
+                isConversationVisible = isVisible
+            )
+        }
+    }
+
+    private fun dispatchSocialNotification(record: JsonObject) {
+        val type = record["type"]?.jsonPrimitive?.contentOrNull ?: return
+        if (type !in setOf("follow", "note", "note_like")) return
+        val actorId = record["actor_id"]?.jsonPrimitive?.contentOrNull ?: return
+        val body = record["body"]?.jsonPrimitive?.contentOrNull
+        viewModelScope.launch {
+            val actor = repository.getPublicProfile(actorId).getOrNull()
+            val actorName = actor?.displayName?.takeIf { it.isNotBlank() }
+                ?: actor?.username?.takeIf { it.isNotBlank() }
+                ?: return@launch
+            BuildXSystemNotificationManager.notifySocialActivity(
+                context = getApplication(),
+                type = type,
+                actorName = actorName,
+                actorUsername = actor?.username,
+                actorAvatarUrl = actor?.avatarUrl,
+                preview = body ?: actor?.activeNote?.content,
+                currentUserId = repository.currentUserId()
+            )
         }
     }
 
@@ -969,6 +1060,18 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                                                     timestampMillis = System.currentTimeMillis()
                                                 )
                                             ) + s.notifications
+                                        )
+                                    }
+                                    val replyPreview = _uiState.value.messages
+                                        .lastOrNull { it.role == "assistant" && it.conversationId == finalConvId }
+                                        ?.content
+                                        .orEmpty()
+                                    viewModelScope.launch {
+                                        BuildXSystemNotificationManager.notifyAssistantReply(
+                                            context = getApplication(),
+                                            conversationId = finalConvId,
+                                            preview = replyPreview,
+                                            isConversationVisible = AppForegroundTracker.isViewing("chat")
                                         )
                                     }
                                 }
@@ -2522,10 +2625,11 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     it.copy(accountInfo = info, isAccountInfoLoading = false)
                 }
             }.onFailure { err ->
+                val isMissingProfile = err.message == "PROFILE_NOT_FOUND"
                 _uiState.update {
                     it.copy(
                         isAccountInfoLoading = false,
-                        accountInfoError = mapError(err)
+                        accountInfoError = if (isMissingProfile) null else mapError(err)
                     )
                 }
             }
@@ -2841,7 +2945,12 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     partFlow.collect { loadDmInbox() }
                 }
                 launch {
-                    msgFlow.collect { loadDmInbox() }
+                    msgFlow.collect { action ->
+                        loadDmInbox()
+                        if (action is PostgresAction.Insert) {
+                            dispatchIncomingDmNotification(action.record)
+                        }
+                    }
                 }
                 launch {
                     convFlow.collect { loadDmInbox() }
@@ -3147,6 +3256,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
     fun enterDmRoom(conversationId: String) {
         val currentState = _uiState.value
+        BuildXSystemNotificationManager.cancelConversation(getApplication(), conversationId)
         val isSameConversationAlreadyLoaded =
             currentState.activeDmConversationId == conversationId && currentState.dmMessages.isNotEmpty()
 

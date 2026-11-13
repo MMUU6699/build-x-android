@@ -58,6 +58,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import app.buildx.chat.data.model.FollowUserItem
@@ -98,6 +99,8 @@ import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.softShadow
 import app.buildx.chat.ui.viewmodel.BuildXViewModel
 import app.buildx.chat.ui.viewmodel.SessionState
+import app.buildx.chat.util.AppForegroundTracker
+import app.buildx.chat.util.BuildXSystemNotificationManager
 import kotlinx.coroutines.delay
 import java.io.File
 
@@ -162,6 +165,33 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(incomingIntent: Intent, viewModel: BuildXViewModel, navController: NavHostController) {
+        val notificationConversationId = incomingIntent.getStringExtra(
+            BuildXSystemNotificationManager.EXTRA_NAVIGATE_DM_CONVERSATION_ID
+        )
+        if (!notificationConversationId.isNullOrBlank()) {
+            incomingIntent.removeExtra(BuildXSystemNotificationManager.EXTRA_NAVIGATE_DM_CONVERSATION_ID)
+            navController.navigate("dm/$notificationConversationId") { launchSingleTop = true }
+            return
+        }
+
+        val notificationProfile = incomingIntent.getStringExtra(
+            BuildXSystemNotificationManager.EXTRA_NAVIGATE_PROFILE_USERNAME
+        )
+        if (!notificationProfile.isNullOrBlank()) {
+            incomingIntent.removeExtra(BuildXSystemNotificationManager.EXTRA_NAVIGATE_PROFILE_USERNAME)
+            navController.navigate("profile/$notificationProfile") { launchSingleTop = true }
+            return
+        }
+
+        val notificationRoute = incomingIntent.getStringExtra(
+            BuildXSystemNotificationManager.EXTRA_NAVIGATE_ROUTE
+        )
+        if (!notificationRoute.isNullOrBlank()) {
+            incomingIntent.removeExtra(BuildXSystemNotificationManager.EXTRA_NAVIGATE_ROUTE)
+            navController.navigate(notificationRoute) { launchSingleTop = true }
+            return
+        }
+
         val uri = incomingIntent.data
         if (uri != null && uri.scheme == "buildx") {
             val u = if (uri.host == "u") {
@@ -185,6 +215,10 @@ fun BuildXRoot(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    val activeEntry by navController.currentBackStackEntryAsState()
+    LaunchedEffect(activeEntry) {
+        AppForegroundTracker.updateRoute(activeEntry?.destination?.route)
+    }
 
     var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
 
@@ -270,6 +304,20 @@ fun BuildXRoot(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         viewModel.onNotificationPermissionResult(granted)
+    }
+
+    // Ask once the session is authenticated so chat and activity notifications
+    // can actually reach the handset.
+    LaunchedEffect(uiState.isAuthenticated) {
+        if (uiState.isAuthenticated && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                postNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
     }
 
     // MediaStore read permission launcher

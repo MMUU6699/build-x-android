@@ -116,7 +116,14 @@ data class AccountInfo(
     @SerialName("username_change_count") val usernameChangeCount: Int = 0,
     @SerialName("follows_you") val followsYou: Boolean = false,
     @SerialName("following_since") val followingSince: String? = null,
-    @SerialName("is_self") val isSelf: Boolean = false
+    @SerialName("is_self") val isSelf: Boolean = false,
+    @SerialName("user_id") val userId: String? = null,
+    val username: String? = null,
+    @SerialName("display_name") val displayName: String? = null,
+    @SerialName("avatar_url") val avatarUrl: String? = null,
+    val bio: String? = null,
+    @SerialName("is_verified") val isVerified: Boolean = false,
+    @SerialName("former_usernames") val formerUsernames: List<String> = emptyList()
 )
 
 /**

@@ -50,8 +50,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -112,6 +112,8 @@ import app.buildx.chat.data.model.PublicProfile
 import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.data.model.UserProfile
 import app.buildx.chat.data.model.resolveProfileBannerType
+import app.buildx.chat.ui.components.ActionMenuItem
+import app.buildx.chat.ui.components.ActionMenuPopup
 import app.buildx.chat.ui.components.MarkLoader
 import app.buildx.chat.ui.components.NameWithBadge
 import app.buildx.chat.ui.components.pressScaleClickable
@@ -976,67 +978,72 @@ fun ProfileScreen(
                 }
 
                 if (!isOwnProfile && showMenu) {
-                    DropdownMenu(
-                        expanded = showMenu,
+                    Popup(
+                        alignment = Alignment.TopEnd,
                         onDismissRequest = { showMenu = false },
-                        modifier = Modifier
-                            .background(colors.cardBackground)
-                            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(12.dp))
+                        properties = PopupProperties(focusable = true)
                     ) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = stringResource(R.string.profile_share_profile),
-                                    fontSize = 14.sp,
-                                    color = colors.primaryText
-                                )
-                            },
-                            onClick = {
-                                showMenu = false
-                                onShareProfile(username)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = stringResource(R.string.profile_copy_username),
-                                    fontSize = 14.sp,
-                                    color = colors.primaryText
-                                )
-                            },
-                            onClick = {
-                                showMenu = false
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("username", "@$cleanHandle"))
-                                onCopyLink(cleanHandle)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = stringResource(R.string.pv2_report),
-                                    fontSize = 14.sp,
-                                    color = colors.primaryText
-                                )
-                            },
-                            onClick = {
-                                showMenu = false
-                                showReportSheet = true
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = stringResource(R.string.pv2_block),
-                                    fontSize = 14.sp,
-                                    color = Color(0xFFE53935)
-                                )
-                            },
-                            onClick = {
-                                showMenu = false
-                                showBlockDialog = true
-                            }
-                        )
+                        Box(modifier = Modifier.padding(top = 58.dp, end = 16.dp)) {
+                            ActionMenuPopup(
+                                popupWidth = 232.dp,
+                                items = buildList {
+                                    add(
+                                        ActionMenuItem(
+                                            label = stringResource(R.string.pabout_menu_about),
+                                            iconRes = R.drawable.ic_info,
+                                            onClick = {
+                                                showMenu = false
+                                                onLoadAccountInfo(targetId ?: cleanHandle)
+                                                showAboutSheet = true
+                                            }
+                                        )
+                                    )
+                                    add(
+                                        ActionMenuItem(
+                                            label = stringResource(R.string.pabout_menu_share),
+                                            iconRes = R.drawable.ic_share,
+                                            onClick = {
+                                                showMenu = false
+                                                onShareProfile(username)
+                                            }
+                                        )
+                                    )
+                                    add(
+                                        ActionMenuItem(
+                                            label = stringResource(R.string.pabout_menu_copy),
+                                            iconRes = R.drawable.ic_copy,
+                                            onClick = {
+                                                showMenu = false
+                                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                                clipboard.setPrimaryClip(ClipData.newPlainText("username", "@$cleanHandle"))
+                                                onCopyLink(cleanHandle)
+                                            }
+                                        )
+                                    )
+                                    add(
+                                        ActionMenuItem(
+                                            label = stringResource(R.string.pabout_menu_report),
+                                            iconRes = R.drawable.ic_flag,
+                                            onClick = {
+                                                showMenu = false
+                                                showReportSheet = true
+                                            }
+                                        )
+                                    )
+                                    add(
+                                        ActionMenuItem(
+                                            label = stringResource(R.string.pabout_menu_block),
+                                            iconRes = R.drawable.ic_block,
+                                            isDestructive = true,
+                                            onClick = {
+                                                showMenu = false
+                                                showBlockDialog = true
+                                            }
+                                        )
+                                    )
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -1105,13 +1112,19 @@ fun ProfileScreen(
         )
     }
 
-    // About Account Sheet
-    if (showAboutSheet && targetId != null) {
+    // About this profile page
+    if (showAboutSheet) {
         AboutAccountSheet(
             accountInfo = accountInfo,
             isLoading = isAccountInfoLoading,
             errorMessage = accountInfoError,
-            onRetry = { onLoadAccountInfo(targetId) },
+            fallbackDisplayName = displayName,
+            fallbackUsername = cleanHandle,
+            fallbackAvatarUrl = avatarUrl,
+            fallbackJoinedAt = publicProfile?.createdAt,
+            fallbackCountryCode = publicProfile?.countryCode,
+            fallbackIsVerified = publicProfile?.isVerified == true,
+            onRetry = { onLoadAccountInfo(targetId ?: cleanHandle) },
             onDismiss = { showAboutSheet = false }
         )
     }
@@ -1620,7 +1633,7 @@ private fun ProfileAvatarZoomOverlay(
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ProfileAvatar(
+internal fun ProfileAvatar(
     avatarUrl: String?,
     displayName: String,
     size: Dp,

@@ -10,20 +10,25 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -35,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
@@ -55,6 +61,7 @@ import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.ui.components.ActionMenuPopup
 import app.buildx.chat.ui.components.ActionMenuItem
 import app.buildx.chat.ui.components.MarkLoader
+import app.buildx.chat.ui.components.VerifiedBadge
 import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.isRtlText
@@ -304,153 +311,324 @@ fun BuildXToggle(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
 // About this account
 // ---------------------------------------------------------------------------
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutAccountSheet(
     accountInfo: AccountInfo?,
     isLoading: Boolean,
     errorMessage: String?,
+    fallbackDisplayName: String = "",
+    fallbackUsername: String = "",
+    fallbackAvatarUrl: String? = null,
+    fallbackJoinedAt: String? = null,
+    fallbackCountryCode: String? = null,
+    fallbackIsVerified: Boolean = false,
     onRetry: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val colors = BuildXTheme.colors
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showFormerUsernames by remember { mutableStateOf(false) }
 
-    ModalBottomSheet(
+    Dialog(
         onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = colors.cardBackground,
-        scrimColor = colors.scrimColor,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        dragHandle = { SheetGrabHandle() }
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(start = 22.dp, end = 22.dp, bottom = 28.dp)
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = colors.pageBackground
         ) {
-            Text(
-                text = stringResource(R.string.pv2_about_this_account),
-                color = colors.primaryText,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-
-            when {
-                isLoading -> {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .height(120.dp),
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onDismiss),
                         contentAlignment = Alignment.Center
                     ) {
-                        MarkLoader(
-                            size = 28.dp,
-                            isSpinning = true,
-                            tint = colors.primaryBlue
+                        val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_back),
+                            contentDescription = stringResource(R.string.pv2_back),
+                            tint = colors.primaryText,
+                            modifier = Modifier
+                                .size(21.dp)
+                                .then(if (isRtl) Modifier.rotate(180f) else Modifier)
                         )
                     }
-                }
-                errorMessage != null -> {
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = errorMessage,
-                        color = colors.secondaryText,
-                        fontSize = 14.sp
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    PillButton(
-                        label = stringResource(R.string.profile_retry),
-                        onClick = onRetry,
-                        filled = false
+                        text = stringResource(R.string.pabout_title),
+                        color = colors.primaryText,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
-                accountInfo != null -> {
-                    val joined = formatProfileDate(accountInfo.joinedAt)
-                    val basedIn = countryDisplayName(accountInfo.countryCode)
-                    val verifiedSince = formatProfileDate(accountInfo.verifiedAt)
-                    val followSince = formatProfileDate(accountInfo.followingSince)
 
-                    if (joined != null) {
-                        AboutRow(R.drawable.ic_calendar, stringResource(R.string.pv2_about_joined), joined)
-                    }
-                    if (basedIn != null) {
-                        AboutRow(R.drawable.ic_globe, stringResource(R.string.pv2_about_based_in), basedIn)
-                    }
-                    if (verifiedSince != null) {
-                        AboutRow(R.drawable.ic_verified_badge, stringResource(R.string.pv2_about_verified_since), verifiedSince, tintUnspecified = true)
-                    }
-                    if (accountInfo.usernameChangeCount > 0) {
-                        AboutRow(
-                            R.drawable.ic_pencil_edit,
-                            stringResource(R.string.pv2_about_username_changes),
-                            accountInfo.usernameChangeCount.toString()
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 22.dp)
+                ) {
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    val resolvedDisplayName = accountInfo?.displayName
+                        ?.takeIf { it.isNotBlank() }
+                        ?: fallbackDisplayName
+                    val resolvedHandle = accountInfo?.username
+                        ?.takeIf { it.isNotBlank() }
+                        ?: fallbackUsername.removePrefix("@")
+                    val resolvedAvatar = accountInfo?.avatarUrl ?: fallbackAvatarUrl
+                    val resolvedVerified = accountInfo?.isVerified ?: fallbackIsVerified
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        ProfileAvatar(
+                            avatarUrl = resolvedAvatar,
+                            displayName = resolvedDisplayName,
+                            size = 84.dp
                         )
-                    }
-                    if (!accountInfo.isSelf && accountInfo.followsYou) {
-                        AboutRow(
-                            R.drawable.ic_user,
-                            stringResource(R.string.pv2_about_follows_you),
-                            stringResource(R.string.pv2_about_yes)
-                        )
-                    }
-                    if (!accountInfo.isSelf && followSince != null) {
-                        AboutRow(
-                            R.drawable.ic_user,
-                            stringResource(R.string.pv2_about_you_follow_since, followSince),
-                            ""
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = resolvedDisplayName.ifBlank {
+                                    if (resolvedHandle.isNotBlank()) "@$resolvedHandle" else ""
+                                },
+                                color = colors.primaryText,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                            if (resolvedVerified) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                VerifiedBadge(size = 16.dp)
+                            }
+                        }
+                        if (resolvedHandle.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "\u2066@$resolvedHandle\u2069",
+                                color = colors.secondaryText,
+                                fontSize = 14.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = stringResource(R.string.pabout_footnote),
+                            color = colors.secondaryText,
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp,
+                            textAlign = TextAlign.Center,
+                            style = TextStyle(textDirection = TextDirection.Content),
+                            modifier = Modifier.padding(horizontal = 6.dp)
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(18.dp))
-                    Text(
-                        text = stringResource(R.string.pv2_about_footnote),
-                        color = colors.secondaryText,
-                        fontSize = 12.5.sp,
-                        lineHeight = 18.sp
-                    )
+                    Spacer(modifier = Modifier.height(22.dp))
+
+                    when {
+                        isLoading -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(120.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                MarkLoader(
+                                    size = 28.dp,
+                                    isSpinning = true,
+                                    tint = colors.primaryBlue
+                                )
+                            }
+                        }
+
+                        accountInfo == null && !isLoading -> {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.pabout_error_title),
+                                    color = colors.primaryText,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                if (errorMessage != null) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = errorMessage,
+                                        color = colors.secondaryText,
+                                        fontSize = 13.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                                PillButton(
+                                    label = stringResource(R.string.pabout_retry),
+                                    onClick = onRetry,
+                                    filled = false
+                                )
+                            }
+                        }
+
+                        else -> {
+                            val joined = formatProfileMonthYear(accountInfo?.joinedAt ?: fallbackJoinedAt)
+                            val basedIn = countryDisplayName(accountInfo?.countryCode ?: fallbackCountryCode)
+                                ?: stringResource(R.string.pabout_not_specified)
+                            val verifiedSince = formatProfileMonthYear(accountInfo?.verifiedAt)
+                                ?: formatProfileMonthYear(accountInfo?.joinedAt ?: fallbackJoinedAt)
+                            val former = accountInfo?.formerUsernames.orEmpty()
+                            val changeCount = accountInfo?.usernameChangeCount ?: former.size
+
+                            AboutInfoRow(
+                                iconRes = R.drawable.ic_calendar,
+                                label = stringResource(R.string.pabout_joined),
+                                subtitle = joined ?: stringResource(R.string.pabout_not_specified)
+                            )
+                            AboutInfoRow(
+                                iconRes = R.drawable.ic_globe,
+                                label = stringResource(R.string.pabout_based_in),
+                                subtitle = basedIn
+                            )
+                            AboutInfoRow(
+                                iconRes = R.drawable.ic_user,
+                                label = stringResource(R.string.pabout_former_usernames),
+                                subtitle = if (former.isEmpty()) {
+                                    stringResource(R.string.pabout_no_former)
+                                } else {
+                                    null
+                                },
+                                trailingCount = changeCount,
+                                showChevron = former.isNotEmpty(),
+                                onClick = if (former.isNotEmpty()) {
+                                    { showFormerUsernames = !showFormerUsernames }
+                                } else {
+                                    null
+                                }
+                            )
+                            if (showFormerUsernames && former.isNotEmpty()) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(colors.cardBackground)
+                                        .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
+                                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                                ) {
+                                    former.forEach { previous ->
+                                        Text(
+                                            text = "@$previous",
+                                            color = colors.primaryText,
+                                            fontSize = 14.5.sp,
+                                            modifier = Modifier.padding(vertical = 8.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+                            }
+                            if (resolvedVerified) {
+                                AboutInfoRow(
+                                    iconRes = R.drawable.ic_verified_badge,
+                                    label = stringResource(R.string.pabout_verified_since),
+                                    subtitle = verifiedSince
+                                        ?: stringResource(R.string.pabout_not_specified),
+                                    tintUnspecified = true
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(28.dp))
                 }
             }
         }
     }
 }
 
+/**
+ * Two-line metadata row used by the About page: leading 24dp icon, label with a
+ * subtitle underneath, and an optional trailing count plus chevron.
+ */
 @Composable
-private fun AboutRow(
+private fun AboutInfoRow(
     iconRes: Int,
     label: String,
-    value: String,
-    tintUnspecified: Boolean = false
+    subtitle: String? = null,
+    trailingCount: Int? = null,
+    showChevron: Boolean = false,
+    tintUnspecified: Boolean = false,
+    onClick: (() -> Unit)? = null
 ) {
     val colors = BuildXTheme.colors
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 11.dp),
+            .clip(RoundedCornerShape(12.dp))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
             painter = painterResource(id = iconRes),
             contentDescription = null,
-            tint = if (tintUnspecified) androidx.compose.ui.graphics.Color.Unspecified else colors.secondaryText,
-            modifier = Modifier.size(20.dp)
+            tint = if (tintUnspecified) androidx.compose.ui.graphics.Color.Unspecified else colors.primaryText,
+            modifier = Modifier.size(24.dp)
         )
-        Spacer(modifier = Modifier.width(14.dp))
-        Text(
-            text = label,
-            color = colors.secondaryText,
-            fontSize = 14.5.sp,
-            modifier = Modifier.weight(1f),
-            textAlign = TextAlign.Start
-        )
-        if (value.isNotBlank()) {
+        Spacer(modifier = Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = value,
+                text = label,
                 color = colors.primaryText,
-                fontSize = 14.5.sp,
-                fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.End
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    color = colors.secondaryText,
+                    fontSize = 14.sp,
+                    lineHeight = 19.sp,
+                    style = TextStyle(textDirection = TextDirection.Content)
+                )
+            }
+        }
+        if (trailingCount != null) {
+            Text(
+                text = trailingCount.toString(),
+                color = colors.secondaryText,
+                fontSize = 15.sp
+            )
+        }
+        if (showChevron) {
+            Spacer(modifier = Modifier.width(6.dp))
+            Icon(
+                painter = painterResource(id = R.drawable.ic_chevron_right),
+                contentDescription = null,
+                tint = colors.secondaryText,
+                modifier = Modifier
+                    .size(18.dp)
+                    .then(if (isRtl) Modifier.rotate(180f) else Modifier)
             )
         }
     }

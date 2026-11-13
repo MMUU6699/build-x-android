@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Profile overflow menu -->
+    <string name="pabout_menu_about">About this profile</string>
+    <string name="pabout_menu_share">Share profile</string>
+    <string name="pabout_menu_copy">Copy @username</string>
+    <string name="pabout_menu_report">Report</string>
+    <string name="pabout_menu_block">Block</string>
+    <string name="pabout_copied">Username copied</string>
+
+    <!-- About this profile page -->
+    <string name="pabout_title">About this profile</string>
+    <string name="pabout_footnote">To help keep our community authentic, we\'re showing information about profiles on Build X.</string>
+    <string name="pabout_joined">Date joined</string>
+    <string name="pabout_based_in">Account based in</string>
+    <string name="pabout_former_usernames">Former usernames</string>
+    <string name="pabout_not_specified">Not specified</string>
+    <string name="pabout_verified_since">Verified since</string>
+    <string name="pabout_no_former">This account has not changed its username.</string>
+    <string name="pabout_former_count">%1$d</string>
+    <string name="pabout_error_title">Could not load this profile</string>
+    <string name="pabout_retry">Try again</string>
+</resources>
