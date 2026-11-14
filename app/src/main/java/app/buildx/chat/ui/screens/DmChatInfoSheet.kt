@@ -5,81 +5,108 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.zIndex
 import app.buildx.chat.R
+import app.buildx.chat.data.model.ChatWallpaperConfig
 import app.buildx.chat.data.model.DmConversationDetail
 import app.buildx.chat.data.model.DmMessage
-import app.buildx.chat.data.model.DmParticipant
 import app.buildx.chat.data.model.PersonSearchResult
 import app.buildx.chat.data.model.ReportReason
+import app.buildx.chat.ui.chat.ChatDimens
+import app.buildx.chat.ui.chat.ChatInfoConfirmDialog
+import app.buildx.chat.ui.chat.ChatInfoDetailsCard
+import app.buildx.chat.ui.chat.ChatInfoFourSquircleRow
+import app.buildx.chat.ui.chat.ChatInfoInlineSearchCard
+import app.buildx.chat.ui.chat.ChatInfoOverflowPopup
+import app.buildx.chat.ui.chat.ChatInfoRenameGroupDialog
+import app.buildx.chat.ui.chat.ChatInfoStickyTabBar
+import app.buildx.chat.ui.chat.ChatInfoTab
+import app.buildx.chat.ui.chat.ChatInfoTabContent
+import app.buildx.chat.ui.chat.ChatMessageMapper
 import app.buildx.chat.ui.chat.DmMediaViewerDialog
+import app.buildx.chat.ui.chat.buildOverflowMenuItems
+import app.buildx.chat.ui.chat.toChatColors
+import app.buildx.chat.ui.components.HeaderCircleButton
 import app.buildx.chat.ui.components.MarkLoader
 import app.buildx.chat.ui.components.VerifiedBadge
 import app.buildx.chat.ui.components.pressScaleClickable
+import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
-import app.buildx.chat.ui.theme.isRtlText
 import app.buildx.chat.ui.theme.softShadow
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
-
-private val DestructiveRed = Color(0xFFE53935)
+import kotlin.math.roundToInt
 
 /**
- * Unified Chat Info sheet.
+ * Unified Telegram-grade Chat Info sheet.
  *
- * Direct conversations show the peer's identity, quick actions, shared media and
- * destructive account actions. Group conversations additionally manage the
- * photo, title, participants and membership.
+ * Mirrors [app.buildx.chat.ui.chat.ChatInfoScreen] inside a status-bar-safe modal bottom sheet:
+ * - Pinned `56.dp` top bar (`zIndex(10f)`) with Close/Back `<`, Edit `✎`, and More `⋮`.
+ * - Smooth `88.dp -> 36.dp` GPU-accelerated collapsing header.
+ * - 4 equal-width Telegram squircle actions (`Add`/`Message`, `Mute`, `Search`, `Leave`/`More`).
+ * - Clean `16.dp` rounded info card + sticky `Members | Media | Files | Links` tab bar.
  */
 @Composable
 fun DmChatInfoSheet(
@@ -109,21 +136,49 @@ fun DmChatInfoSheet(
     onOpenWallpaper: (() -> Unit)? = null
 ) {
     val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
+    val chatColors = remember(colors) { colors.toChatColors() }
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val scrollState = rememberScrollState()
 
     val conversation = detail.conversation
     val peer = detail.peerIntro
     val myParticipant = detail.participants.firstOrNull { it.userId == currentUserId }
-    val activeParticipants = detail.participants.filter { it.status == "active" }
-    val sharedMedia = messages.filter { !it.attachmentPath.isNullOrBlank() && it.deletedAt == null }
+    val isAdmin = myParticipant?.role == "admin" ||
+        myParticipant?.role == "owner" ||
+        (!isDirect && conversation?.createdBy != null && conversation.createdBy == currentUserId) ||
+        (!isDirect && myParticipant == null && detail.participants.isEmpty())
+    val isMuted = myParticipant?.isMuted == true
+    val isPinned = myParticipant?.isPinned == true
+    val activeParticipants = remember(detail.participants) {
+        detail.participants.filter { it.status == "active" }
+    }
 
+    val sharedMedia = remember(messages) { ChatMessageMapper.extractSharedMedia(messages) }
+    val sharedFiles = remember(messages) { ChatMessageMapper.extractSharedFiles(messages) }
+    val sharedLinks = remember(messages) { ChatMessageMapper.extractSharedLinks(messages) }
+
+    var selectedTab by remember(isDirect) {
+        mutableStateOf(if (isDirect) ChatInfoTab.MEDIA else ChatInfoTab.MEMBERS)
+    }
+    var viewerMediaMessage by remember { mutableStateOf<DmMessage?>(null) }
     var isRenaming by remember { mutableStateOf(false) }
-    var titleDraft by remember(conversation?.id) { mutableStateOf(conversation?.title ?: "") }
+    var titleDraft by remember(conversation?.id, conversation?.title) {
+        mutableStateOf(conversation?.title ?: "")
+    }
     var isAddingMembersOpen by remember { mutableStateOf(false) }
     var memberQuery by remember { mutableStateOf("") }
     var selectedMemberIds by remember { mutableStateOf(emptySet<String>()) }
+    var isInlineSearchOpen by remember { mutableStateOf(false) }
+    var inlineSearchQuery by remember { mutableStateOf("") }
+    var showOverflowMenu by remember { mutableStateOf(false) }
+
     var showReport by remember { mutableStateOf(false) }
     var showBlockConfirm by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
+    var showLeaveConfirm by remember { mutableStateOf(false) }
 
     val photoPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -137,10 +192,76 @@ fun DmChatInfoSheet(
 
     LaunchedEffect(memberQuery) {
         if (isAddingMembersOpen) {
-            delay(300)
+            delay(280)
             onSearchMembers(memberQuery)
         }
     }
+
+    val displayTitle = if (isDirect) {
+        peer?.displayName?.takeIf { it.isNotBlank() }
+            ?: peer?.handle?.takeIf { it.isNotBlank() }
+            ?: stringResource(R.string.dm_chat_info)
+    } else {
+        conversation?.title?.takeIf { it.isNotBlank() } ?: stringResource(R.string.dm_new_group)
+    }
+    val heroAvatarUrl = if (isDirect) peer?.avatarUrl else conversation?.avatarUrl
+    val peerFirstLabel = peer?.displayName?.trim()?.substringBefore(' ')?.takeIf { it.isNotBlank() }
+        ?: peer?.handle?.takeIf { it.isNotBlank() }
+        ?: displayTitle
+    val heroSubtitle = if (isDirect) {
+        peer?.handle?.takeIf { it.isNotBlank() }?.let { "@$it" }.orEmpty()
+    } else {
+        stringResource(R.string.dm_members_count, activeParticipants.size)
+    }
+
+    val topBarHeightDp = ChatDimens.ChatInfoTopBarHeight
+    val avatarExpandedDp = ChatDimens.ChatInfoAvatarExpandedSize
+    val avatarCollapsedDp = ChatDimens.ChatInfoAvatarCollapsedSize
+    val collapseRangePx = with(density) { 136.dp.toPx() }
+
+    val topBarHeightPx = with(density) { topBarHeightDp.toPx() }
+    val avatarExpandedPx = with(density) { avatarExpandedDp.toPx() }
+    val avatarCollapsedPx = with(density) { avatarCollapsedDp.toPx() }
+    val expandedTopGapPx = with(density) { 8.dp.toPx() }
+    val backButtonEndPx = with(density) { (16.dp + 44.dp + 12.dp).toPx() }
+    val titleTopGapPx = with(density) { 12.dp.toPx() }
+    val collapsedAvatarToTitleGapPx = with(density) { 10.dp.toPx() }
+    val hasEditButton = !isDirect && isAdmin
+    val collapsedTitleEndDp = if (hasEditButton) 114.dp else 68.dp
+
+    val overflowItems = buildOverflowMenuItems(
+        isDirect = isDirect,
+        isAdmin = isAdmin,
+        isPinned = isPinned,
+        isRtl = strings.isRtl,
+        peerHandle = peer?.handle,
+        peerLabel = peerFirstLabel,
+        hasWallpaper = onOpenWallpaper != null,
+        onViewProfile = { handle ->
+            onDismiss()
+            onViewProfile(handle)
+        },
+        onTogglePin = onTogglePin,
+        onOpenWallpaper = onOpenWallpaper?.let { open ->
+            {
+                onDismiss()
+                open()
+            }
+        },
+        onRenameGroup = {
+            titleDraft = conversation?.title.orEmpty()
+            isRenaming = true
+        },
+        onChangePhoto = {
+            photoPicker.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+        },
+        onClearHistory = { showClearConfirm = true },
+        onReport = { showReport = true },
+        onBlock = { showBlockConfirm = true },
+        onLeaveGroup = { showLeaveConfirm = true }
+    )
 
     Box(
         modifier = Modifier
@@ -156,7 +277,9 @@ fun DmChatInfoSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.92f)
+                .statusBarsPadding()
+                .padding(top = 8.dp)
+                .fillMaxHeight(0.94f)
                 .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
                 .background(colors.cardBackground)
                 .clickable(
@@ -168,7 +291,7 @@ fun DmChatInfoSheet(
         ) {
             Box(
                 modifier = Modifier
-                    .padding(top = 10.dp)
+                    .padding(top = 10.dp, bottom = 4.dp)
                     .width(36.dp)
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
@@ -176,255 +299,513 @@ fun DmChatInfoSheet(
                     .align(Alignment.CenterHorizontally)
             )
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, end = 12.dp, top = 10.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = stringResource(R.string.dm_chat_info),
-                    color = colors.primaryText,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f)
-                )
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .pressScaleClickable(onClick = onDismiss),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_close),
-                        contentDescription = stringResource(R.string.dm_cancel),
-                        tint = colors.secondaryText,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-
-            Column(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp)
-                    .padding(bottom = 28.dp)
             ) {
-                if (isDirect) {
-                    DirectIdentity(
-                        name = peer?.displayName ?: peer?.handle ?: "",
-                        handle = peer?.handle,
-                        avatarUrl = peer?.avatarUrl,
-                        isVerified = peer?.isVerified == true,
-                        bio = peer?.bio
-                    )
+                val viewportWidthPx = with(density) { maxWidth.toPx() }
+                var tabBarTopInColumnPx by remember { mutableFloatStateOf(Float.MAX_VALUE) }
 
-                    Spacer(modifier = Modifier.height(18.dp))
+                // Scrollable Body (zIndex 1f), strictly clipped inside sheet below drag handle
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(1f)
+                        .clipToBounds()
+                        .verticalScroll(scrollState)
+                ) {
+                    Spacer(modifier = Modifier.height(topBarHeightDp + 174.dp))
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        val handle = peer?.handle
-                        InfoPill(
-                            iconRes = R.drawable.ic_user,
-                            label = stringResource(R.string.dm_view_profile),
-                            onClick = { if (!handle.isNullOrBlank()) onViewProfile(handle) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        InfoPill(
-                            iconRes = R.drawable.ic_bell_off,
-                            label = if (myParticipant?.isMuted == true) {
-                                stringResource(R.string.dm_unmute_chat)
+                    ChatInfoFourSquircleRow(
+                        isDirect = isDirect,
+                        isAdmin = isAdmin,
+                        isMuted = isMuted,
+                        isRtl = strings.isRtl,
+                        hasSearchAction = messages.any { it.deletedAt == null && it.content.isNotBlank() },
+                        onPrimaryClick = {
+                            if (isDirect) {
+                                onDismiss()
+                            } else if (isAdmin) {
+                                selectedTab = ChatInfoTab.MEMBERS
+                                isAddingMembersOpen = true
+                                selectedMemberIds = emptySet()
                             } else {
-                                stringResource(R.string.dm_mute_chat)
-                            },
-                            onClick = onToggleMute,
-                            modifier = Modifier.weight(1f)
-                        )
-                        InfoPill(
-                            iconRes = R.drawable.ic_pin,
-                            label = if (myParticipant?.isPinned == true) {
-                                stringResource(R.string.dm_unpin_chat)
-                            } else {
-                                stringResource(R.string.dm_pin_chat)
-                            },
-                            onClick = onTogglePin,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                } else {
-                    GroupIdentity(
-                        title = conversation?.title ?: "",
-                        avatarUrl = conversation?.avatarUrl,
-                        memberCount = activeParticipants.size,
-                        isRenaming = isRenaming,
-                        titleDraft = titleDraft,
-                        isUploadingPhoto = isGroupAvatarUploading,
-                        onTitleDraftChange = { titleDraft = it },
-                        onStartRename = {
-                            titleDraft = conversation?.title ?: ""
-                            isRenaming = true
-                        },
-                        onCancelRename = { isRenaming = false },
-                        onConfirmRename = {
-                            val clean = titleDraft.trim()
-                            if (clean.isNotEmpty()) {
-                                onRenameGroup(clean)
-                                isRenaming = false
+                                selectedTab = ChatInfoTab.MEMBERS
                             }
                         },
-                        onPhotoClick = {
+                        onToggleMute = onToggleMute,
+                        onSearchClick = {
+                            isInlineSearchOpen = !isInlineSearchOpen
+                            if (!isInlineSearchOpen) inlineSearchQuery = ""
+                        },
+                        onSecondaryEndClick = {
+                            if (isDirect) {
+                                showOverflowMenu = true
+                            } else {
+                                showLeaveConfirm = true
+                            }
+                        }
+                    )
+
+                    AnimatedVisibility(
+                        visible = isInlineSearchOpen,
+                        enter = expandVertically(tween(180)) + fadeIn(tween(150)),
+                        exit = shrinkVertically(tween(160)) + fadeOut(tween(120))
+                    ) {
+                        ChatInfoInlineSearchCard(
+                            query = inlineSearchQuery,
+                            onQueryChange = { inlineSearchQuery = it },
+                            messages = messages,
+                            isRtl = strings.isRtl,
+                            onSelectMessage = {
+                                isInlineSearchOpen = false
+                                inlineSearchQuery = ""
+                            },
+                            onClose = {
+                                isInlineSearchOpen = false
+                                inlineSearchQuery = ""
+                            }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    ChatInfoDetailsCard(
+                        isDirect = isDirect,
+                        isAdmin = isAdmin,
+                        isPinned = isPinned,
+                        isRtl = strings.isRtl,
+                        peer = peer,
+                        peerFirstLabel = peerFirstLabel,
+                        groupTitle = displayTitle,
+                        memberCount = activeParticipants.size,
+                        detail = detail,
+                        activeWallpaper = ChatWallpaperConfig(),
+                        onViewProfile = { handle ->
+                            onDismiss()
+                            onViewProfile(handle)
+                        },
+                        onTogglePin = onTogglePin,
+                        onOpenWallpaper = onOpenWallpaper?.let { open ->
+                            {
+                                onDismiss()
+                                open()
+                            }
+                        },
+                        onCreateGroupWithPeer = null,
+                        onChangeGroupPhoto = {
                             photoPicker.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                             )
                         }
                     )
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
+                    val tabs = remember(isDirect) {
+                        if (isDirect) {
+                            listOf(ChatInfoTab.MEDIA, ChatInfoTab.FILES, ChatInfoTab.LINKS)
+                        } else {
+                            listOf(ChatInfoTab.MEMBERS, ChatInfoTab.MEDIA, ChatInfoTab.FILES, ChatInfoTab.LINKS)
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .zIndex(4f)
+                            .onGloballyPositioned { coords ->
+                                tabBarTopInColumnPx = coords.positionInParent().y
+                            }
+                    ) {
+                        ChatInfoStickyTabBar(
+                            tabs = tabs,
+                            selectedTab = selectedTab,
+                            isRtl = strings.isRtl,
+                            pageBackground = colors.cardBackground,
+                            onSelectTab = { selectedTab = it },
+                            modifier = Modifier.graphicsLayer {
+                                val threshold = tabBarTopInColumnPx - topBarHeightPx
+                                translationY = if (tabBarTopInColumnPx < Float.MAX_VALUE && scrollState.value > threshold) {
+                                    (scrollState.value - threshold).coerceAtLeast(0f)
+                                } else {
+                                    0f
+                                }
+                            }
+                        )
+                    }
+
+                    ChatInfoTabContent(
+                        selectedTab = selectedTab,
+                        isDirect = isDirect,
+                        isAdmin = isAdmin,
+                        isRtl = strings.isRtl,
+                        currentUserId = currentUserId,
+                        createdBy = conversation?.createdBy,
+                        activeParticipants = activeParticipants,
+                        isAddingMembersOpen = isAddingMembersOpen,
+                        memberQuery = memberQuery,
+                        memberCandidates = memberCandidates,
+                        isSearchingMembers = isSearchingMembers,
+                        isAddingGroupMembers = isAddingGroupMembers,
+                        selectedMemberIds = selectedMemberIds,
+                        sharedMedia = sharedMedia,
+                        sharedFiles = sharedFiles,
+                        sharedLinks = sharedLinks,
+                        onOpenAddMembers = {
+                            isAddingMembersOpen = true
+                            selectedMemberIds = emptySet()
+                        },
+                        onMemberQueryChange = { memberQuery = it },
+                        onToggleMemberSelection = { id ->
+                            selectedMemberIds = if (id in selectedMemberIds) {
+                                selectedMemberIds - id
+                            } else {
+                                selectedMemberIds + id
+                            }
+                        },
+                        onCancelAddMembers = {
+                            isAddingMembersOpen = false
+                            selectedMemberIds = emptySet()
+                        },
+                        onConfirmAddMembers = {
+                            if (selectedMemberIds.isNotEmpty()) {
+                                onAddMembers(selectedMemberIds.toList())
+                                isAddingMembersOpen = false
+                                selectedMemberIds = emptySet()
+                            }
+                        },
+                        onViewProfile = { handle ->
+                            onDismiss()
+                            onViewProfile(handle)
+                        },
+                        onRequestRemoveMember = null,
+                        onOpenMedia = { viewerMediaMessage = it },
+                        onJumpToMessage = null
+                    )
+
+                    Spacer(modifier = Modifier.height(28.dp))
+                }
+
+                // Pinned 56.dp Sheet Top Bar (zIndex 10f)
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .zIndex(10f)
+                        .height(topBarHeightDp)
+                        .drawBehind {
+                            val f = (scrollState.value / collapseRangePx).coerceIn(0f, 1f)
+                            drawRect(color = colors.cardBackground)
+                            if (f > 0.72f) {
+                                val lineAlpha = ((f - 0.72f) / 0.28f).coerceIn(0f, 1f)
+                                drawLine(
+                                    color = colors.hairlineBorder.copy(alpha = lineAlpha),
+                                    start = Offset(0f, size.height),
+                                    end = Offset(size.width, size.height),
+                                    strokeWidth = 0.7.dp.toPx()
+                                )
+                            }
+                        }
+                ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = stringResource(R.string.dm_members),
-                            color = colors.primaryText,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.weight(1f)
+                        HeaderCircleButton(
+                            iconRes = R.drawable.ic_close,
+                            contentDescription = stringResource(R.string.dm_cancel),
+                            onClick = onDismiss,
+                            backgroundColor = colors.surfaceMuted,
+                            iconTint = colors.primaryText
                         )
+                        Spacer(modifier = Modifier.weight(1f))
+                        if (hasEditButton) {
+                            HeaderCircleButton(
+                                iconRes = R.drawable.ic_tg_edit,
+                                contentDescription = stringResource(R.string.dm_info_edit_group_name),
+                                onClick = {
+                                    titleDraft = conversation?.title.orEmpty()
+                                    isRenaming = true
+                                },
+                                backgroundColor = colors.surfaceMuted,
+                                iconTint = colors.primaryText
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                        Box {
+                            HeaderCircleButton(
+                                iconRes = R.drawable.ic_more_vertical,
+                                contentDescription = if (strings.isRtl) "المزيد" else "More",
+                                onClick = { showOverflowMenu = true },
+                                backgroundColor = colors.surfaceMuted,
+                                iconTint = colors.primaryText
+                            )
+                            if (showOverflowMenu) {
+                                ChatInfoOverflowPopup(
+                                    items = overflowItems,
+                                    chatColors = chatColors,
+                                    onDismiss = { showOverflowMenu = false }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Collapsing Hero Avatar + Title + Subtitle (zIndex 11f)
+                val expandedCenterX = viewportWidthPx / 2f
+                val expandedCenterY = topBarHeightPx + expandedTopGapPx + (avatarExpandedPx / 2f)
+                val collapsedCenterX = if (isRtl) {
+                    viewportWidthPx - (backButtonEndPx + avatarCollapsedPx / 2f)
+                } else {
+                    backButtonEndPx + (avatarCollapsedPx / 2f)
+                }
+                val collapsedCenterY = topBarHeightPx / 2f
+                val targetScale = avatarCollapsedPx / avatarExpandedPx
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .zIndex(11f)
+                        .offset {
+                            IntOffset(
+                                x = 0,
+                                y = (topBarHeightPx + expandedTopGapPx).roundToInt()
+                            )
+                        }
+                        .size(avatarExpandedDp)
+                        .graphicsLayer {
+                            val f = (scrollState.value / collapseRangePx).coerceIn(0f, 1f)
+                            val s = 1f - f * (1f - targetScale)
+                            scaleX = s
+                            scaleY = s
+                            translationX = (collapsedCenterX - expandedCenterX) * f
+                            translationY = (collapsedCenterY - expandedCenterY) * f
+                        }
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .softShadow(
+                                color = chatColors.headerShadow,
+                                cornerRadius = 44.dp,
+                                blurRadius = 16.dp,
+                                offsetY = 3.dp
+                            )
+                            .clip(CircleShape)
+                            .background(colors.surfaceMuted)
+                            .border(1.dp, colors.subtleSurfaceBorder, CircleShape)
+                            .then(
+                                if (!isDirect && isAdmin && !isGroupAvatarUploading) {
+                                    Modifier.pressScaleClickable {
+                                        photoPicker.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    }
+                                } else if (isDirect && !peer?.handle.isNullOrBlank()) {
+                                    Modifier.pressScaleClickable {
+                                        peer?.handle?.let { h ->
+                                            onDismiss()
+                                            onViewProfile(h)
+                                        }
+                                    }
+                                } else {
+                                    Modifier
+                                }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (!heroAvatarUrl.isNullOrBlank()) {
+                            AsyncImage(
+                                model = heroAvatarUrl,
+                                contentDescription = displayTitle,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else if (isDirect) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_user),
+                                contentDescription = null,
+                                tint = colors.secondaryText,
+                                modifier = Modifier.size(34.dp)
+                            )
+                        } else {
+                            Text(
+                                text = displayTitle.firstOrNull()?.uppercase() ?: "G",
+                                color = colors.primaryText,
+                                fontSize = 30.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = BuildXFontFamily
+                            )
+                        }
+
+                        if (isGroupAvatarUploading) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Color.Black.copy(alpha = 0.45f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                MarkLoader(
+                                    size = 24.dp,
+                                    isSpinning = true,
+                                    tint = Color.White
+                                )
+                            }
+                        }
+                    }
+
+                    if (!isDirect && isAdmin) {
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(999.dp))
-                                .background(colors.surfaceMuted)
-                                .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(999.dp))
-                                .pressScaleClickable {
-                                    isAddingMembersOpen = !isAddingMembersOpen
-                                    selectedMemberIds = emptySet()
+                                .align(Alignment.BottomEnd)
+                                .size(26.dp)
+                                .graphicsLayer {
+                                    val f = (scrollState.value / collapseRangePx).coerceIn(0f, 1f)
+                                    alpha = (1f - f * 3.5f).coerceIn(0f, 1f)
                                 }
-                                .padding(horizontal = 12.dp, vertical = 7.dp)
+                                .clip(CircleShape)
+                                .background(colors.cardBackground)
+                                .border(1.dp, colors.subtleSurfaceBorder, CircleShape),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = stringResource(R.string.dm_add_members),
-                                color = colors.primaryText,
-                                fontSize = 12.5.sp,
-                                fontWeight = FontWeight.SemiBold
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_camera),
+                                contentDescription = stringResource(R.string.dm_change_group_photo),
+                                tint = colors.primaryText,
+                                modifier = Modifier.size(13.dp)
                             )
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    activeParticipants.forEach { participant ->
-                        ParticipantRow(
-                            participant = participant,
-                            onClick = {
-                                if (!participant.handle.isNullOrBlank()) onViewProfile(participant.handle)
-                            }
-                        )
-                    }
-
-                    if (isAddingMembersOpen) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        AddMembersPicker(
-                            query = memberQuery,
-                            onQueryChange = { memberQuery = it },
-                            candidates = memberCandidates.filterNot { candidate ->
-                                activeParticipants.any { it.userId == candidate.id } || candidate.id == currentUserId
-                            },
-                            selectedIds = selectedMemberIds,
-                            isSearching = isSearchingMembers,
-                            isSubmitting = isAddingGroupMembers,
-                            onToggle = { id ->
-                                selectedMemberIds = if (id in selectedMemberIds) {
-                                    selectedMemberIds - id
-                                } else {
-                                    selectedMemberIds + id
-                                }
-                            },
-                            onCancel = {
-                                isAddingMembersOpen = false
-                                selectedMemberIds = emptySet()
-                            },
-                            onConfirm = {
-                                if (selectedMemberIds.isNotEmpty()) {
-                                    onAddMembers(selectedMemberIds.toList())
-                                    isAddingMembersOpen = false
-                                    selectedMemberIds = emptySet()
-                                }
-                            }
-                        )
-                    }
                 }
 
-                Spacer(modifier = Modifier.height(22.dp))
-
-                Text(
-                    text = stringResource(R.string.dm_shared_media),
-                    color = colors.primaryText,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                SharedMediaGrid(media = sharedMedia)
-
-                Spacer(modifier = Modifier.height(22.dp))
-
-                HorizontalDivider(color = colors.hairlineBorder)
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                if (onOpenWallpaper != null) {
-                    InfoRow(
-                        iconRes = R.drawable.ic_wallpaper,
-                        label = stringResource(R.string.dm_wallpaper),
-                        onClick = {
-                            onDismiss()
-                            onOpenWallpaper()
+                // Expanded Centered Hero Title + Subtitle
+                val heroTextExpandedTopPx = topBarHeightPx + expandedTopGapPx + avatarExpandedPx + titleTopGapPx
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .zIndex(11f)
+                        .fillMaxWidth()
+                        .offset { IntOffset(0, heroTextExpandedTopPx.roundToInt()) }
+                        .padding(horizontal = 24.dp)
+                        .graphicsLayer {
+                            val f = (scrollState.value / collapseRangePx).coerceIn(0f, 1f)
+                            alpha = (1f - (f / 0.65f)).coerceIn(0f, 1f)
+                            translationY = -f * with(density) { 44.dp.toPx() }
+                            val s = 1f - 0.14f * f
+                            scaleX = s
+                            scaleY = s
                         }
-                    )
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = displayTitle,
+                            color = colors.primaryText,
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = BuildXFontFamily,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (isDirect && peer?.isVerified == true) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            VerifiedBadge(size = 18.dp)
+                        }
+                    }
+                    if (heroSubtitle.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = heroSubtitle,
+                            color = colors.secondaryText,
+                            fontSize = 13.5.sp,
+                            fontFamily = BuildXFontFamily,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
 
-                InfoRow(
-                    iconRes = R.drawable.ic_trash,
-                    label = stringResource(R.string.dm_clear_history),
-                    onClick = { showClearConfirm = true }
-                )
-
-                if (isDirect) {
-                    InfoRow(
-                        iconRes = R.drawable.ic_flag,
-                        label = stringResource(
-                            R.string.dm_report_user,
-                            peer?.displayName ?: peer?.handle ?: ""
-                        ),
-                        onClick = { showReport = true }
-                    )
-                    InfoRow(
-                        iconRes = R.drawable.ic_block,
-                        label = stringResource(
-                            R.string.dm_block_user,
-                            peer?.displayName ?: peer?.handle ?: ""
-                        ),
-                        tint = DestructiveRed,
-                        onClick = { showBlockConfirm = true }
-                    )
-                } else {
-                    InfoRow(
-                        iconRes = R.drawable.ic_leave_group,
-                        label = stringResource(R.string.dm_leave_group),
-                        tint = DestructiveRed,
-                        onClick = onLeaveGroup
-                    )
+                // Collapsed Top-Bar Title + Subtitle
+                val collapsedTitleStartDp = with(density) {
+                    (backButtonEndPx + avatarCollapsedPx + collapsedAvatarToTitleGapPx).toDp()
+                }
+                Column(
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier
+                        .zIndex(11f)
+                        .fillMaxWidth()
+                        .height(topBarHeightDp)
+                        .padding(start = collapsedTitleStartDp, end = collapsedTitleEndDp)
+                        .graphicsLayer {
+                            val f = (scrollState.value / collapseRangePx).coerceIn(0f, 1f)
+                            val fadeIn = ((f - 0.55f) / 0.45f).coerceIn(0f, 1f)
+                            alpha = fadeIn
+                            translationY = (1f - fadeIn) * with(density) { 10.dp.toPx() }
+                        }
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = displayTitle,
+                            color = colors.primaryText,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = BuildXFontFamily,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (isDirect && peer?.isVerified == true) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            VerifiedBadge(size = 14.dp)
+                        }
+                    }
+                    if (heroSubtitle.isNotBlank()) {
+                        Text(
+                            text = heroSubtitle,
+                            color = colors.secondaryText,
+                            fontSize = 12.sp,
+                            fontFamily = BuildXFontFamily,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
+    }
+
+    viewerMediaMessage?.let { mediaMessage ->
+        DmMediaViewerDialog(
+            message = mediaMessage,
+            onDismiss = { viewerMediaMessage = null },
+            onShowMessage = { msg ->
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
+    if (isRenaming) {
+        ChatInfoRenameGroupDialog(
+            titleDraft = titleDraft,
+            isRtl = strings.isRtl,
+            onTitleDraftChange = { titleDraft = it },
+            onConfirm = {
+                val clean = titleDraft.trim()
+                if (clean.isNotEmpty()) {
+                    onRenameGroup(clean)
+                    isRenaming = false
+                }
+            },
+            onDismiss = { isRenaming = false }
+        )
     }
 
     if (showReport) {
@@ -455,7 +836,7 @@ fun DmChatInfoSheet(
     }
 
     if (showClearConfirm) {
-        InfoConfirmDialog(
+        ChatInfoConfirmDialog(
             title = stringResource(R.string.dm_clear_history_title),
             body = stringResource(R.string.dm_clear_history_body),
             confirmLabel = stringResource(R.string.dm_clear_history),
@@ -466,796 +847,17 @@ fun DmChatInfoSheet(
             onDismiss = { showClearConfirm = false }
         )
     }
-}
 
-@Composable
-private fun DirectIdentity(
-    name: String,
-    handle: String?,
-    avatarUrl: String?,
-    isVerified: Boolean,
-    bio: String?
-) {
-    val colors = BuildXTheme.colors
-
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .size(84.dp)
-                .clip(CircleShape)
-                .background(colors.surfaceMuted)
-                .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
-        ) {
-            if (!avatarUrl.isNullOrBlank()) {
-                AsyncImage(
-                    model = avatarUrl,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_user),
-                    contentDescription = null,
-                    tint = colors.secondaryText,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .align(Alignment.Center)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = name,
-                color = colors.primaryText,
-                fontSize = 19.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (isVerified) {
-                Spacer(modifier = Modifier.width(5.dp))
-                VerifiedBadge(size = 16.dp)
-            }
-        }
-
-        if (!handle.isNullOrBlank()) {
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = "@$handle",
-                color = colors.secondaryText,
-                fontSize = 13.sp,
-                maxLines = 1
-            )
-        }
-
-        if (!bio.isNullOrBlank()) {
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = bio,
-                color = colors.secondaryText,
-                fontSize = 13.5.sp,
-                lineHeight = 19.sp,
-                textAlign = TextAlign.Center,
-                maxLines = 4,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 300.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun GroupIdentity(
-    title: String,
-    avatarUrl: String?,
-    memberCount: Int,
-    isRenaming: Boolean,
-    titleDraft: String,
-    isUploadingPhoto: Boolean,
-    onTitleDraftChange: (String) -> Unit,
-    onStartRename: () -> Unit,
-    onCancelRename: () -> Unit,
-    onConfirmRename: () -> Unit,
-    onPhotoClick: () -> Unit
-) {
-    val colors = BuildXTheme.colors
-    val strings = BuildXTheme.strings
-
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(modifier = Modifier.size(84.dp)) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(CircleShape)
-                    .background(colors.surfaceMuted)
-                    .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
-            ) {
-                if (!avatarUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = avatarUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Text(
-                        text = title.firstOrNull()?.uppercase() ?: "G",
-                        color = colors.primaryText,
-                        fontSize = 30.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-                }
-
-                if (isUploadingPhoto) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(colors.pageBackground.copy(alpha = 0.55f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        MarkLoader(
-                            size = 24.dp,
-                            isSpinning = true,
-                            tint = colors.primaryBlue
-                        )
-                    }
-                }
-            }
-
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(colors.primaryText)
-                    .border(2.dp, colors.pageBackground, CircleShape)
-                    .pressScaleClickable(enabled = !isUploadingPhoto, onClick = onPhotoClick),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_camera),
-                    contentDescription = stringResource(R.string.dm_change_group_photo),
-                    tint = colors.pageBackground,
-                    modifier = Modifier.size(15.dp)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        if (isRenaming) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(colors.surfaceMuted)
-                    .padding(start = 14.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(modifier = Modifier.weight(1f)) {
-                    if (titleDraft.isEmpty()) {
-                        Text(
-                            text = stringResource(R.string.dm_group_name_hint),
-                            color = colors.secondaryText,
-                            fontSize = 16.sp
-                        )
-                    }
-                    BasicTextField(
-                        value = titleDraft,
-                        onValueChange = onTitleDraftChange,
-                        singleLine = true,
-                        textStyle = TextStyle(
-                            color = colors.primaryText,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            textAlign = if (isRtlText(titleDraft, strings.isRtl)) TextAlign.Right else TextAlign.Left
-                        ),
-                        cursorBrush = SolidColor(colors.primaryBlue),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .pressScaleClickable(enabled = titleDraft.isNotBlank(), onClick = onConfirmRename),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_check),
-                        contentDescription = stringResource(R.string.dm_save),
-                        tint = colors.primaryBlue,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .pressScaleClickable(onClick = onCancelRename),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_close),
-                        contentDescription = stringResource(R.string.dm_cancel),
-                        tint = colors.secondaryText,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-        } else {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = title.ifBlank { stringResource(R.string.dm_new_group) },
-                    color = colors.primaryText,
-                    fontSize = 19.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .pressScaleClickable(onClick = onStartRename),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_pencil),
-                        contentDescription = stringResource(R.string.dm_rename_group),
-                        tint = colors.secondaryText,
-                        modifier = Modifier.size(15.dp)
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(2.dp))
-
-        Text(
-            text = stringResource(R.string.dm_members_count, memberCount),
-            color = colors.secondaryText,
-            fontSize = 13.sp
+    if (showLeaveConfirm) {
+        ChatInfoConfirmDialog(
+            title = stringResource(R.string.dm_leave_group_title),
+            body = stringResource(R.string.dm_leave_group_message),
+            confirmLabel = stringResource(R.string.dm_leave_group),
+            onConfirm = {
+                showLeaveConfirm = false
+                onLeaveGroup()
+            },
+            onDismiss = { showLeaveConfirm = false }
         )
-    }
-}
-
-@Composable
-private fun InfoPill(
-    iconRes: Int,
-    label: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val colors = BuildXTheme.colors
-    Row(
-        modifier = modifier
-            .height(38.dp)
-            .clip(RoundedCornerShape(19.dp))
-            .background(colors.surfaceMuted)
-            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(19.dp))
-            .pressScaleClickable(onClick = onClick),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            painter = painterResource(id = iconRes),
-            contentDescription = null,
-            tint = colors.primaryText,
-            modifier = Modifier.size(15.dp)
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = label,
-            color = colors.primaryText,
-            fontSize = 12.5.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@Composable
-private fun ParticipantRow(
-    participant: DmParticipant,
-    onClick: () -> Unit
-) {
-    val colors = BuildXTheme.colors
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(colors.surfaceMuted)
-                .border(0.8.dp, colors.subtleSurfaceBorder, CircleShape)
-        ) {
-            if (!participant.avatarUrl.isNullOrBlank()) {
-                AsyncImage(
-                    model = participant.avatarUrl,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                Text(
-                    text = participant.displayName?.firstOrNull()?.uppercase()
-                        ?: participant.handle?.firstOrNull()?.uppercase()
-                        ?: "U",
-                    color = colors.primaryText,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.align(Alignment.Center)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = participant.displayName?.takeIf { it.isNotBlank() } ?: participant.handle ?: "",
-                    color = colors.primaryText,
-                    fontSize = 14.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-                if (participant.isVerified) {
-                    Spacer(modifier = Modifier.width(4.dp))
-                    VerifiedBadge(size = 13.dp)
-                }
-            }
-            if (!participant.handle.isNullOrBlank()) {
-                Text(
-                    text = "@${participant.handle}",
-                    color = colors.secondaryText,
-                    fontSize = 12.sp,
-                    maxLines = 1
-                )
-            }
-        }
-
-        if (participant.role == "admin" || participant.role == "owner") {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(colors.surfaceMuted)
-                    .padding(horizontal = 8.dp, vertical = 3.dp)
-            ) {
-                Text(
-                    text = stringResource(R.string.dm_admin),
-                    color = colors.secondaryText,
-                    fontSize = 10.5.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun AddMembersPicker(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    candidates: List<PersonSearchResult>,
-    selectedIds: Set<String>,
-    isSearching: Boolean,
-    isSubmitting: Boolean,
-    onToggle: (String) -> Unit,
-    onCancel: () -> Unit,
-    onConfirm: () -> Unit
-) {
-    val colors = BuildXTheme.colors
-    val strings = BuildXTheme.strings
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(colors.surfaceMuted)
-            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(18.dp))
-            .padding(12.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(40.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .background(colors.cardBackground)
-                .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(20.dp))
-                .padding(horizontal = 12.dp),
-            contentAlignment = Alignment.CenterStart
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_search),
-                    contentDescription = null,
-                    tint = colors.secondaryText,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(modifier = Modifier.weight(1f)) {
-                    if (query.isEmpty()) {
-                        Text(
-                            text = stringResource(R.string.dm_search_people),
-                            color = colors.secondaryText,
-                            fontSize = 13.5.sp
-                        )
-                    }
-                    BasicTextField(
-                        value = query,
-                        onValueChange = onQueryChange,
-                        singleLine = true,
-                        textStyle = TextStyle(
-                            color = colors.primaryText,
-                            fontSize = 13.5.sp,
-                            textAlign = if (isRtlText(query, strings.isRtl)) TextAlign.Right else TextAlign.Left
-                        ),
-                        cursorBrush = SolidColor(colors.primaryBlue),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        if (isSearching) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                MarkLoader(
-                    size = 20.dp,
-                    isSpinning = true,
-                    tint = colors.primaryBlue
-                )
-            }
-        } else if (candidates.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = stringResource(R.string.dm_no_search_results_title),
-                    color = colors.secondaryText,
-                    fontSize = 13.sp
-                )
-            }
-        } else {
-            candidates.take(6).forEach { candidate ->
-                val selected = candidate.id in selectedIds
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable { onToggle(candidate.id) }
-                        .padding(vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(22.dp)
-                            .clip(CircleShape)
-                            .background(if (selected) colors.primaryBlue else Color.Transparent)
-                            .border(
-                                width = 1.dp,
-                                color = if (selected) colors.primaryBlue else colors.subtleSurfaceBorder,
-                                shape = CircleShape
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (selected) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_check),
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(13.dp)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(10.dp))
-
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(colors.cardBackground)
-                    ) {
-                        if (!candidate.avatarUrl.isNullOrBlank()) {
-                            AsyncImage(
-                                model = candidate.avatarUrl,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            Text(
-                                text = candidate.displayName.firstOrNull()?.uppercase() ?: "U",
-                                color = colors.primaryText,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.align(Alignment.Center)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(10.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = candidate.displayName,
-                            color = colors.primaryText,
-                            fontSize = 13.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (candidate.username.isNotBlank()) {
-                            Text(
-                                text = "@${candidate.username}",
-                                color = colors.secondaryText,
-                                fontSize = 11.5.sp,
-                                maxLines = 1
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .pressScaleClickable(onClick = onCancel)
-                    .padding(horizontal = 14.dp, vertical = 8.dp)
-            ) {
-                Text(
-                    text = stringResource(R.string.dm_cancel),
-                    color = colors.secondaryText,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-            Spacer(modifier = Modifier.width(4.dp))
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(
-                        if (selectedIds.isEmpty() || isSubmitting) {
-                            colors.primaryBlue.copy(alpha = 0.35f)
-                        } else {
-                            colors.primaryBlue
-                        }
-                    )
-                    .pressScaleClickable(
-                        enabled = selectedIds.isNotEmpty() && !isSubmitting,
-                        onClick = onConfirm
-                    )
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-            ) {
-                if (isSubmitting) {
-                    MarkLoader(
-                        size = 14.dp,
-                        isSpinning = true,
-                        tint = Color.White
-                    )
-                } else {
-                    Text(
-                        text = stringResource(R.string.dm_add_members),
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SharedMediaGrid(media: List<DmMessage>) {
-    val colors = BuildXTheme.colors
-    val context = LocalContext.current
-    var viewingMediaMessage by remember { mutableStateOf<DmMessage?>(null) }
-
-    if (media.isEmpty()) {
-        Text(
-            text = stringResource(R.string.dm_no_shared_media),
-            color = colors.secondaryText,
-            fontSize = 13.sp
-        )
-        return
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        media.take(9).chunked(3).forEach { rowMedia ->
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                rowMedia.forEach { message ->
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .aspectRatio(1f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(colors.surfaceMuted)
-                            .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(12.dp))
-                            .pressScaleClickable {
-                                viewingMediaMessage = message
-                            }
-                    ) {
-                        AsyncImage(
-                            model = message.attachmentPath,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                }
-                repeat(3 - rowMedia.size) {
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-            }
-        }
-    }
-
-    viewingMediaMessage?.let { mediaMessage ->
-        DmMediaViewerDialog(
-            message = mediaMessage,
-            onDismiss = { viewingMediaMessage = null },
-            onShowMessage = { msg ->
-                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-            }
-        )
-    }
-}
-
-@Composable
-private fun InfoRow(
-    iconRes: Int,
-    label: String,
-    onClick: () -> Unit,
-    tint: Color? = null
-) {
-    val colors = BuildXTheme.colors
-    val contentColor = tint ?: colors.primaryText
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            painter = painterResource(id = iconRes),
-            contentDescription = null,
-            tint = contentColor,
-            modifier = Modifier.size(19.dp)
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = label,
-            color = contentColor,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@Composable
-private fun InfoConfirmDialog(
-    title: String,
-    body: String,
-    confirmLabel: String,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    val colors = BuildXTheme.colors
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 28.dp)
-                .softShadow(
-                    color = colors.composerShadowColor,
-                    cornerRadius = 22.dp,
-                    blurRadius = 30.dp,
-                    offsetY = 10.dp
-                )
-                .clip(RoundedCornerShape(22.dp))
-                .background(colors.cardBackground)
-                .padding(22.dp)
-        ) {
-            Text(
-                text = title,
-                color = colors.primaryText,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = body,
-                color = colors.secondaryText,
-                fontSize = 14.sp,
-                lineHeight = 20.sp
-            )
-            Spacer(modifier = Modifier.height(20.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp)
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(DestructiveRed)
-                    .pressScaleClickable(onClick = onConfirm),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = confirmLabel,
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp)
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(colors.surfaceMuted)
-                    .pressScaleClickable(onClick = onDismiss),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = stringResource(R.string.dm_cancel),
-                    color = colors.primaryText,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        }
     }
 }
