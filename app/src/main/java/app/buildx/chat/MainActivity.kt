@@ -72,6 +72,7 @@ import app.buildx.chat.ui.screens.AuthScreen
 import app.buildx.chat.ui.screens.BlockedAccountsScreen
 import app.buildx.chat.ui.screens.ChatAndDrawerScreen
 import app.buildx.chat.ui.chat.ChatInfoScreen
+import app.buildx.chat.ui.chat.ChatMotion
 import app.buildx.chat.ui.chat.ChatWallpaperPickerScreen
 import app.buildx.chat.ui.screens.DmInboxScreen
 import app.buildx.chat.ui.screens.DmConversationScreen
@@ -428,27 +429,27 @@ fun BuildXRoot(
                     enterTransition = {
                         slideIntoContainer(
                             towards = AnimatedContentTransitionScope.SlideDirection.Start,
-                            animationSpec = tween(250, easing = FastOutSlowInEasing)
+                            animationSpec = ChatMotion.fastOutBezierTween()
                         )
                     },
                     exitTransition = {
                         slideOutOfContainer(
                             towards = AnimatedContentTransitionScope.SlideDirection.Start,
-                            animationSpec = tween(250, easing = FastOutSlowInEasing),
+                            animationSpec = ChatMotion.fastOutBezierTween(),
                             targetOffset = { fullWidth -> fullWidth / 4 }
                         )
                     },
                     popEnterTransition = {
                         slideIntoContainer(
                             towards = AnimatedContentTransitionScope.SlideDirection.End,
-                            animationSpec = tween(250, easing = FastOutSlowInEasing),
+                            animationSpec = ChatMotion.fastOutBezierTween(),
                             initialOffset = { fullWidth -> fullWidth / 4 }
                         )
                     },
                     popExitTransition = {
                         slideOutOfContainer(
                             towards = AnimatedContentTransitionScope.SlideDirection.End,
-                            animationSpec = tween(250, easing = FastOutSlowInEasing)
+                            animationSpec = ChatMotion.fastOutBezierTween()
                         )
                     }
                 ) {
@@ -458,7 +459,7 @@ fun BuildXRoot(
                         popEnterTransition = {
                             slideIntoContainer(
                                 towards = AnimatedContentTransitionScope.SlideDirection.End,
-                                animationSpec = tween(250, easing = FastOutSlowInEasing),
+                                animationSpec = ChatMotion.fastOutBezierTween(),
                                 initialOffset = { fullWidth -> fullWidth / 4 }
                             )
                         }

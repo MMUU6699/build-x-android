@@ -1,7 +1,11 @@
 package app.buildx.chat.ui.theme
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.BlurMaskFilter
 import android.graphics.Paint
+import android.view.Window
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
@@ -10,6 +14,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -20,6 +25,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -28,6 +34,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 import app.buildx.chat.R
 import app.buildx.chat.data.model.AppAppearance
 import app.buildx.chat.data.model.AppLanguage
@@ -743,6 +750,18 @@ fun BuildXTheme(
     val buildXStrings = if (useArabic) ArabicBuildXStrings else EnglishBuildXStrings
     val layoutDirection = if (useArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
 
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = findActivityWindow(view.context)
+            if (window != null) {
+                val controller = WindowCompat.getInsetsController(window, view)
+                controller.isAppearanceLightStatusBars = !useDark
+                controller.isAppearanceLightNavigationBars = !useDark
+            }
+        }
+    }
+
     val materialColorScheme = if (useDark) {
         darkColorScheme(
             primary = buildXColors.primaryBlue,
@@ -850,4 +869,11 @@ fun isRtlText(text: String, defaultRtl: Boolean = false): Boolean {
         }
     }
     return defaultRtl
+}
+
+private tailrec fun findActivityWindow(context: Context?): Window? = when (context) {
+    null -> null
+    is Activity -> context.window
+    is ContextWrapper -> findActivityWindow(context.baseContext)
+    else -> null
 }

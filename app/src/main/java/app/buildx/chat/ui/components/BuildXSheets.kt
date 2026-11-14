@@ -27,8 +27,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +39,8 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
@@ -56,8 +60,10 @@ import androidx.compose.ui.window.PopupPositionProvider
 import app.buildx.chat.R
 import app.buildx.chat.data.model.ReasoningStep
 import app.buildx.chat.data.model.StagedAttachment
+import app.buildx.chat.ui.chat.ChatMotion
 import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
+import kotlinx.coroutines.launch
 import app.buildx.chat.ui.theme.isRtlText
 import app.buildx.chat.ui.theme.softShadow
 import coil.compose.AsyncImage
@@ -229,11 +235,36 @@ fun ActionMenuPopup(
     modifier: Modifier = Modifier,
     popupWidth: Dp = 188.dp,
     borderWidth: Dp = 1.dp,
-    shadowBlurRadius: Dp = 22.dp
+    shadowBlurRadius: Dp = 22.dp,
+    transformOrigin: TransformOrigin = TransformOrigin(0.5f, 0f)
 ) {
     val colors = BuildXTheme.colors
+    val scaleAnim = remember { Animatable(ChatMotion.ContextMenuInitialScale) }
+    val alphaAnim = remember { Animatable(0f) }
+
+    LaunchedEffect(Unit) {
+        launch {
+            scaleAnim.animateTo(
+                targetValue = 1f,
+                animationSpec = ChatMotion.interactiveSpring()
+            )
+        }
+        launch {
+            alphaAnim.animateTo(
+                targetValue = 1f,
+                animationSpec = ChatMotion.interactiveSpring()
+            )
+        }
+    }
+
     Column(
         modifier = modifier
+            .graphicsLayer {
+                scaleX = scaleAnim.value
+                scaleY = scaleAnim.value
+                alpha = alphaAnim.value
+                this.transformOrigin = transformOrigin
+            }
             .width(popupWidth)
             .softShadow(
                 color = colors.composerShadowColor,
@@ -263,7 +294,8 @@ fun ActionMenuPopup(
  * at screen edges in RTL/LTR, with keyboards open, or under high font scaling.
  */
 class BubblePopupPositionProvider(
-    private val isRtl: Boolean
+    private val isRtl: Boolean,
+    private val onDirectionResolved: ((placedAbove: Boolean) -> Unit)? = null
 ) : PopupPositionProvider {
     override fun calculatePosition(
         anchorBounds: IntRect,
@@ -279,7 +311,9 @@ class BubblePopupPositionProvider(
         }
 
         val spaceBelow = windowSize.height - anchorBounds.bottom
-        val y = if (spaceBelow >= popupContentSize.height + marginPx || spaceBelow >= anchorBounds.top) {
+        val placeBelow = spaceBelow >= popupContentSize.height + marginPx || spaceBelow >= anchorBounds.top
+        onDirectionResolved?.invoke(!placeBelow)
+        val y = if (placeBelow) {
             anchorBounds.bottom + 8
         } else {
             anchorBounds.top - popupContentSize.height - 8
@@ -335,7 +369,7 @@ private fun OverflowMenuRow(
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Start,
-                style = TextStyle(textDirection = TextDirection.Content),
+                style = TextStyle(textDirection = TextDirection.ContentOrLtr),
                 modifier = Modifier.weight(1f)
             )
             Icon(

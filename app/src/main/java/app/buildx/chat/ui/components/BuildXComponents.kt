@@ -65,6 +65,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
@@ -84,6 +85,7 @@ import app.buildx.chat.data.model.ChatMessage
 import app.buildx.chat.data.model.ChatMode
 import app.buildx.chat.data.model.ReasoningStep
 import app.buildx.chat.data.model.StagedAttachment
+import app.buildx.chat.ui.chat.ChatMotion
 import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.isRtlText
@@ -94,8 +96,8 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Press-scale modifier (0.97x over 100ms, no Material ripple).
- * Applied BEFORE clip/background/border so borders are never clipped or invalidated by layer scaling.
+ * Press-scale modifier driven by Telegram-grade spring physics (damping = 0.72f, stiffness = 480f)
+ * inside Modifier.graphicsLayer so layout/measure passes are completely bypassed.
  */
 @Composable
 fun Modifier.pressScaleClickable(
@@ -105,12 +107,15 @@ fun Modifier.pressScaleClickable(
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.96f else 1f,
-        animationSpec = tween(durationMillis = 100),
+        targetValue = if (isPressed) 0.94f else 1f,
+        animationSpec = ChatMotion.interactiveSpring(),
         label = "pressScale"
     )
     return this
-        .scale(scale)
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
         .clickable(
             interactionSource = interactionSource,
             indication = null,

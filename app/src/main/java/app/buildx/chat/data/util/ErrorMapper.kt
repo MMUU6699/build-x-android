@@ -423,6 +423,44 @@ object ErrorMapper {
             )
         }
 
+        // Messaging RPC domain codes
+        if (lower.contains("pin_limit_reached")) {
+            return MappedError(
+                message = if (isArabic) "يمكنك تثبيت 3 محادثات كحد أقصى." else "You can pin up to 3 conversations.",
+                isRetryable = false,
+                stringResId = R.string.error_bad_request,
+                statusCode = statusCode ?: 400
+            )
+        }
+
+        if (lower.contains("not_a_participant") || lower.contains("not_a_member") || lower.contains("not_admin")) {
+            return MappedError(
+                message = if (isArabic) "تم رفض الوصول. ليس لديك إذن لتنفيذ هذا الإجراء." else "Access denied. You do not have permission for this action.",
+                isRetryable = false,
+                stringResId = R.string.error_forbidden,
+                statusCode = statusCode ?: 403
+            )
+        }
+
+        if (lower.contains("empty_message") || lower.contains("invalid_group_title") || lower.contains("invalid_title") || lower.contains("message_too_long")) {
+            return MappedError(
+                message = if (isArabic) "طلب غير صالح. يرجى التحقق من المدخلات والمحاولة مرة أخرى." else "Invalid request. Please check your input and try again.",
+                isRetryable = false,
+                stringResId = R.string.error_bad_request,
+                statusCode = statusCode ?: 400
+            )
+        }
+
+        if (text.contains("PGRST202")) {
+            return MappedError(
+                message = if (isArabic) "خطأ في الخادم. يرجى المحاولة بعد قليل." else "Server error. Please try again in a few moments.",
+                isRetryable = true,
+                actionLabel = if (isArabic) "إعادة المحاولة" else "Retry",
+                stringResId = R.string.error_server,
+                statusCode = statusCode ?: 500
+            )
+        }
+
         return null
     }
 
