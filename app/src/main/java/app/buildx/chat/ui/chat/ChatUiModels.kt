@@ -40,7 +40,11 @@ sealed interface ChatListItem {
         val formattedTime: String,
         val deliveryStatus: ChatDeliveryStatus,
         val replyPreview: DmReplyPreview?,
-        val seenParticipants: List<DmParticipant>,
+        val seenParticipants: List<DmParticipant> = emptyList(),
+        val seenByNames: List<String> = emptyList(),
+        val isSeenByPeer: Boolean = false,
+        val reactions: Map<String, Int> = emptyMap(),
+        val myReaction: String? = null,
         val resolvedSenderName: String? = null,
         val resolvedSenderHandle: String? = null,
         val senderIsVerified: Boolean = false,
@@ -57,6 +61,15 @@ sealed interface ChatListItem {
         val isGroupedWithNext: Boolean
             get() = position == ChatBubblePosition.FIRST || position == ChatBubblePosition.MIDDLE
     }
+
+    @Immutable
+    data class SystemEventItem(
+        override val stableKey: String,
+        val message: DmMessage,
+        val text: String,
+        val createdAtIso: String,
+        val isolatedText: String = text
+    ) : ChatListItem
 
     @Immutable
     data class DateSeparator(

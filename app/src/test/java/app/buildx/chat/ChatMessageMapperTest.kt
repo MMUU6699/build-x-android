@@ -588,4 +588,228 @@ class ChatMessageMapperTest {
         assertEquals(3, counters.unreadConversationsCount)
         assertEquals(2, counters.groupsCount)
     }
+
+    @Test
+    fun `created the group system events map to SystemEventItem and break clusters on both sides`() {
+        val participants = listOf(
+            DmParticipant(userId = "me", displayName = "Mustafa"),
+            DmParticipant(userId = "u2", displayName = "Sara")
+        )
+        val messages = listOf(
+            msg("m1", "me", "2026-11-12T10:00:00Z", content = "Hey team"),
+            // Legacy/mislabeled messageType="text" with bare "created the group" content
+            DmMessage(
+                id = "sys-created",
+                conversationId = "conv-1",
+                senderId = "me",
+                senderDisplayName = "Mustafa",
+                messageType = "text",
+                content = "created the group",
+                createdAt = "2026-11-12T10:00:10Z"
+            ),
+            msg("m2", "me", "2026-11-12T10:00:20Z", content = "Welcome!"),
+            DmMessage(
+                id = "sys-joined",
+                conversationId = "conv-1",
+                senderId = "u2",
+                messageType = "system",
+                content = "joined the group",
+                createdAt = "2026-11-12T10:00:30Z"
+            ),
+            DmMessage(
+                id = "sys-already-prefixed",
+                conversationId = "conv-1",
+                senderId = "me",
+                senderDisplayName = "Mustafa",
+                messageType = "system",
+                content = "Mustafa created the group",
+                createdAt = "2026-11-12T10:00:35Z"
+            ),
+            DmMessage(
+                id = "sys-no-sender",
+                conversationId = "conv-1",
+                senderId = "unknown",
+                messageType = "system",
+                content = "created the group",
+                createdAt = "2026-11-12T10:00:40Z"
+            )
+        )
+
+        val reversed = ChatMessageMapper.mapToReversedListItems(
+            messages = messages,
+            currentUserId = "me",
+            isDirect = false,
+            participants = participants,
+            peerIntro = null,
+            defaultRtl = false,
+            zoneId = ZoneOffset.UTC,
+            locale = Locale.US
+        )
+
+        val messageItems = reversed.filterIsInstance<ChatListItem.MessageItem>()
+        assertEquals(2, messageItems.size)
+        assertTrue(messageItems.none { it.message.id.startsWith("sys-") })
+
+        val m1 = messageItems.first { it.message.id == "m1" }
+        val m2 = messageItems.first { it.message.id == "m2" }
+        assertEquals(ChatBubblePosition.SINGLE, m1.position)
+        assertTrue(m1.isFirstInCluster)
+        assertTrue(m1.isLastInCluster)
+        assertEquals(ChatBubblePosition.SINGLE, m2.position)
+        assertTrue(m2.isFirstInCluster)
+        assertTrue(m2.isLastInCluster)
+
+        val systemById = reversed.filterIsInstance<ChatListItem.SystemEventItem>().associateBy { it.message.id }
+        assertEquals(4, systemById.size)
+        assertEquals("Mustafa created the group", systemById.getValue("sys-created").text)
+        assertEquals("Sara joined the group", systemById.getValue("sys-joined").text)
+        assertEquals("Mustafa created the group", systemById.getValue("sys-already-prefixed").text)
+        assertEquals("created the group", systemById.getValue("sys-no-sender").text)
+    }
+
+    @Test
+    fun `read receipts drive seenByNames and isSeenByPeer without orphaned seenParticipants`() {
+        val peer = DmParticipant(
+            userId = "peer",
+            displayName = "Sara",
+            lastReadMessageId = "m2",
+            lastReadAt = null
+        )
+        val messages = listOf(
+            msg("m1", "me", "2026-11-12T10:00:00Z", status = DmSendStatus.SENT),
+            msg("m2", "me", "2026-11-12T10:01:00Z", status = DmSendStatus.SENT),
+            msg("m3", "me", "2026-11-12T10:02:00Z", status = DmSendStatus.SENT)
+        )
+
+        val items = ChatMessageMapper.mapToReversedListItems(
+            messages = messages,
+            currentUserId = "me",
+            isDirect = true,
+            participants = listOf(peer),
+            peerIntro = null,
+            defaultRtl = false,
+            zoneId = ZoneOffset.UTC
+        ).filterIsInstance<ChatListItem.MessageItem>().associateBy { it.message.id }
+
+        val m1 = items.getValue("m1")
+        val m2 = items.getValue("m2")
+        val m3 = items.getValue("m3")
+
+        assertEquals(ChatDeliveryStatus.READ, m1.deliveryStatus)
+        assertTrue(m1.isSeenByPeer)
+        assertEquals(listOf("Sara"), m1.seenByNames)
+        assertTrue(m1.seenParticipants.isEmpty())
+
+        assertEquals(ChatDeliveryStatus.READ, m2.deliveryStatus)
+        assertTrue(m2.isSeenByPeer)
+        assertEquals(listOf("Sara"), m2.seenByNames)
+        assertTrue(m2.seenParticipants.isEmpty())
+
+        assertEquals(ChatDeliveryStatus.SENT, m3.deliveryStatus)
+        assertFalse(m3.isSeenByPeer)
+        assertTrue(m3.seenByNames.isEmpty())
+        assertTrue(m3.seenParticipants.isEmpty())
+    }
+
+    @Test
+    fun `reaction toggle updates counts and maps onto MessageItem`() {
+        val initialCounts = mapOf("m1" to mapOf("🔥" to 2))
+        val initialMine = emptyMap<String, String>()
+
+        val (afterAddCounts, afterAddMine) = ChatMessageMapper.toggleMessageReaction(
+            reactionsByMessageId = initialCounts,
+            myReactionsByMessageId = initialMine,
+            messageId = "m1",
+            emoji = "👍"
+        )
+        assertEquals(mapOf("🔥" to 2, "👍" to 1), afterAddCounts["m1"])
+        assertEquals("👍", afterAddMine["m1"])
+
+        val (afterSwitchCounts, afterSwitchMine) = ChatMessageMapper.toggleMessageReaction(
+            reactionsByMessageId = afterAddCounts,
+            myReactionsByMessageId = afterAddMine,
+            messageId = "m1",
+            emoji = "❤️"
+        )
+        assertEquals(mapOf("🔥" to 2, "❤️" to 1), afterSwitchCounts["m1"])
+        assertEquals("❤️", afterSwitchMine["m1"])
+
+        val (afterRemoveCounts, afterRemoveMine) = ChatMessageMapper.toggleMessageReaction(
+            reactionsByMessageId = afterSwitchCounts,
+            myReactionsByMessageId = afterSwitchMine,
+            messageId = "m1",
+            emoji = "❤️"
+        )
+        assertEquals(mapOf("🔥" to 2), afterRemoveCounts["m1"])
+        assertNull(afterRemoveMine["m1"])
+
+        val items = ChatMessageMapper.mapToReversedListItems(
+            messages = listOf(msg("m1", "peer", "2026-11-12T10:00:00Z")),
+            currentUserId = "me",
+            isDirect = true,
+            participants = emptyList(),
+            peerIntro = null,
+            defaultRtl = false,
+            zoneId = ZoneOffset.UTC,
+            reactionsByMessageId = afterSwitchCounts,
+            myReactionsByMessageId = afterSwitchMine
+        ).filterIsInstance<ChatListItem.MessageItem>()
+
+        assertEquals(mapOf("🔥" to 2, "❤️" to 1), items.single().reactions)
+        assertEquals("❤️", items.single().myReaction)
+    }
+
+    @Test
+    fun `realtime coalescing skips self echoes and already applied updates`() {
+        val local = listOf(
+            msg("temp-1", "me", "2026-11-12T10:00:00Z", clientTempId = "c-1", status = DmSendStatus.SENDING),
+            DmMessage(
+                id = "m-2",
+                conversationId = "conv-1",
+                senderId = "me",
+                content = "Edited text",
+                editedAt = "2026-11-12T10:05:00Z",
+                createdAt = "2026-11-12T10:01:00Z"
+            )
+        )
+
+        assertTrue(
+            ChatMessageMapper.shouldSkipRealtimeMessageInsert(
+                messageId = "server-1",
+                clientTempId = "c-1",
+                senderId = "me",
+                currentUserId = "me",
+                currentMessages = local,
+                knownClientTempIds = setOf("c-1")
+            )
+        )
+        assertFalse(
+            ChatMessageMapper.shouldSkipRealtimeMessageInsert(
+                messageId = "peer-msg-9",
+                clientTempId = "peer-c-9",
+                senderId = "peer",
+                currentUserId = "me",
+                currentMessages = local,
+                knownClientTempIds = setOf("c-1")
+            )
+        )
+        assertTrue(
+            ChatMessageMapper.shouldSkipRealtimeMessageUpdate(
+                messageId = "m-2",
+                content = "Edited text",
+                editedAt = "2026-11-12T10:05:00Z",
+                deletedAt = null,
+                currentMessages = local
+            )
+        )
+        assertFalse(
+            ChatMessageMapper.shouldSkipRealtimeMessageUpdate(
+                messageId = "m-2",
+                content = "New remote edit",
+                editedAt = "2026-11-12T10:06:00Z",
+                deletedAt = null,
+                currentMessages = local
+            )
+        )
+    }
 }

@@ -213,6 +213,8 @@ data class BuildXUiState(
     val dmEditingMessage: DmMessage? = null,
     val activeDmMessageMenuId: String? = null,
     val forwardingDmMessage: DmMessage? = null,
+    val dmMessageReactions: Map<String, Map<String, Int>> = emptyMap(),
+    val dmMyMessageReactions: Map<String, String> = emptyMap(),
     val isCreateGroupSheetOpen: Boolean = false,
     val groupCreationSelectedUserIds: Set<String> = emptySet(),
     val groupCreationTitle: String = "",
@@ -2938,7 +2940,10 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
     private var dmAllInboxCache: List<DmInboxItem> = emptyList()
     private val dmDetailCache = mutableMapOf<String, DmConversationDetail>()
     private val dmMessagesCache = mutableMapOf<String, List<DmMessage>>()
+    private val dmReactionsCache = mutableMapOf<String, Pair<Map<String, Map<String, Int>>, Map<String, String>>>()
     private val dmFailedStagedAttachmentByTempId = mutableMapOf<String, StagedAttachment>()
+    private val inFlightClientTempIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private val recentlySentClientTempIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     private fun applyInboxMutation(
         extraStateTransform: (BuildXUiState) -> BuildXUiState = { it },
@@ -3075,9 +3080,49 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 launch {
                     msgFlow.collect { action ->
-                        scheduleRealtimeInboxRefresh()
-                        if (action is PostgresAction.Insert) {
-                            dispatchIncomingDmNotification(action.record)
+                        val activeConvId = _uiState.value.activeDmConversationId
+                        when (action) {
+                            is PostgresAction.Insert -> {
+                                val record = action.record
+                                val convId = record["conversation_id"]?.jsonPrimitive?.contentOrNull
+                                val senderId = record["sender_id"]?.jsonPrimitive?.contentOrNull
+                                val clientTempId = record["client_temp_id"]?.jsonPrimitive?.contentOrNull
+                                val msgId = record["id"]?.jsonPrimitive?.contentOrNull
+                                val knownTemps = synchronized(inFlightClientTempIds) { inFlightClientTempIds.toSet() } +
+                                    synchronized(recentlySentClientTempIds) { recentlySentClientTempIds.toSet() }
+                                val isOwnActiveEcho = senderId == uid &&
+                                    convId != null &&
+                                    convId == activeConvId &&
+                                    ChatMessageMapper.shouldSkipRealtimeMessageInsert(
+                                        messageId = msgId,
+                                        clientTempId = clientTempId,
+                                        senderId = senderId,
+                                        currentUserId = uid,
+                                        currentMessages = dmMessagesCache[convId] ?: _uiState.value.dmMessages,
+                                        knownClientTempIds = knownTemps
+                                    )
+                                if (!isOwnActiveEcho) {
+                                    scheduleRealtimeInboxRefresh()
+                                }
+                                dispatchIncomingDmNotification(record)
+                            }
+                            is PostgresAction.Update -> {
+                                val record = action.record
+                                val convId = record["conversation_id"]?.jsonPrimitive?.contentOrNull
+                                val msgId = record["id"]?.jsonPrimitive?.contentOrNull
+                                val skip = convId != null && convId == activeConvId &&
+                                    ChatMessageMapper.shouldSkipRealtimeMessageUpdate(
+                                        messageId = msgId,
+                                        content = record["content"]?.jsonPrimitive?.contentOrNull,
+                                        editedAt = record["edited_at"]?.jsonPrimitive?.contentOrNull,
+                                        deletedAt = record["deleted_at"]?.jsonPrimitive?.contentOrNull,
+                                        currentMessages = dmMessagesCache[convId] ?: _uiState.value.dmMessages
+                                    )
+                                if (!skip) {
+                                    scheduleRealtimeInboxRefresh()
+                                }
+                            }
+                            else -> scheduleRealtimeInboxRefresh()
                         }
                     }
                 }
@@ -3450,6 +3495,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         val cachedWallpaper = repository.getEffectiveWallpaperLocal(conversationId)
         val seededDetail = resolveInitialDmDetail(conversationId)
         val cachedMessages = dmMessagesCache[conversationId].orEmpty()
+        val cachedReactions = dmReactionsCache[conversationId]
 
         applyInboxMutation(
             extraStateTransform = { state ->
@@ -3470,7 +3516,9 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                         dmReplyingToMessage = null,
                         dmEditingMessage = null,
                         activeDmMessageMenuId = null,
-                        lastOptimisticMessageId = null
+                        lastOptimisticMessageId = null,
+                        dmMessageReactions = cachedReactions?.first ?: emptyMap(),
+                        dmMyMessageReactions = cachedReactions?.second ?: emptyMap()
                     )
                 } else {
                     state.copy(
@@ -3592,6 +3640,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
 
                 val typingFlow = channel.broadcastFlow<JsonObject>(event = "typing")
                 val readReceiptFlow = channel.broadcastFlow<JsonObject>(event = "read_receipt")
+                val reactionFlow = channel.broadcastFlow<JsonObject>(event = "reaction")
 
                 dmRoomChannel = channel
                 channel.subscribe()
@@ -3607,7 +3656,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 val scheduleDetailRefresh: () -> Unit = {
                     dmRoomDetailRefreshJob?.cancel()
                     dmRoomDetailRefreshJob = launch {
-                        delay(100L)
+                        delay(120L)
                         repository.getDmConversationDetail(conversationId).onSuccess { detail ->
                             applyDetailMonotonic(conversationId, detail)
                         }
@@ -3615,10 +3664,38 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 launch {
-                    msgFlow.collect {
+                    msgFlow.collect { action ->
+                        val myUid = repository.currentUserId()
+                        val localMsgs = dmMessagesCache[conversationId] ?: _uiState.value.dmMessages
+                        val knownTemps = synchronized(inFlightClientTempIds) { inFlightClientTempIds.toSet() } +
+                            synchronized(recentlySentClientTempIds) { recentlySentClientTempIds.toSet() }
+                        val shouldSkip = when (action) {
+                            is PostgresAction.Insert -> ChatMessageMapper.shouldSkipRealtimeMessageInsert(
+                                messageId = action.record["id"]?.jsonPrimitive?.contentOrNull,
+                                clientTempId = action.record["client_temp_id"]?.jsonPrimitive?.contentOrNull,
+                                senderId = action.record["sender_id"]?.jsonPrimitive?.contentOrNull,
+                                currentUserId = myUid,
+                                currentMessages = localMsgs,
+                                knownClientTempIds = knownTemps
+                            )
+                            is PostgresAction.Update -> ChatMessageMapper.shouldSkipRealtimeMessageUpdate(
+                                messageId = action.record["id"]?.jsonPrimitive?.contentOrNull,
+                                content = action.record["content"]?.jsonPrimitive?.contentOrNull,
+                                editedAt = action.record["edited_at"]?.jsonPrimitive?.contentOrNull,
+                                deletedAt = action.record["deleted_at"]?.jsonPrimitive?.contentOrNull,
+                                currentMessages = localMsgs
+                            )
+                            is PostgresAction.Delete -> {
+                                val deletedId = action.oldRecord["id"]?.jsonPrimitive?.contentOrNull
+                                deletedId != null && localMsgs.none { it.id == deletedId }
+                            }
+                            else -> false
+                        }
+                        if (shouldSkip) return@collect
+
                         dmRoomMsgRefreshJob?.cancel()
                         dmRoomMsgRefreshJob = launch {
-                            delay(80L)
+                            delay(120L)
                             repository.getDmMessages(conversationId).onSuccess { msgs ->
                                 applyInboxMutation(
                                     extraStateTransform = { state ->
@@ -3640,16 +3717,19 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                                             currentLocalMessages = state.dmMessages
                                         )
                                         dmMessagesCache[conversationId] = reconciled
-                                        state.copy(dmMessages = reconciled)
+                                        if (reconciled != state.dmMessages) {
+                                            state.copy(dmMessages = reconciled)
+                                        } else {
+                                            state
+                                        }
                                     }
                                 ) { list ->
                                     list.map { item ->
-                                        if (item.effectiveId == conversationId) {
+                                        if (item.effectiveId == conversationId && (item.unreadCount != 0 || item.isMarkedUnread)) {
                                             item.copy(unreadCount = 0, isMarkedUnread = false)
                                         } else item
                                     }
                                 }
-                                val myUid = repository.currentUserId()
                                 val latest = msgs.lastOrNull()
                                 if (latest != null && latest.senderId != myUid && latest.id != lastAutoMarkedReadId) {
                                     lastAutoMarkedReadId = latest.id
@@ -3662,11 +3742,91 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 launch {
-                    partFlow.collect { scheduleDetailRefresh() }
+                    partFlow.collect { action ->
+                        if (action is PostgresAction.Update) {
+                            val record = action.record
+                            val partUserId = record["user_id"]?.jsonPrimitive?.contentOrNull
+                            val myUid = repository.currentUserId()
+                            if (partUserId != null && partUserId == myUid) {
+                                return@collect
+                            }
+                            val readAt = record["last_read_at"]?.jsonPrimitive?.contentOrNull
+                            val readMsgId = record["last_read_message_id"]?.jsonPrimitive?.contentOrNull
+                            if (!partUserId.isNullOrBlank() && !readAt.isNullOrBlank()) {
+                                val existingDetail = _uiState.value.activeDmDetail
+                                val hasParticipant = existingDetail?.participants?.any { it.userId == partUserId } == true
+                                if (hasParticipant) {
+                                    _uiState.update { state ->
+                                        val detail = state.activeDmDetail ?: return@update state
+                                        val updatedParticipants = ChatMessageMapper.mergeParticipantReadState(
+                                            currentParticipants = detail.participants,
+                                            readerUserId = partUserId,
+                                            readAtIso = readAt,
+                                            lastReadMessageId = readMsgId
+                                        )
+                                        val nextDetail = detail.copy(participants = updatedParticipants)
+                                        dmDetailCache[conversationId] = nextDetail
+                                        state.copy(activeDmDetail = nextDetail)
+                                    }
+                                    return@collect
+                                }
+                            }
+                        }
+                        scheduleDetailRefresh()
+                    }
                 }
 
                 launch {
-                    convFlow.collect { scheduleDetailRefresh() }
+                    convFlow.collect { action ->
+                        if (action is PostgresAction.Update) {
+                            val record = action.record
+                            val currentConv = _uiState.value.activeDmDetail?.conversation
+                            if (currentConv != null) {
+                                val nextTitle = record["title"]?.jsonPrimitive?.contentOrNull
+                                val nextAvatar = record["avatar_url"]?.jsonPrimitive?.contentOrNull
+                                val nextPinnedId = record["pinned_message_id"]?.jsonPrimitive?.contentOrNull
+                                if (nextTitle == currentConv.title &&
+                                    nextAvatar == currentConv.avatarUrl &&
+                                    nextPinnedId == currentConv.pinnedMessageId
+                                ) {
+                                    return@collect
+                                }
+                            }
+                        }
+                        scheduleDetailRefresh()
+                    }
+                }
+
+                launch {
+                    reactionFlow.collect { payload ->
+                        val senderId = payload["user_id"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                        val targetConv = payload["conversation_id"]?.jsonPrimitive?.contentOrNull
+                        if (!targetConv.isNullOrBlank() && targetConv != conversationId) return@collect
+                        val myUid = repository.currentUserId()
+                        if (senderId.isBlank() || senderId == myUid) return@collect
+                        val messageId = payload["message_id"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                        val emoji = payload["emoji"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                        val prevEmoji = payload["prev_emoji"]?.jsonPrimitive?.contentOrNull
+                        val removed = payload["removed"]?.jsonPrimitive?.booleanOrNull ?: false
+                        _uiState.update { state ->
+                            val currentCounts = (state.dmMessageReactions[messageId] ?: emptyMap()).toMutableMap()
+                            if (removed) {
+                                val nextVal = (currentCounts[emoji] ?: 1) - 1
+                                if (nextVal <= 0) currentCounts.remove(emoji) else currentCounts[emoji] = nextVal
+                            } else {
+                                if (!prevEmoji.isNullOrBlank() && prevEmoji != emoji) {
+                                    val prevVal = (currentCounts[prevEmoji] ?: 1) - 1
+                                    if (prevVal <= 0) currentCounts.remove(prevEmoji) else currentCounts[prevEmoji] = prevVal
+                                }
+                                currentCounts[emoji] = (currentCounts[emoji] ?: 0) + 1
+                            }
+                            val nextReactions = state.dmMessageReactions.toMutableMap()
+                            if (currentCounts.isEmpty()) nextReactions.remove(messageId) else nextReactions[messageId] = currentCounts.toMap()
+                            val immutable = nextReactions.toMap()
+                            dmReactionsCache[conversationId] = immutable to state.dmMyMessageReactions
+                            state.copy(dmMessageReactions = immutable)
+                        }
+                    }
                 }
 
                 launch {
@@ -3818,10 +3978,71 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                     dmEditingMessage = null,
                     activeDmMessageMenuId = null,
                     justSentClientTempIds = emptySet(),
-                    lastOptimisticMessageId = null
+                    lastOptimisticMessageId = null,
+                    dmMessageReactions = emptyMap(),
+                    dmMyMessageReactions = emptyMap()
                 )
             }
             loadDmInbox()
+        }
+    }
+
+    fun toggleDmMessageReaction(messageId: String, emoji: String) {
+        if (messageId.isBlank() || emoji.isBlank()) return
+        val convId = _uiState.value.activeDmConversationId
+        val prevEmoji = _uiState.value.dmMyMessageReactions[messageId]
+        val removed = prevEmoji == emoji
+        _uiState.update { state ->
+            val (nextReactions, nextMyReactions) = ChatMessageMapper.toggleMessageReaction(
+                reactionsByMessageId = state.dmMessageReactions,
+                myReactionsByMessageId = state.dmMyMessageReactions,
+                messageId = messageId,
+                emoji = emoji
+            )
+            if (!convId.isNullOrBlank()) {
+                dmReactionsCache[convId] = nextReactions to nextMyReactions
+            }
+            state.copy(
+                dmMessageReactions = nextReactions,
+                dmMyMessageReactions = nextMyReactions
+            )
+        }
+        if (!convId.isNullOrBlank()) {
+            broadcastDmReaction(
+                conversationId = convId,
+                messageId = messageId,
+                emoji = emoji,
+                prevEmoji = prevEmoji,
+                removed = removed
+            )
+        }
+    }
+
+    private fun broadcastDmReaction(
+        conversationId: String,
+        messageId: String,
+        emoji: String,
+        prevEmoji: String?,
+        removed: Boolean
+    ) {
+        val channel = dmRoomChannel ?: return
+        val uid = repository.currentUserId() ?: return
+        viewModelScope.launch {
+            try {
+                channel.broadcast(
+                    event = "reaction",
+                    message = buildJsonObject {
+                        put("user_id", uid)
+                        put("conversation_id", conversationId)
+                        put("message_id", messageId)
+                        put("emoji", emoji)
+                        if (!prevEmoji.isNullOrBlank()) {
+                            put("prev_emoji", prevEmoji)
+                        }
+                        put("removed", removed)
+                    }
+                )
+            } catch (_: Exception) {}
         }
     }
 
@@ -3981,8 +4202,10 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         val myProfile = state.profile
+        val senderUid = myProfile?.id?.takeIf { it.isNotBlank() } ?: repository.currentUserId().orEmpty()
         val clientTempId = UUID.randomUUID().toString()
         val tempId = UUID.randomUUID().toString()
+        inFlightClientTempIds.add(clientTempId)
         val lastKnownMsgMs = state.dmMessages.lastOrNull()?.createdAt?.let {
             ChatMessageMapper.parseInstantMillis(it)
         } ?: 0L
@@ -3995,7 +4218,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         val optimisticMsg = DmMessage(
             id = tempId,
             conversationId = conversationId,
-            senderId = myProfile?.id ?: "",
+            senderId = senderUid,
             senderUsername = myProfile?.username,
             senderHandle = myProfile?.handle,
             senderDisplayName = myProfile?.displayName,
@@ -4076,6 +4299,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
         if (failedMessage.localSendStatus != DmSendStatus.FAILED) return
         val tempId = failedMessage.id
         val clientTempId = failedMessage.clientTempId ?: tempId
+        inFlightClientTempIds.add(clientTempId)
         val retryStaged = dmFailedStagedAttachmentByTempId[tempId]?.let { listOf(it) }.orEmpty()
 
         _uiState.update { state ->
@@ -4131,6 +4355,7 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 size = first.sizeBytes
                 val uploadResult = repository.uploadDmAttachment(first)
                 if (uploadResult.isFailure) {
+                    inFlightClientTempIds.remove(clientTempId)
                     markOptimisticMessageFailed(conversationId, tempId, clientTempId)
                     showSnackbar(mapError(uploadResult.exceptionOrNull() ?: IllegalStateException("Upload failed")))
                     return@launch
@@ -4148,11 +4373,22 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                 clientTempId = clientTempId
             ).fold(
                 onSuccess = { realMsg ->
+                    inFlightClientTempIds.remove(clientTempId)
+                    recentlySentClientTempIds.add(clientTempId)
+                    if (recentlySentClientTempIds.size > 64) {
+                        synchronized(recentlySentClientTempIds) {
+                            if (recentlySentClientTempIds.size > 64) {
+                                recentlySentClientTempIds.clear()
+                                recentlySentClientTempIds.add(clientTempId)
+                            }
+                        }
+                    }
                     dmFailedStagedAttachmentByTempId.remove(tempId)
                     val finalized = realMsg.copy(
                         clientTempId = realMsg.clientTempId ?: clientTempId,
                         localSendStatus = DmSendStatus.SENT
                     )
+                    val hadInboxRow = _uiState.value.dmInboxItems.any { it.effectiveId == conversationId }
                     applyInboxMutation(
                         extraStateTransform = { state ->
                             val base = dmMessagesCache[conversationId] ?: state.dmMessages
@@ -4160,8 +4396,21 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                                 if (m.clientTempId == clientTempId || m.id == tempId) finalized else m
                             }
                             dmMessagesCache[conversationId] = updated
+                            val migratedReactions = state.dmMessageReactions.toMutableMap().apply {
+                                remove(tempId)?.let { putIfAbsent(finalized.id, it) }
+                                remove(clientTempId)?.let { putIfAbsent(finalized.id, it) }
+                            }.toMap()
+                            val migratedMyReactions = state.dmMyMessageReactions.toMutableMap().apply {
+                                remove(tempId)?.let { putIfAbsent(finalized.id, it) }
+                                remove(clientTempId)?.let { putIfAbsent(finalized.id, it) }
+                            }.toMap()
+                            if (migratedReactions != state.dmMessageReactions || migratedMyReactions != state.dmMyMessageReactions) {
+                                dmReactionsCache[conversationId] = migratedReactions to migratedMyReactions
+                            }
                             state.copy(
-                                dmMessages = if (state.activeDmConversationId == conversationId) updated else state.dmMessages
+                                dmMessages = if (state.activeDmConversationId == conversationId) updated else state.dmMessages,
+                                dmMessageReactions = if (state.activeDmConversationId == conversationId) migratedReactions else state.dmMessageReactions,
+                                dmMyMessageReactions = if (state.activeDmConversationId == conversationId) migratedMyReactions else state.dmMyMessageReactions
                             )
                         }
                     ) { list ->
@@ -4169,17 +4418,30 @@ class BuildXViewModel(application: Application) : AndroidViewModel(application) 
                             if (item.effectiveId == conversationId) {
                                 item.copy(
                                     lastMessageId = finalized.id,
+                                    lastMessageText = finalized.content.ifBlank { item.lastMessageText },
+                                    lastMessageType = finalized.messageType,
+                                    lastMessageSenderId = finalized.senderId,
                                     lastMessageAt = finalized.createdAt,
                                     lastActivityAt = finalized.createdAt,
+                                    lastMessage = item.lastMessage?.copy(
+                                        id = finalized.id,
+                                        senderId = finalized.senderId,
+                                        messageType = finalized.messageType,
+                                        content = finalized.content,
+                                        createdAt = finalized.createdAt
+                                    ),
                                     unreadCount = 0,
                                     isMarkedUnread = false
                                 )
                             } else item
                         }
                     }
-                    loadDmInbox()
+                    if (!hadInboxRow) {
+                        loadDmInbox()
+                    }
                 },
                 onFailure = {
+                    inFlightClientTempIds.remove(clientTempId)
                     markOptimisticMessageFailed(conversationId, tempId, clientTempId)
                 }
             )
