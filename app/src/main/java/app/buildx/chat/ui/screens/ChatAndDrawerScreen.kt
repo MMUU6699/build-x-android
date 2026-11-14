@@ -24,17 +24,22 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -48,6 +53,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -58,6 +64,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
@@ -67,6 +78,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -80,6 +92,14 @@ import app.buildx.chat.data.model.ChatMode
 import app.buildx.chat.data.model.Conversation
 import app.buildx.chat.data.model.MainSurfacePane
 import app.buildx.chat.data.model.ReasoningStep
+import app.buildx.chat.ui.chat.ChatBidiFormatter
+import app.buildx.chat.ui.chat.ChatDimens
+import app.buildx.chat.ui.chat.ChatGlassTokens
+import app.buildx.chat.ui.chat.ChatMotion
+import app.buildx.chat.ui.chat.UpdateStatusBarAppearance
+import app.buildx.chat.ui.chat.compatRenderEffectBlur
+import app.buildx.chat.ui.chat.rememberReduceMotion
+import app.buildx.chat.ui.chat.toChatColors
 import app.buildx.chat.ui.components.ActionCapsule
 import app.buildx.chat.ui.components.ActionMenuItem
 import app.buildx.chat.ui.components.ActionMenuPopup
@@ -101,6 +121,7 @@ import app.buildx.chat.ui.components.VoiceDictationBar
 import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.isRtlText
+import app.buildx.chat.ui.theme.softShadow
 import app.buildx.chat.ui.viewmodel.BuildXUiState
 
 /**
@@ -171,6 +192,22 @@ fun ChatAndDrawerScreen(
     val colors = BuildXTheme.colors
     val focusManager = LocalFocusManager.current
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val reduceMotion = rememberReduceMotion()
+    UpdateStatusBarAppearance(isLightSurface = colors.pageBackground.luminance() > 0.5f)
+
+    val isOverflowVisible = uiState.isOverflowMenuOpen &&
+        !uiState.isIncognito &&
+        uiState.activeSurfacePane == MainSurfacePane.CHAT
+    val hasModalOverlay = isOverflowVisible ||
+        (uiState.isModePopupOpen && !uiState.isIncognito && uiState.activeSurfacePane == MainSurfacePane.CHAT) ||
+        uiState.activeStepsSheetMessage != null ||
+        uiState.isAttachmentSheetOpen ||
+        uiState.activeSelectTextMessage != null
+    val modalBackdropBlurDp by animateDpAsState(
+        targetValue = if (hasModalOverlay && !reduceMotion) ChatGlassTokens.MenuBlurRadius * 0.45f else 0.dp,
+        animationSpec = ChatMotion.fastOutBezierTween(200),
+        label = "chatModalBackdropBlur"
+    )
 
     BoxWithConstraints(
         modifier = modifier
@@ -264,6 +301,7 @@ fun ChatAndDrawerScreen(
                 MainSurfacePane.CHAT -> {
                     MainChatSurface(
                         uiState = uiState,
+                        modalBlurDp = modalBackdropBlurDp,
                         onMenuClick = {
                             focusManager.clearFocus()
                             onToggleDrawer(true)
@@ -372,11 +410,16 @@ fun ChatAndDrawerScreen(
                 }
             }
 
-            // S5 Anchored Header Overflow Menu Popup
-            if (uiState.isOverflowMenuOpen && !uiState.isIncognito && uiState.activeSurfacePane == MainSurfacePane.CHAT) {
+            // S5 Anchored Header Overflow Menu Popup (spring-overshoot + scrim)
+            AnimatedVisibility(
+                visible = isOverflowVisible,
+                enter = fadeIn(ChatMotion.fastOutBezierTween(160)),
+                exit = fadeOut(ChatMotion.fastOutBezierTween(140))
+            ) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .background(colors.scrimColor.copy(alpha = 0.16f))
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
@@ -385,17 +428,32 @@ fun ChatAndDrawerScreen(
                         }
                 ) {
                     val activeConv = uiState.conversations.firstOrNull { it.id == uiState.activeConversationId }
-                    HeaderOverflowPopup(
-                        isPinned = activeConv?.pinned == true,
-                        onShareLink = onShareConversationLink,
-                        onTogglePin = onTogglePinConversation,
-                        onRename = onOpenRenameDialog,
-                        onDelete = onOpenDeleteDialog,
+                    Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .statusBarsPadding()
                             .padding(top = 62.dp, end = 20.dp)
-                    )
+                            .animateEnterExit(
+                                enter = scaleIn(
+                                    animationSpec = if (reduceMotion) tween(120) else ChatMotion.interactiveSpring(),
+                                    initialScale = 0.86f,
+                                    transformOrigin = TransformOrigin(if (isRtl) 0f else 1f, 0f)
+                                ),
+                                exit = scaleOut(
+                                    animationSpec = ChatMotion.fastOutBezierTween(130),
+                                    targetScale = 0.90f,
+                                    transformOrigin = TransformOrigin(if (isRtl) 0f else 1f, 0f)
+                                )
+                            )
+                    ) {
+                        HeaderOverflowPopup(
+                            isPinned = activeConv?.pinned == true,
+                            onShareLink = onShareConversationLink,
+                            onTogglePin = onTogglePinConversation,
+                            onRename = onOpenRenameDialog,
+                            onDelete = onOpenDeleteDialog
+                        )
+                    }
                 }
             }
         }
@@ -404,8 +462,10 @@ fun ChatAndDrawerScreen(
         val stepsForSheet = uiState.activeStepsSheetMessage
         AnimatedVisibility(
             visible = stepsForSheet != null,
-            enter = fadeIn(tween(220)) + slideInVertically(tween(240)) { it / 3 },
-            exit = fadeOut(tween(180)) + slideOutVertically(tween(200)) { it / 3 }
+            enter = fadeIn(ChatMotion.fastOutBezierTween(200)) +
+                slideInVertically(if (reduceMotion) tween(160) else ChatMotion.layoutGestureSpring()) { it / 3 },
+            exit = fadeOut(ChatMotion.fastOutBezierTween(170)) +
+                slideOutVertically(ChatMotion.fastOutBezierTween(190)) { it / 3 }
         ) {
             Box(
                 modifier = Modifier
@@ -436,8 +496,10 @@ fun ChatAndDrawerScreen(
         // S6 Attachment Bottom Sheet over 30% scrim
         AnimatedVisibility(
             visible = uiState.isAttachmentSheetOpen,
-            enter = fadeIn(tween(240)) + slideInVertically(tween(240)) { it / 2 },
-            exit = fadeOut(tween(200)) + slideOutVertically(tween(200)) { it / 2 }
+            enter = fadeIn(ChatMotion.fastOutBezierTween(220)) +
+                slideInVertically(if (reduceMotion) tween(160) else ChatMotion.layoutGestureSpring()) { it / 2 },
+            exit = fadeOut(ChatMotion.fastOutBezierTween(180)) +
+                slideOutVertically(ChatMotion.fastOutBezierTween(190)) { it / 2 }
         ) {
             Box(
                 modifier = Modifier
@@ -474,8 +536,10 @@ fun ChatAndDrawerScreen(
         val selectText = uiState.activeSelectTextMessage
         AnimatedVisibility(
             visible = selectText != null,
-            enter = fadeIn(tween(220)) + slideInVertically(tween(240)) { it / 3 },
-            exit = fadeOut(tween(180)) + slideOutVertically(tween(200)) { it / 3 }
+            enter = fadeIn(ChatMotion.fastOutBezierTween(200)) +
+                slideInVertically(if (reduceMotion) tween(160) else ChatMotion.layoutGestureSpring()) { it / 3 },
+            exit = fadeOut(ChatMotion.fastOutBezierTween(170)) +
+                slideOutVertically(ChatMotion.fastOutBezierTween(190)) { it / 3 }
         ) {
             Box(
                 modifier = Modifier
@@ -509,6 +573,7 @@ fun ChatAndDrawerScreen(
 @Composable
 private fun MainChatSurface(
     uiState: BuildXUiState,
+    modalBlurDp: Dp = 0.dp,
     onMenuClick: () -> Unit,
     onNewChatClick: () -> Unit,
     onMoreClick: () -> Unit,
@@ -538,10 +603,25 @@ private fun MainChatSurface(
     onOpenSelectText: (String) -> Unit
 ) {
     val colors = BuildXTheme.colors
+    val chatColors = colors.toChatColors()
     val strings = BuildXTheme.strings
+    val density = LocalDensity.current
+    val reduceMotion = rememberReduceMotion()
     val hasMessages = uiState.messages.isNotEmpty()
     val listState = rememberLazyListState()
     val focusRequester = remember { FocusRequester() }
+    var headerHeightPx by remember { mutableIntStateOf(0) }
+    var composerHeightPx by remember { mutableIntStateOf(0) }
+    val isScrolled by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
+        }
+    }
+    val headerShadowBlur by animateDpAsState(
+        targetValue = if (isScrolled) ChatDimens.HeaderShadowBlurScrolled else 0.dp,
+        animationSpec = ChatMotion.fastOutBezierTween(200),
+        label = "mainChatHeaderShadow"
+    )
 
     LaunchedEffect(listState.isScrollInProgress) {
         if (listState.isScrollInProgress) {
@@ -569,254 +649,325 @@ private fun MainChatSurface(
         modifier = Modifier
             .fillMaxSize()
             .background(colors.pageBackground)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .imePadding()
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize()
+        // Underlying content (edge-to-edge message scroll behind floating glass header & composer)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .compatRenderEffectBlur(modalBlurDp)
         ) {
-            // Header bar (inset 20dp horizontal)
-            Row(
+            // S1/S9 Center Brand Mark (fades out in 250ms when chat starts)
+            androidx.compose.animation.AnimatedVisibility(
+                visible = !hasMessages,
+                enter = fadeIn(tween(250)),
+                exit = fadeOut(tween(250)),
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .align(Alignment.Center)
+                    .statusBarsPadding()
+                    .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+                    .padding(top = 56.dp, bottom = 76.dp)
             ) {
-                HeaderCircleButton(
-                    iconRes = R.drawable.ic_menu,
-                    contentDescription = "Menu",
-                    onClick = onMenuClick
-                )
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                // Title + optional "Incognito chat" subtitle
-                Column(modifier = Modifier.weight(1f)) {
-                    val displayTitle = if (hasMessages) {
-                        uiState.activeConversationTitle
-                            .removePrefix("محادثة:")
-                            .removePrefix("محادثة :")
-                            .trim()
-                            .ifEmpty { uiState.activeConversationTitle }
-                    } else {
-                        strings.appName
-                    }
-
-                    AnimatedContent(
-                        targetState = displayTitle,
-                        transitionSpec = {
-                            fadeIn(tween(220)).togetherWith(fadeOut(tween(180)))
-                        },
-                        label = "headerTitleCrossfade"
-                    ) { titleText ->
-                        Text(
-                            text = titleText,
-                            color = colors.primaryText,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Start
-                        )
-                    }
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(horizontal = 32.dp)
+                ) {
+                    MarkLoader(
+                        size = 74.dp,
+                        isSpinning = false
+                    )
                     if (uiState.isIncognito) {
+                        Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = strings.incognitoSubtitle,
+                            text = strings.incognitoEmptyNotice,
                             color = colors.secondaryText,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.Medium,
-                            textAlign = TextAlign.Start
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
+            }
 
-                Spacer(modifier = Modifier.width(12.dp))
-
-                // Right side: empty on S1 Home (unless conversation exists), crossfades into ActionCapsule on S3 Chat
-                AnimatedContent(
-                    targetState = Pair(uiState.isIncognito, hasMessages),
-                    transitionSpec = {
-                        fadeIn(tween(220)).togetherWith(fadeOut(tween(180)))
-                    },
-                    label = "headerRightCrossfade"
-                ) { (incognito, inChat) ->
-                    when {
-                        incognito -> {
-                            HeaderCircleButton(
-                                iconRes = R.drawable.ic_incognito,
-                                contentDescription = "Exit incognito",
-                                onClick = onNewChatClick,
-                                backgroundColor = colors.primaryText,
-                                iconTint = colors.pageBackground
+            // S3 Conversation Messages (scrolls smoothly beneath floating glass header & composer)
+            if (hasMessages) {
+                val topInsetDp = with(density) { headerHeightPx.toDp() }.coerceAtLeast(68.dp)
+                val bottomInsetDp = with(density) { composerHeightPx.toDp() }.coerceAtLeast(80.dp)
+                LazyColumn(
+                    state = listState,
+                    contentPadding = PaddingValues(
+                        start = 16.dp,
+                        end = 16.dp,
+                        top = topInsetDp + 12.dp,
+                        bottom = bottomInsetDp + 16.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    val lastAssistantId = uiState.messages.lastOrNull { it.role != "user" }?.id
+                    items(uiState.messages, key = { it.id }) { msg ->
+                        if (msg.role == "user") {
+                            UserBubble(
+                                message = msg,
+                                isMenuOpen = uiState.activeUserMessageMenuId == msg.id,
+                                isEditing = uiState.editingMessageId == msg.id,
+                                editingText = if (uiState.editingMessageId == msg.id) uiState.editingMessageText else msg.content,
+                                isStreaming = uiState.isStreaming,
+                                onBubbleClick = { onToggleUserMessageMenu(msg.id) },
+                                onDismissMenu = { onDismissAllMessageMenus() },
+                                onCopy = {
+                                    onCopyMessage(msg.content)
+                                    onDismissAllMessageMenus()
+                                },
+                                onStartEdit = {
+                                    onStartEditMessage(msg.id)
+                                    onDismissAllMessageMenus()
+                                },
+                                onCancelEdit = { onCancelEditMessage() },
+                                onSendEdit = { newText -> onSendEditMessage(msg.id, newText) },
+                                onResend = {
+                                    onResendUserMessage(msg)
+                                    onDismissAllMessageMenus()
+                                },
+                                onSelectText = {
+                                    onOpenSelectText(msg.content)
+                                    onDismissAllMessageMenus()
+                                }
                             )
-                        }
-                        inChat -> {
-                            ActionCapsule(
-                                onNewChatClick = onNewChatClick,
-                                onMoreClick = onMoreClick
+                        } else {
+                            AssistantMessageBlock(
+                                message = msg,
+                                isLastAssistantMessage = msg.id == lastAssistantId,
+                                isMenuOpen = uiState.activeAssistantMessageMenuId == msg.id,
+                                onOpenStepsSheet = {
+                                    if (msg.reasoningSteps.isNotEmpty()) {
+                                        onOpenStepsSheet(msg.reasoningSteps)
+                                    }
+                                },
+                                onThumbUp = { onRateMessage(msg.id, 1) },
+                                onThumbDown = { onRateMessage(msg.id, -1) },
+                                onCopy = { onCopyMessage(msg.content) },
+                                onShare = { onShareMessage(msg.content) },
+                                onToggleMenu = { onToggleAssistantMessageMenu(msg.id) },
+                                onDismissMenu = { onDismissAllMessageMenus() },
+                                onRegenerate = {
+                                    onRegenerateAssistant(msg)
+                                    onDismissAllMessageMenus()
+                                },
+                                onSelectText = {
+                                    onOpenSelectText(msg.content)
+                                    onDismissAllMessageMenus()
+                                }
                             )
-                        }
-                        else -> {
-                            Spacer(modifier = Modifier.size(44.dp))
                         }
                     }
                 }
             }
 
-            // Center content area: S1/S9 Empty State Mark OR S3 Message List
+            // Top Floating Glassmorphic Header Bar (below statusBars, real-time backdrop blur)
             Box(
                 modifier = Modifier
-                    .weight(1f)
+                    .align(Alignment.TopCenter)
                     .fillMaxWidth()
+                    .onSizeChanged { headerHeightPx = it.height }
             ) {
-                // S1/S9 Center Brand Mark (fades out in 250ms when chat starts)
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = !hasMessages,
-                    enter = fadeIn(tween(250)),
-                    exit = fadeOut(tween(250)),
-                    modifier = Modifier.align(Alignment.Center)
+                if (hasMessages || isScrolled) {
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .then(
+                                if (headerShadowBlur > 0.dp) {
+                                    Modifier.softShadow(
+                                        color = chatColors.headerShadow,
+                                        cornerRadius = 0.dp,
+                                        blurRadius = headerShadowBlur,
+                                        offsetY = ChatDimens.HeaderShadowOffsetScrolled
+                                    )
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .compatRenderEffectBlur(ChatGlassTokens.HeaderBlurRadius)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        chatColors.headerGlassBg.copy(
+                                            alpha = if (colors.isDark) 0.90f else 0.94f
+                                        ),
+                                        chatColors.headerGlassBg.copy(
+                                            alpha = if (colors.isDark) 0.78f else 0.84f
+                                        )
+                                    )
+                                )
+                            )
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 20.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(horizontal = 32.dp)
-                    ) {
-                        MarkLoader(
-                            size = 74.dp,
-                            isSpinning = false
-                        )
-                        if (uiState.isIncognito) {
-                            Spacer(modifier = Modifier.height(16.dp))
+                    HeaderCircleButton(
+                        iconRes = R.drawable.ic_menu,
+                        contentDescription = "Menu",
+                        onClick = onMenuClick
+                    )
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    // Title + optional "Incognito chat" subtitle
+                    Column(modifier = Modifier.weight(1f)) {
+                        val displayTitle = if (hasMessages) {
+                            uiState.activeConversationTitle
+                                .removePrefix("محادثة:")
+                                .removePrefix("محادثة :")
+                                .trim()
+                                .ifEmpty { uiState.activeConversationTitle }
+                        } else {
+                            strings.appName
+                        }
+
+                        AnimatedContent(
+                            targetState = displayTitle,
+                            transitionSpec = {
+                                fadeIn(tween(220)).togetherWith(fadeOut(tween(180)))
+                            },
+                            label = "headerTitleCrossfade"
+                        ) { titleText ->
                             Text(
-                                text = strings.incognitoEmptyNotice,
+                                text = ChatBidiFormatter.isolateFirstStrong(titleText),
+                                color = colors.primaryText,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                style = TextStyle(textDirection = TextDirection.ContentOrLtr),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Start
+                            )
+                        }
+                        if (uiState.isIncognito) {
+                            Text(
+                                text = strings.incognitoSubtitle,
                                 color = colors.secondaryText,
-                                fontSize = 14.sp,
-                                lineHeight = 20.sp,
-                                textAlign = TextAlign.Center
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Start
                             )
                         }
                     }
-                }
 
-                // S3 Conversation Messages
-                if (hasMessages) {
-                    LazyColumn(
-                        state = listState,
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(18.dp),
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        val lastAssistantId = uiState.messages.lastOrNull { it.role != "user" }?.id
-                        items(uiState.messages, key = { it.id }) { msg ->
-                            if (msg.role == "user") {
-                                UserBubble(
-                                    message = msg,
-                                    isMenuOpen = uiState.activeUserMessageMenuId == msg.id,
-                                    isEditing = uiState.editingMessageId == msg.id,
-                                    editingText = if (uiState.editingMessageId == msg.id) uiState.editingMessageText else msg.content,
-                                    isStreaming = uiState.isStreaming,
-                                    onBubbleClick = { onToggleUserMessageMenu(msg.id) },
-                                    onDismissMenu = { onDismissAllMessageMenus() },
-                                    onCopy = {
-                                        onCopyMessage(msg.content)
-                                        onDismissAllMessageMenus()
-                                    },
-                                    onStartEdit = {
-                                        onStartEditMessage(msg.id)
-                                        onDismissAllMessageMenus()
-                                    },
-                                    onCancelEdit = { onCancelEditMessage() },
-                                    onSendEdit = { newText -> onSendEditMessage(msg.id, newText) },
-                                    onResend = {
-                                        onResendUserMessage(msg)
-                                        onDismissAllMessageMenus()
-                                    },
-                                    onSelectText = {
-                                        onOpenSelectText(msg.content)
-                                        onDismissAllMessageMenus()
-                                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    // Right side: empty on S1 Home (unless conversation exists), crossfades into ActionCapsule on S3 Chat
+                    AnimatedContent(
+                        targetState = Pair(uiState.isIncognito, hasMessages),
+                        transitionSpec = {
+                            fadeIn(tween(220)).togetherWith(fadeOut(tween(180)))
+                        },
+                        label = "headerRightCrossfade"
+                    ) { (incognito, inChat) ->
+                        when {
+                            incognito -> {
+                                HeaderCircleButton(
+                                    iconRes = R.drawable.ic_incognito,
+                                    contentDescription = "Exit incognito",
+                                    onClick = onNewChatClick,
+                                    backgroundColor = colors.primaryText,
+                                    iconTint = colors.pageBackground
                                 )
-                            } else {
-                                AssistantMessageBlock(
-                                    message = msg,
-                                    isLastAssistantMessage = msg.id == lastAssistantId,
-                                    isMenuOpen = uiState.activeAssistantMessageMenuId == msg.id,
-                                    onOpenStepsSheet = {
-                                        if (msg.reasoningSteps.isNotEmpty()) {
-                                            onOpenStepsSheet(msg.reasoningSteps)
-                                        }
-                                    },
-                                    onThumbUp = { onRateMessage(msg.id, 1) },
-                                    onThumbDown = { onRateMessage(msg.id, -1) },
-                                    onCopy = { onCopyMessage(msg.content) },
-                                    onShare = { onShareMessage(msg.content) },
-                                    onToggleMenu = { onToggleAssistantMessageMenu(msg.id) },
-                                    onDismissMenu = { onDismissAllMessageMenus() },
-                                    onRegenerate = {
-                                        onRegenerateAssistant(msg)
-                                        onDismissAllMessageMenus()
-                                    },
-                                    onSelectText = {
-                                        onOpenSelectText(msg.content)
-                                        onDismissAllMessageMenus()
-                                    }
+                            }
+                            inChat -> {
+                                ActionCapsule(
+                                    onNewChatClick = onNewChatClick,
+                                    onMoreClick = onMoreClick
                                 )
+                            }
+                            else -> {
+                                Spacer(modifier = Modifier.size(44.dp))
                             }
                         }
                     }
                 }
             }
 
-            // Bottom composer or S11 Voice Dictation bar (hidden while inline message editing)
+            // Bottom floating composer or S11 Voice Dictation bar (frame-synced with WindowInsets.ime)
             if (uiState.editingMessageId == null) {
                 Box(
                     modifier = Modifier
+                        .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .padding(bottom = 12.dp, top = 4.dp)
+                        .onSizeChanged { composerHeightPx = it.height }
                 ) {
-                    if (uiState.isVoiceListening) {
-                        VoiceDictationBar(
-                            amplitudes = uiState.voiceAmplitudes,
-                            recognizedText = uiState.voicePartialTranscript,
-                            onCancel = onCancelVoiceDictation,
-                            onConfirm = onConfirmVoiceTranscript
+                    if (hasMessages) {
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .compatRenderEffectBlur(ChatGlassTokens.ComposerBlurRadius)
+                                .background(
+                                    Brush.verticalGradient(
+                                        colors = listOf(
+                                            Color.Transparent,
+                                            colors.pageBackground.copy(alpha = 0.72f),
+                                            colors.pageBackground.copy(alpha = 0.94f)
+                                        )
+                                    )
+                                )
                         )
-                    } else {
-                        Composer(
-                            text = uiState.composerText,
-                            onTextChange = onComposerTextChange,
-                            mode = uiState.mode,
-                            isStreaming = uiState.isStreaming,
-                            isIncognito = uiState.isIncognito,
-                            stagedAttachments = uiState.stagedAttachments,
-                            onToggleMode = onToggleMode,
-                            onModePillClick = {
-                                if (onToggleModePopup != null) {
-                                    onToggleModePopup(null)
-                                } else {
-                                    onToggleMode()
-                                }
-                            },
-                            onSelectMode = onSelectMode,
-                            isModePopupOpen = uiState.isModePopupOpen,
-                            onPlusClick = onPlusClick,
-                            onMicClick = onMicClick,
-                            onSendClick = onSendClick,
-                            onStopClick = onStopClick,
-                            onRemoveStagedAttachment = onRemoveStagedAttachment,
-                            hasMessages = hasMessages,
-                            focusRequester = focusRequester
-                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+                            .padding(bottom = 12.dp, top = 6.dp)
+                    ) {
+                        if (uiState.isVoiceListening) {
+                            VoiceDictationBar(
+                                amplitudes = uiState.voiceAmplitudes,
+                                recognizedText = uiState.voicePartialTranscript,
+                                onCancel = onCancelVoiceDictation,
+                                onConfirm = onConfirmVoiceTranscript
+                            )
+                        } else {
+                            Composer(
+                                text = uiState.composerText,
+                                onTextChange = onComposerTextChange,
+                                mode = uiState.mode,
+                                isStreaming = uiState.isStreaming,
+                                isIncognito = uiState.isIncognito,
+                                stagedAttachments = uiState.stagedAttachments,
+                                onToggleMode = onToggleMode,
+                                onModePillClick = {
+                                    if (onToggleModePopup != null) {
+                                        onToggleModePopup(null)
+                                    } else {
+                                        onToggleMode()
+                                    }
+                                },
+                                onSelectMode = onSelectMode,
+                                isModePopupOpen = uiState.isModePopupOpen,
+                                onPlusClick = onPlusClick,
+                                onMicClick = onMicClick,
+                                onSendClick = onSendClick,
+                                onStopClick = onStopClick,
+                                onRemoveStagedAttachment = onRemoveStagedAttachment,
+                                hasMessages = hasMessages,
+                                focusRequester = focusRequester
+                            )
+                        }
                     }
                 }
             }
         }
 
-        // S2 Floating Instant / Thinking Mode Switcher Popup Banner (observed in f_018.png..f_026.png)
+        // S2 Floating Instant / Thinking Mode Switcher Popup Banner
         if (uiState.isModePopupOpen && !uiState.isIncognito) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .background(colors.scrimColor.copy(alpha = 0.14f))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
@@ -828,11 +979,20 @@ private fun MainChatSurface(
 
         AnimatedVisibility(
             visible = uiState.isModePopupOpen && !uiState.isIncognito,
-            enter = fadeIn(tween(160)) + scaleIn(tween(160), initialScale = 0.95f),
-            exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.95f),
+            enter = fadeIn(ChatMotion.fastOutBezierTween(150)) + scaleIn(
+                animationSpec = if (reduceMotion) tween(120) else ChatMotion.interactiveSpring(),
+                initialScale = 0.88f,
+                transformOrigin = TransformOrigin(0.5f, 1f)
+            ),
+            exit = fadeOut(ChatMotion.fastOutBezierTween(130)) + scaleOut(
+                animationSpec = ChatMotion.fastOutBezierTween(130),
+                targetScale = 0.92f,
+                transformOrigin = TransformOrigin(0.5f, 1f)
+            ),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 70.dp)
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+                .padding(bottom = 76.dp)
         ) {
             ModeSelectorPopup(
                 selectedMode = uiState.mode,
@@ -952,11 +1112,20 @@ private fun AssistantMessageBlock(
                             )
                         ) {
                             var isVisible by remember { mutableStateOf(false) }
+                            val reduceMotion = rememberReduceMotion()
                             LaunchedEffect(Unit) { isVisible = true }
                             androidx.compose.animation.AnimatedVisibility(
                                 visible = isVisible,
-                                enter = scaleIn(tween(160)) + fadeIn(tween(160)),
-                                exit = scaleOut(tween(160)) + fadeOut(tween(160))
+                                enter = scaleIn(
+                                    animationSpec = if (reduceMotion) tween(120) else ChatMotion.interactiveSpring(),
+                                    initialScale = 0.85f,
+                                    transformOrigin = TransformOrigin(if (isRtl) 1f else 0f, 0f)
+                                ) + fadeIn(ChatMotion.fastOutBezierTween(140)),
+                                exit = scaleOut(
+                                    animationSpec = ChatMotion.fastOutBezierTween(130),
+                                    targetScale = 0.90f,
+                                    transformOrigin = TransformOrigin(if (isRtl) 1f else 0f, 0f)
+                                ) + fadeOut(ChatMotion.fastOutBezierTween(120))
                             ) {
                                 val items = buildList {
                                     if (isLastAssistantMessage) {

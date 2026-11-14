@@ -1,8 +1,8 @@
 package app.buildx.chat.ui.screens
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,19 +22,31 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.buildx.chat.R
 import app.buildx.chat.data.model.Conversation
+import app.buildx.chat.ui.chat.ChatBidiFormatter
+import app.buildx.chat.ui.chat.ChatDimens
+import app.buildx.chat.ui.chat.ChatMotion
+import app.buildx.chat.ui.chat.rememberReduceMotion
+import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.theme.BuildXTheme
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,6 +60,19 @@ fun ConversationActionsSheet(
 ) {
     val colors = BuildXTheme.colors
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val reduceMotion = rememberReduceMotion()
+    val entranceScale = remember { Animatable(if (reduceMotion) 1f else 0.94f) }
+    val entranceAlpha = remember { Animatable(if (reduceMotion) 1f else 0f) }
+
+    LaunchedEffect(Unit) {
+        if (reduceMotion) {
+            entranceScale.snapTo(1f)
+            entranceAlpha.snapTo(1f)
+        } else {
+            launch { entranceScale.animateTo(1f, ChatMotion.interactiveSpring()) }
+            launch { entranceAlpha.animateTo(1f, tween(160)) }
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -69,6 +94,12 @@ fun ConversationActionsSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .graphicsLayer {
+                    scaleX = entranceScale.value
+                    scaleY = entranceScale.value
+                    alpha = entranceAlpha.value
+                    transformOrigin = TransformOrigin(0.5f, 1f)
+                }
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp, vertical = 6.dp)
         ) {
@@ -98,10 +129,11 @@ fun ConversationActionsSheet(
                     Spacer(modifier = Modifier.width(8.dp))
                 }
                 Text(
-                    text = conversation.cleanTitle,
+                    text = ChatBidiFormatter.isolateFirstStrong(conversation.cleanTitle),
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
                     color = colors.primaryText,
+                    style = TextStyle(textDirection = TextDirection.ContentOrLtr),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
@@ -111,7 +143,7 @@ fun ConversationActionsSheet(
             Spacer(modifier = Modifier.height(6.dp))
             HorizontalDivider(
                 color = colors.hairlineBorder,
-                thickness = 0.8.dp,
+                thickness = ChatDimens.GlassSurfaceBorderWidth,
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(modifier = Modifier.height(10.dp))
@@ -190,7 +222,7 @@ private fun ActionRowItem(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
+            .pressScaleClickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

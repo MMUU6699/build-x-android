@@ -1,8 +1,9 @@
 package app.buildx.chat.ui.screens
 
-import android.os.SystemClock
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -10,6 +11,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,18 +23,22 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -42,15 +48,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -58,44 +64,58 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.zIndex
 import app.buildx.chat.R
+import app.buildx.chat.data.model.DmConversationDetail
 import app.buildx.chat.data.model.DmInboxItem
 import app.buildx.chat.data.model.DmMemberAvatar
 import app.buildx.chat.data.model.DmPeerSummary
 import app.buildx.chat.data.model.FeedNoteItem
 import app.buildx.chat.data.model.PersonSearchResult
+import app.buildx.chat.ui.chat.ChatBidiFormatter
+import app.buildx.chat.ui.chat.ChatColors
+import app.buildx.chat.ui.chat.ChatDimens
+import app.buildx.chat.ui.chat.ChatGlassCapsuleContainer
+import app.buildx.chat.ui.chat.ChatGlassTokens
+import app.buildx.chat.ui.chat.ChatMotion
+import app.buildx.chat.ui.chat.ChatTypography
+import app.buildx.chat.ui.chat.UpdateStatusBarAppearance
+import app.buildx.chat.ui.chat.compatRenderEffectBlur
+import app.buildx.chat.ui.chat.rememberReduceMotion
+import app.buildx.chat.ui.chat.toChatColors
 import app.buildx.chat.ui.components.HeaderCircleButton
 import app.buildx.chat.ui.components.VerifiedBadge
 import app.buildx.chat.ui.components.pressScaleClickable
@@ -105,7 +125,6 @@ import app.buildx.chat.ui.theme.softShadow
 import app.buildx.chat.ui.viewmodel.BuildXUiState
 import app.buildx.chat.ui.viewmodel.DmFilterTab
 import coil.compose.AsyncImage
-import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -131,7 +150,7 @@ fun DmInboxScreen(
     onDeleteOrLeaveConversation: (String) -> Unit = {},
     onOpenDirectChatWithUser: (String) -> Unit = {},
     onRenameGroup: (String, String) -> Unit = { _, _ -> },
-    onSetConversationPin: (String, Boolean) -> Unit = { id, pin -> onTogglePinConversation(id) },
+    onSetConversationPin: (String, Boolean) -> Unit = { id, _ -> onTogglePinConversation(id) },
     onSetConversationMute: (String, String?) -> Unit = { id, _ -> onToggleMuteConversation(id) },
     onDeleteConversationForMe: (String) -> Unit = { id -> onDeleteOrLeaveConversation(id) },
     onLeaveGroup: (String) -> Unit = { id -> onDeleteOrLeaveConversation(id) },
@@ -141,19 +160,103 @@ fun DmInboxScreen(
     onSearchGroupMembers: (String) -> Unit = {},
     currentUserId: String? = null
 ) {
+    DmInboxScreenImpl(
+        uiState = uiState,
+        onBackClick = onBackClick,
+        onSearchQueryChange = onSearchQueryChange,
+        onConversationClick = onConversationClick,
+        onOpenProfile = onOpenProfile,
+        onOpenNoteSheet = onOpenNoteSheet,
+        onReplyToNote = onReplyToNote,
+        onToggleNoteLike = onToggleNoteLike,
+        onCreateGroupClick = onCreateGroupClick,
+        onTogglePinConversation = onTogglePinConversation,
+        onToggleMuteConversation = onToggleMuteConversation,
+        modifier = modifier,
+        onSelectFilterTab = onSelectFilterTab,
+        onToggleReadUnreadConversation = onToggleReadUnreadConversation,
+        onDeleteOrLeaveConversation = onDeleteOrLeaveConversation,
+        onOpenDirectChatWithUser = onOpenDirectChatWithUser,
+        onRenameGroup = onRenameGroup,
+        onSetConversationPin = onSetConversationPin,
+        onSetConversationMute = onSetConversationMute,
+        onDeleteConversationForMe = onDeleteConversationForMe,
+        onLeaveGroup = onLeaveGroup,
+        onLoadGroupDetail = onLoadGroupDetail,
+        onUpdateGroupAvatar = onUpdateGroupAvatar,
+        onAddGroupMembers = onAddGroupMembers,
+        onSearchGroupMembers = onSearchGroupMembers,
+        currentUserId = currentUserId
+    )
+}
+
+@Composable
+private fun DmInboxScreenImpl(
+    uiState: BuildXUiState,
+    onBackClick: () -> Unit,
+    onSearchQueryChange: (String) -> Unit,
+    onConversationClick: (String) -> Unit,
+    onOpenProfile: (String) -> Unit,
+    onOpenNoteSheet: () -> Unit,
+    onReplyToNote: (FeedNoteItem, String) -> Unit,
+    onToggleNoteLike: (String) -> Unit,
+    onCreateGroupClick: () -> Unit,
+    onTogglePinConversation: (String) -> Unit,
+    onToggleMuteConversation: (String) -> Unit,
+    modifier: Modifier,
+    onSelectFilterTab: (DmFilterTab) -> Unit,
+    onToggleReadUnreadConversation: (String) -> Unit,
+    onDeleteOrLeaveConversation: (String) -> Unit,
+    onOpenDirectChatWithUser: (String) -> Unit,
+    onRenameGroup: (String, String) -> Unit,
+    onSetConversationPin: (String, Boolean) -> Unit,
+    onSetConversationMute: (String, String?) -> Unit,
+    onDeleteConversationForMe: (String) -> Unit,
+    onLeaveGroup: (String) -> Unit,
+    onLoadGroupDetail: (String) -> Unit,
+    onUpdateGroupAvatar: (String, android.net.Uri) -> Unit,
+    onAddGroupMembers: (String, List<String>) -> Unit,
+    onSearchGroupMembers: (String) -> Unit,
+    currentUserId: String?
+) {
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
+    val chatColors = remember(colors) { colors.toChatColors() }
+    val reduceMotion = rememberReduceMotion()
     val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
     val listState = rememberLazyListState()
+
+    UpdateStatusBarAppearance(
+        isLightSurface = colors.pageBackground.luminance() > 0.5f
+    )
 
     var activePopupItem by remember { mutableStateOf<DmInboxItem?>(null) }
     var activeRowBounds by remember { mutableStateOf<IntRect?>(null) }
-    var rootLeftPx by remember { mutableStateOf(0) }
-    var rootTopPx by remember { mutableStateOf(0) }
+    var rootLeftPx by remember { mutableIntStateOf(0) }
+    var rootTopPx by remember { mutableIntStateOf(0) }
+    var topOverlayHeightPx by remember { mutableIntStateOf(0) }
     var selectedGroupInfoItem by remember { mutableStateOf<DmInboxItem?>(null) }
     var selectedReplyNote by remember { mutableStateOf<FeedNoteItem?>(null) }
 
-    // Text selection styling
+    val isPopupOpen = activePopupItem != null
+    val popupFocusProgress by animateFloatAsState(
+        targetValue = if (isPopupOpen) 1f else 0f,
+        animationSpec = if (reduceMotion) tween(0) else ChatMotion.interactiveSpring(),
+        label = "inbox_popup_focus_progress"
+    )
+
+    val isListScrolled by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 8
+        }
+    }
+
+    val topOverlayDp = with(density) { topOverlayHeightPx.toDp() }
+    val statusTopFallback = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 124.dp
+    val listTopPadding = if (topOverlayHeightPx > 0) topOverlayDp + 4.dp else statusTopFallback
+    val navBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+
     val customTextSelectionColors = remember(colors.primaryBlue) {
         TextSelectionColors(
             handleColor = colors.primaryBlue,
@@ -172,109 +275,58 @@ fun DmInboxScreen(
                     rootTopPx = rootBounds.top.roundToInt()
                 }
         ) {
-            Column(
+            val isSearching = uiState.dmSearchQuery.trim().isNotEmpty()
+            val unreadCount = uiState.dmInboxCounters.unreadConversationsCount.takeIf {
+                uiState.dmInboxItems.isNotEmpty() || it > 0
+            } ?: uiState.dmInboxItems.count { it.effectiveIsUnread }
+            val groupsCount = uiState.dmInboxCounters.groupsCount.takeIf {
+                uiState.dmInboxItems.isNotEmpty() || it > 0
+            } ?: uiState.dmInboxItems.count { it.kind == "group" }
+
+            // Layer 0 + 1: Main Inbox Content (receives real-time RenderEffect blur when popup opens)
+            val contentBlurDp = if (!reduceMotion && popupFocusProgress > 0.01f) {
+                (10f * popupFocusProgress).dp
+            } else {
+                0.dp
+            }
+
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
+                    .compatRenderEffectBlur(blurRadius = contentBlurDp)
             ) {
-                // 1. Header Bar (56dp row, 44dp circles at 20dp inset, 12dp spacing to 22sp bold title)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .padding(horizontal = 20.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    HeaderCircleButton(
-                        iconRes = R.drawable.ic_back,
-                        contentDescription = stringResource(R.string.dm_back),
-                        onClick = onBackClick
+                // Scrollable Inbox Body underneath floating glass top chrome
+                if (isSearching) {
+                    DmSearchResultsContent(
+                        query = uiState.dmSearchQuery.trim(),
+                        conversations = uiState.dmInboxItems,
+                        people = uiState.dmSearchPeopleResults,
+                        isLoadingPeople = uiState.isDmSearchPeopleLoading,
+                        activeDmDetail = uiState.activeDmDetail,
+                        currentUserId = currentUserId,
+                        chatColors = chatColors,
+                        reduceMotion = reduceMotion,
+                        contentTopPadding = listTopPadding,
+                        contentBottomPadding = navBottomPadding + 24.dp,
+                        onConversationClick = onConversationClick,
+                        onPersonClick = onOpenProfile
                     )
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    Text(
-                        text = stringResource(R.string.dm_nav_messages),
-                        color = colors.primaryText,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    HeaderCircleButton(
-                        iconRes = R.drawable.ic_edit_compose,
-                        contentDescription = stringResource(R.string.dm_compose_message),
-                        onClick = onCreateGroupClick
-                    )
-                }
-
-                // 2. Search Field (48dp pill on #F1F3F0, 16dp horizontal insets, 8dp below header)
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .height(48.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(colors.surfaceMuted)
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    val isRtl = isRtlText(uiState.dmSearchQuery, strings.isRtl)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
+                } else if (uiState.isDmInboxLoading && uiState.dmInboxItems.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = listTopPadding, bottom = navBottomPadding)
                     ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_search),
-                            contentDescription = null,
-                            tint = colors.secondaryText,
-                            modifier = Modifier.size(20.dp)
-                        )
-
-                        Spacer(modifier = Modifier.width(10.dp))
-
-                        Box(modifier = Modifier.weight(1f)) {
-                            if (uiState.dmSearchQuery.isEmpty()) {
-                                Text(
-                                    text = stringResource(R.string.dm_search_hint),
-                                    color = colors.secondaryText,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                            BasicTextField(
-                                value = uiState.dmSearchQuery,
-                                onValueChange = onSearchQueryChange,
-                                singleLine = true,
-                                textStyle = TextStyle(
-                                    color = colors.primaryText,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Normal,
-                                    textAlign = if (isRtl) TextAlign.Right else TextAlign.Left
-                                ),
-                                cursorBrush = SolidColor(colors.primaryBlue),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-
-                        if (uiState.dmSearchQuery.isNotEmpty()) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_close),
-                                contentDescription = "Clear",
-                                tint = colors.secondaryText,
-                                modifier = Modifier
-                                    .size(18.dp)
-                                    .clickable { onSearchQueryChange("") }
-                            )
-                        }
+                        DmInboxSkeletonList()
                     }
-                }
+                } else {
+                    val filteredList = when (uiState.selectedDmFilterTab) {
+                        DmFilterTab.ALL -> uiState.dmInboxItems
+                        DmFilterTab.UNREAD -> uiState.dmInboxItems.filter { it.effectiveIsUnread }
+                        DmFilterTab.GROUPS -> uiState.dmInboxItems.filter { it.kind == "group" }
+                        else -> uiState.dmInboxItems
+                    }
 
-                val isSearching = uiState.dmSearchQuery.trim().isNotEmpty()
-
-                // 3. Notes Strip (Hidden during search query)
-                if (!isSearching) {
                     val ownNote = uiState.inboxNotesTray.firstOrNull { it.isOwn || it.userId == currentUserId }
                         ?: uiState.activeOwnNote?.let { pn ->
                             FeedNoteItem(
@@ -300,98 +352,85 @@ fun DmInboxScreen(
                     val ownDisplayName = uiState.profile?.displayName
                     val friendsNotes = uiState.inboxNotesTray.filterNot { it.isOwn || it.userId == currentUserId }
 
-                    DmNotesStrip(
-                        ownNote = ownNote,
-                        ownAvatarUrl = ownAvatarUrl,
-                        ownDisplayName = ownDisplayName,
-                        friendsNotes = friendsNotes,
-                        currentUserId = currentUserId,
-                        onOpenNoteSheet = onOpenNoteSheet,
-                        onNoteClick = { note -> selectedReplyNote = note }
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // 4. Filter Chips (All, Unread with badge, Groups — No Requests)
-                    val unreadCount = uiState.dmInboxItems.count { it.unreadCount > 0 || it.isMarkedUnread }
-                    val groupsCount = uiState.dmInboxItems.count { it.kind == "group" }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            top = listTopPadding,
+                            bottom = navBottomPadding + 24.dp
+                        )
                     ) {
-                        DmFilterChip(
-                            label = stringResource(R.string.dm_filter_all),
-                            isSelected = uiState.selectedDmFilterTab == DmFilterTab.ALL,
-                            onClick = { onSelectFilterTab(DmFilterTab.ALL) }
-                        )
+                        // Notes Strip
+                        item(key = "inbox_notes_strip") {
+                            DmNotesStrip(
+                                ownNote = ownNote,
+                                ownAvatarUrl = ownAvatarUrl,
+                                ownDisplayName = ownDisplayName,
+                                friendsNotes = friendsNotes,
+                                onOpenNoteSheet = onOpenNoteSheet,
+                                onNoteClick = { note -> selectedReplyNote = note }
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
 
-                        DmFilterChip(
-                            label = stringResource(R.string.dm_filter_unread),
-                            count = unreadCount,
-                            isSelected = uiState.selectedDmFilterTab == DmFilterTab.UNREAD,
-                            onClick = { onSelectFilterTab(DmFilterTab.UNREAD) }
-                        )
+                        // Filter Chips (All, Unread with badge, Groups)
+                        item(key = "inbox_filter_chips") {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                DmFilterChip(
+                                    label = stringResource(R.string.dm_filter_all),
+                                    isSelected = uiState.selectedDmFilterTab == DmFilterTab.ALL,
+                                    reduceMotion = reduceMotion,
+                                    onClick = { onSelectFilterTab(DmFilterTab.ALL) }
+                                )
 
-                        DmFilterChip(
-                            label = stringResource(R.string.dm_filter_groups),
-                            count = groupsCount,
-                            isSelected = uiState.selectedDmFilterTab == DmFilterTab.GROUPS,
-                            onClick = { onSelectFilterTab(DmFilterTab.GROUPS) }
-                        )
-                    }
+                                DmFilterChip(
+                                    label = stringResource(R.string.dm_filter_unread),
+                                    count = unreadCount,
+                                    isSelected = uiState.selectedDmFilterTab == DmFilterTab.UNREAD,
+                                    reduceMotion = reduceMotion,
+                                    onClick = { onSelectFilterTab(DmFilterTab.UNREAD) }
+                                )
 
-                    Spacer(modifier = Modifier.height(10.dp))
-                }
-
-                // 5. Main Conversation List & Contextual States
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                ) {
-                    if (isSearching) {
-                        // Search Results List
-                        DmSearchResultsContent(
-                            query = uiState.dmSearchQuery.trim(),
-                            conversations = uiState.dmInboxItems,
-                            people = uiState.dmSearchPeopleResults,
-                            isLoadingPeople = uiState.isDmSearchPeopleLoading,
-                            onConversationClick = onConversationClick,
-                            onPersonClick = onOpenProfile
-                        )
-                    } else if (uiState.isDmInboxLoading && uiState.dmInboxItems.isEmpty()) {
-                        // Loading Skeletons
-                        DmInboxSkeletonList()
-                    } else {
-                        // Filtered Conversation List
-                        val filteredList = when (uiState.selectedDmFilterTab) {
-                            DmFilterTab.ALL -> uiState.dmInboxItems
-                            DmFilterTab.UNREAD -> uiState.dmInboxItems.filter { it.unreadCount > 0 || it.isMarkedUnread }
-                            DmFilterTab.GROUPS -> uiState.dmInboxItems.filter { it.kind == "group" }
-                            else -> uiState.dmInboxItems
+                                DmFilterChip(
+                                    label = stringResource(R.string.dm_filter_groups),
+                                    count = groupsCount,
+                                    isSelected = uiState.selectedDmFilterTab == DmFilterTab.GROUPS,
+                                    reduceMotion = reduceMotion,
+                                    onClick = { onSelectFilterTab(DmFilterTab.GROUPS) }
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
                         }
 
                         if (filteredList.isEmpty()) {
-                            DmContextualEmptyState(
-                                tab = uiState.selectedDmFilterTab,
-                                onCreateGroupClick = onCreateGroupClick,
-                                onShowAllChats = { onSelectFilterTab(DmFilterTab.ALL) }
-                            )
+                            item(key = "inbox_empty_state") {
+                                DmContextualEmptyState(
+                                    tab = uiState.selectedDmFilterTab,
+                                    onCreateGroupClick = onCreateGroupClick,
+                                    onShowAllChats = { onSelectFilterTab(DmFilterTab.ALL) }
+                                )
+                            }
                         } else {
-                            LazyColumn(
-                                state = listState,
-                                modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(bottom = 24.dp)
-                            ) {
-                                items(filteredList, key = { it.effectiveId }) { item ->
-                                    var itemCoordinates by remember { mutableStateOf<IntRect?>(null) }
+                            items(filteredList, key = { it.effectiveId }) { item ->
+                                var itemCoordinates by remember { mutableStateOf<IntRect?>(null) }
 
+                                Column(
+                                    modifier = Modifier.animateItem(
+                                        placementSpec = if (reduceMotion) tween(0) else ChatMotion.layoutGestureSpring()
+                                    )
+                                ) {
                                     DmConversationRow(
                                         item = item,
+                                        currentUserId = currentUserId,
+                                        activeDmDetail = uiState.activeDmDetail,
+                                        chatColors = chatColors,
+                                        reduceMotion = reduceMotion,
                                         onClick = { onConversationClick(item.effectiveId) },
                                         onLongClick = {
                                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -410,8 +449,8 @@ fun DmInboxScreen(
                                     )
 
                                     HorizontalDivider(
-                                        color = colors.subtleSurfaceBorder,
-                                        thickness = 0.6.dp,
+                                        color = chatColors.divider,
+                                        thickness = ChatDimens.DividerThickness,
                                         modifier = Modifier.padding(start = 84.dp, end = 16.dp)
                                     )
                                 }
@@ -419,27 +458,43 @@ fun DmInboxScreen(
                         }
                     }
                 }
+
+                // Layer 2: Floating Glassmorphic Top Chrome (Status Bar Offset + Header + Search Pill)
+                DmInboxFloatingTopBar(
+                    searchQuery = uiState.dmSearchQuery,
+                    onSearchQueryChange = onSearchQueryChange,
+                    onBackClick = onBackClick,
+                    onCreateGroupClick = onCreateGroupClick,
+                    isListScrolled = isListScrolled,
+                    chatColors = chatColors,
+                    reduceMotion = reduceMotion,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .onSizeChanged { topOverlayHeightPx = it.height }
+                )
             }
 
-            // 6. Long-Press Row Lift & Anchored Popup Menu Overlay
+            // 6. Long-Press Row Lift & Anchored Spring-Overshoot Popup Menu Overlay
             activePopupItem?.let { item ->
-                val density = LocalDensity.current
                 var liftVisible by remember(item.effectiveId) { mutableStateOf(false) }
                 var placedAbove by remember(item.effectiveId) { mutableStateOf(false) }
                 LaunchedEffect(item.effectiveId) { liftVisible = true }
 
                 val scrimAlpha by animateFloatAsState(
                     targetValue = if (liftVisible) 0.30f else 0f,
-                    animationSpec = tween(160),
+                    animationSpec = if (reduceMotion) tween(0) else ChatMotion.interactiveSpring(),
                     label = "popup_scrim_alpha"
                 )
                 val liftScale by animateFloatAsState(
                     targetValue = if (liftVisible) 1.02f else 1f,
-                    animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMedium),
+                    animationSpec = if (reduceMotion) tween(0) else spring(
+                        dampingRatio = 0.70f,
+                        stiffness = 480f
+                    ),
                     label = "popup_row_lift_scale"
                 )
 
-                // 30% Dimming Scrim
+                // Dimming Scrim
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -462,13 +517,20 @@ fun DmInboxScreen(
                         modifier = Modifier
                             .offset { IntOffset(offsetX, offsetY) }
                             .width(with(density) { bounds.width.toDp() })
-                            .scale(liftScale)
+                            .graphicsLayer {
+                                scaleX = liftScale
+                                scaleY = liftScale
+                            }
                             .softShadow(colors.cardBackground.copy(alpha = 0.35f), cornerRadius = 16.dp, blurRadius = 18.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .background(colors.pageBackground)
                     ) {
                         DmConversationRow(
                             item = item,
+                            currentUserId = currentUserId,
+                            activeDmDetail = uiState.activeDmDetail,
+                            chatColors = chatColors,
+                            reduceMotion = reduceMotion,
                             onClick = {},
                             onLongClick = {}
                         )
@@ -486,7 +548,7 @@ fun DmInboxScreen(
                         )
                     }
 
-                    // Anchored Popup Attached to Row
+                    // Anchored Popup Attached to Row with spring overshoot
                     Popup(
                         popupPositionProvider = positionProvider,
                         onDismissRequest = {
@@ -496,15 +558,22 @@ fun DmInboxScreen(
                     ) {
                         AnimatedVisibility(
                             visible = liftVisible,
-                            enter = fadeIn(tween(150)) + scaleIn(
-                                initialScale = 0.90f,
-                                transformOrigin = TransformOrigin(
-                                    pivotFractionX = if (strings.isRtl) 0.92f else 0.08f,
-                                    pivotFractionY = if (placedAbove) 1f else 0f
-                                ),
-                                animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMedium)
-                            ),
-                            exit = fadeOut(tween(110)) + scaleOut(targetScale = 0.94f)
+                            enter = if (reduceMotion) {
+                                fadeIn(tween(0))
+                            } else {
+                                fadeIn(ChatMotion.interactiveSpring()) + scaleIn(
+                                    initialScale = 0.84f,
+                                    transformOrigin = TransformOrigin(
+                                        pivotFractionX = if (strings.isRtl) 0.92f else 0.08f,
+                                        pivotFractionY = if (placedAbove) 1f else 0f
+                                    ),
+                                    animationSpec = spring(
+                                        dampingRatio = 0.68f,
+                                        stiffness = 480f
+                                    )
+                                )
+                            },
+                            exit = fadeOut(spring(stiffness = 550f)) + scaleOut(targetScale = 0.92f)
                         ) {
                             DmConversationPopupCard(
                                 item = item,
@@ -512,7 +581,7 @@ fun DmInboxScreen(
                                 onMuteSelect = { duration -> onSetConversationMute(item.effectiveId, duration) },
                                 onReadUnreadToggle = { onToggleReadUnreadConversation(item.effectiveId) },
                                 onViewProfile = {
-                                    val handle = item.handle
+                                    val handle = item.handle ?: item.peer?.handle
                                     if (!handle.isNullOrBlank()) onOpenProfile(handle)
                                 },
                                 onGroupInfo = {
@@ -612,14 +681,191 @@ fun DmInboxScreen(
 }
 
 /**
- * Filter Chip (36dp height, full radius, 14dp padding, 8dp gap)
- * Selected: #F1F3F0 fill, bold primary text, no border.
- * Unselected: Transparent, 1dp hairline border, medium gray text.
+ * Floating Glassmorphic Inbox Top Bar:
+ * - Sits cleanly below `WindowInsets.statusBars`
+ * - Uses hardware-accelerated `RenderEffect.createBlurEffect` on Android 12+ via `ChatGlassCapsuleContainer`
+ *   with translucent frosted gradient + hairline divider fallback when scrolling
+ * - Hosts the 56dp navigation row (44dp Back & Compose circles + bold title) and 48dp Search Pill
+ */
+@Composable
+private fun DmInboxFloatingTopBar(
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    onBackClick: () -> Unit,
+    onCreateGroupClick: () -> Unit,
+    isListScrolled: Boolean,
+    chatColors: ChatColors,
+    reduceMotion: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val colors = BuildXTheme.colors
+    val strings = BuildXTheme.strings
+
+    val shadowBlur by animateDpAsState(
+        targetValue = if (isListScrolled) 18.dp else 0.dp,
+        animationSpec = if (reduceMotion) tween(0) else ChatMotion.layoutGestureSpring(),
+        label = "inbox_top_shadow_blur"
+    )
+    val shadowOffsetY by animateDpAsState(
+        targetValue = if (isListScrolled) 4.dp else 0.dp,
+        animationSpec = if (reduceMotion) tween(0) else ChatMotion.layoutGestureSpring(),
+        label = "inbox_top_shadow_offset"
+    )
+
+    val topGlassColor = chatColors.headerGlassBg.copy(
+        alpha = if (colors.isDark) {
+            if (isListScrolled) ChatGlassTokens.HeaderGlassAlphaDark else 0.94f
+        } else {
+            if (isListScrolled) ChatGlassTokens.HeaderGlassAlphaLight else 0.96f
+        }
+    )
+
+    Box(
+        modifier = modifier.fillMaxWidth()
+    ) {
+        // Real-time frosted glass backdrop behind header & search bar when content scrolls under
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .compatRenderEffectBlur(blurRadius = if (isListScrolled) ChatGlassTokens.HeaderBlurRadius else 0.dp)
+                .background(
+                    Brush.verticalGradient(
+                        0.0f to topGlassColor,
+                        0.82f to topGlassColor.copy(alpha = (topGlassColor.alpha * 0.94f).coerceIn(0f, 1f)),
+                        1.0f to colors.pageBackground.copy(alpha = if (isListScrolled) 0.72f else 0f)
+                    )
+                )
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.statusBars)
+        ) {
+            // 1. Header Bar (56dp row, 44dp circles at 20dp inset, 12dp spacing to 22sp bold title)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                HeaderCircleButton(
+                    iconRes = R.drawable.ic_back,
+                    contentDescription = stringResource(R.string.dm_back),
+                    onClick = onBackClick
+                )
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Text(
+                    text = stringResource(R.string.dm_nav_messages),
+                    color = colors.primaryText,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    style = TextStyle(textDirection = TextDirection.ContentOrLtr),
+                    modifier = Modifier.weight(1f)
+                )
+
+                HeaderCircleButton(
+                    iconRes = R.drawable.ic_edit_compose,
+                    contentDescription = stringResource(R.string.dm_compose_message),
+                    onClick = onCreateGroupClick
+                )
+            }
+
+            // 2. Floating Glass Search Field (48dp pill, 24dp radius, 16dp horizontal insets)
+            ChatGlassCapsuleContainer(
+                shape = RoundedCornerShape(24.dp),
+                glassColor = colors.surfaceMuted.copy(alpha = if (colors.isDark) 0.88f else 0.92f),
+                borderColor = chatColors.headerGlassBorder,
+                shadowColor = if (isListScrolled) chatColors.headerShadow else Color.Transparent,
+                cornerRadius = 24.dp,
+                shadowBlur = shadowBlur,
+                shadowOffsetY = shadowOffsetY,
+                blurRadius = ChatGlassTokens.FloatingChipBlurRadius,
+                isDark = colors.isDark,
+                borderWidth = if (isListScrolled) ChatDimens.GlassSurfaceBorderWidth else 0.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .height(48.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                val isRtl = isRtlText(searchQuery, strings.isRtl)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_search),
+                        contentDescription = null,
+                        tint = colors.secondaryText,
+                        modifier = Modifier.size(20.dp)
+                    )
+
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    Box(modifier = Modifier.weight(1f)) {
+                        if (searchQuery.isEmpty()) {
+                            Text(
+                                text = stringResource(R.string.dm_search_hint),
+                                color = colors.secondaryText,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                style = TextStyle(textDirection = TextDirection.ContentOrLtr)
+                            )
+                        }
+                        BasicTextField(
+                            value = searchQuery,
+                            onValueChange = onSearchQueryChange,
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                color = colors.primaryText,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Normal,
+                                textAlign = if (isRtl) TextAlign.Right else TextAlign.Left,
+                                textDirection = TextDirection.ContentOrLtr
+                            ),
+                            cursorBrush = SolidColor(colors.primaryBlue),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    if (searchQuery.isNotEmpty()) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_close),
+                            contentDescription = "Clear",
+                            tint = colors.secondaryText,
+                            modifier = Modifier
+                                .size(18.dp)
+                                .pressScaleClickable { onSearchQueryChange("") }
+                        )
+                    }
+                }
+            }
+        }
+
+        if (isListScrolled) {
+            HorizontalDivider(
+                color = chatColors.divider.copy(alpha = 0.7f),
+                thickness = ChatDimens.DividerThickness,
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
+        }
+    }
+}
+
+/**
+ * Filter Chip (36dp height, full radius, 14dp padding, 8dp gap) with spring-animated count badge.
  */
 @Composable
 private fun DmFilterChip(
     label: String,
     isSelected: Boolean,
+    reduceMotion: Boolean,
     count: Int? = null,
     onClick: () -> Unit
 ) {
@@ -635,7 +881,7 @@ private fun DmFilterChip(
                     Modifier.border(1.dp, colors.subtleSurfaceBorder, RoundedCornerShape(18.dp))
                 } else Modifier
             )
-            .clickable(onClick = onClick)
+            .pressScaleClickable(onClick = onClick)
             .padding(horizontal = 14.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -647,23 +893,38 @@ private fun DmFilterChip(
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
             )
 
-            if (count != null && count > 0) {
-                Spacer(modifier = Modifier.width(6.dp))
-                Box(
-                    modifier = Modifier
-                        .height(18.dp)
-                        .defaultMinSize(minWidth = 18.dp)
-                        .clip(CircleShape)
-                        .background(if (isSelected) colors.primaryBlue else colors.surfaceMuted)
-                        .padding(horizontal = 4.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (count > 99) "99+" else count.toString(),
-                        color = if (isSelected) Color.White else colors.primaryText,
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Bold
+            AnimatedVisibility(
+                visible = count != null && count > 0,
+                enter = if (reduceMotion) {
+                    fadeIn(tween(0))
+                } else {
+                    fadeIn(ChatMotion.interactiveSpring()) + scaleIn(
+                        initialScale = 0.45f,
+                        animationSpec = spring(dampingRatio = 0.62f, stiffness = 500f)
                     )
+                },
+                exit = fadeOut(spring(stiffness = 550f)) + scaleOut(targetScale = 0.45f)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .height(18.dp)
+                            .defaultMinSize(minWidth = 18.dp)
+                            .clip(CircleShape)
+                            .background(if (isSelected) colors.primaryBlue else colors.surfaceMuted)
+                            .padding(horizontal = 4.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val safeCount = count ?: 0
+                        Text(
+                            text = if (safeCount > 99) "99+" else safeCount.toString(),
+                            color = if (isSelected) Color.White else colors.primaryText,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            style = TextStyle(fontFeatureSettings = "tnum")
+                        )
+                    }
                 }
             }
         }
@@ -681,7 +942,6 @@ private fun DmNotesStrip(
     ownAvatarUrl: String?,
     ownDisplayName: String?,
     friendsNotes: List<FeedNoteItem>,
-    currentUserId: String?,
     onOpenNoteSheet: () -> Unit,
     onNoteClick: (FeedNoteItem) -> Unit
 ) {
@@ -814,9 +1074,10 @@ private fun NoteStripCell(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = label,
+                text = ChatBidiFormatter.isolateFirstStrong(label),
                 color = colors.secondaryText,
                 fontSize = 11.5.sp,
+                style = TextStyle(textDirection = TextDirection.ContentOrLtr),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
@@ -858,10 +1119,11 @@ private fun ThoughtBubbleCard(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = content,
+                text = ChatBidiFormatter.isolateFirstStrong(content),
                 color = colors.primaryText,
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.SemiBold,
+                style = TextStyle(textDirection = TextDirection.ContentOrLtr),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
@@ -869,7 +1131,6 @@ private fun ThoughtBubbleCard(
             )
         }
 
-        // Two distinct bordered tail dots sitting cleanly above the avatar's top-start edge.
         Column(
             modifier = Modifier.padding(start = 15.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -895,11 +1156,7 @@ private fun ThoughtBubbleCard(
 }
 
 /**
- * Redesigned Note Interaction Bottom Sheet shown when a friend's note is tapped:
- * - Compact @handle + active timestamp + "View profile" header
- * - Centered Hero Thought-Bubble with two tail dots over a 76dp avatar
- * - Crimson Heart Like button anchored cleanly at Alignment.BottomEnd of the avatar
- * - Bold display name + verified badge and a 50dp capsule reply bar with 42dp send button
+ * Note Interaction Bottom Sheet shown when a friend's note is tapped.
  */
 @Composable
 internal fun DmNoteReplySheet(
@@ -970,7 +1227,6 @@ internal fun DmNoteReplySheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Compact top header: @username + active status at start, View profile pill at end
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -978,7 +1234,7 @@ internal fun DmNoteReplySheet(
                 Column(modifier = Modifier.weight(1f)) {
                     if (!handleText.isNullOrBlank()) {
                         Text(
-                            text = "\u2066@$handleText\u2069",
+                            text = ChatBidiFormatter.isolateLtr("@$handleText"),
                             color = colors.primaryText,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -1017,7 +1273,6 @@ internal fun DmNoteReplySheet(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Centered Hero Stage: Note Bubble -> 2 Tail Dots -> 76dp Avatar + Like Badge -> Display Name
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -1044,7 +1299,7 @@ internal fun DmNoteReplySheet(
                         fontWeight = FontWeight.Bold,
                         lineHeight = 22.sp,
                         textAlign = TextAlign.Center,
-                        style = TextStyle(textDirection = TextDirection.Content)
+                        style = TextStyle(textDirection = TextDirection.ContentOrLtr)
                     )
                 }
 
@@ -1154,10 +1409,11 @@ internal fun DmNoteReplySheet(
                     horizontalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        text = authorName,
+                        text = ChatBidiFormatter.isolateFirstStrong(authorName),
                         color = colors.primaryText,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold,
+                        style = TextStyle(textDirection = TextDirection.ContentOrLtr),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
@@ -1171,7 +1427,6 @@ internal fun DmNoteReplySheet(
 
             Spacer(modifier = Modifier.height(22.dp))
 
-            // 50dp Capsule Reply Input with 42dp blue send button
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1200,7 +1455,7 @@ internal fun DmNoteReplySheet(
                             color = colors.primaryText,
                             fontSize = 14.5.sp,
                             lineHeight = 20.sp,
-                            textDirection = TextDirection.Content,
+                            textDirection = TextDirection.ContentOrLtr,
                             textAlign = if (isRtlText(replyText, strings.isRtl)) TextAlign.Right else TextAlign.Left
                         ),
                         cursorBrush = SolidColor(colors.primaryBlue),
@@ -1235,25 +1490,67 @@ internal fun DmNoteReplySheet(
     }
 }
 
+private enum class InboxOutgoingTickState {
+    NONE,
+    PENDING,
+    SENT,
+    READ
+}
+
 /**
- * Conversation Row (72dp min, 16dp horizontal, 8dp vertical, press feedback = soft highlight without ripple)
+ * Conversation Row (72dp min height, 16dp horizontal, 8dp vertical, 56dp avatar,
+ * BiDi-safe previews, outgoing ✓/✓✓ read ticks, pinned/muted indicators, and spring-animated unread badge).
  */
 @Composable
 private fun DmConversationRow(
     item: DmInboxItem,
+    currentUserId: String?,
+    activeDmDetail: DmConversationDetail?,
+    chatColors: ChatColors,
+    reduceMotion: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
     highlightQuery: String = ""
 ) {
     val colors = BuildXTheme.colors
-    val isUnread = item.unreadCount > 0 || item.isMarkedUnread
+    val isUnread = item.effectiveIsUnread
+    val isMuted = item.effectiveIsMuted
+
+    val isOutgoingLastMessage = remember(item.senderFirstName, item.effectiveLastMessageSenderId, currentUserId, item.effectiveLastMessageText, item.effectiveLastMessageAt) {
+        val hasLastMessage = item.effectiveLastMessageText != null || item.effectiveLastMessageAt != null
+        hasLastMessage && (
+            item.senderFirstName == "You" ||
+                (!currentUserId.isNullOrBlank() && item.effectiveLastMessageSenderId == currentUserId)
+            )
+    }
+
+    val tickState = remember(item, activeDmDetail, currentUserId, isOutgoingLastMessage) {
+        if (!isOutgoingLastMessage) {
+            InboxOutgoingTickState.NONE
+        } else {
+            val lastId = item.effectiveLastMessageId
+            if (lastId != null && lastId.startsWith("local_")) {
+                InboxOutgoingTickState.PENDING
+            } else {
+                val detail = activeDmDetail?.takeIf { it.conversation?.id == item.effectiveId }
+                val peerRead = detail?.participants?.any { p ->
+                    p.userId != currentUserId && (
+                        (lastId != null && p.lastReadMessageId == lastId) ||
+                            (!p.lastReadAt.isNullOrBlank() && !item.effectiveLastMessageAt.isNullOrBlank() &&
+                                p.lastReadAt >= item.effectiveLastMessageAt!!)
+                        )
+                } ?: false
+                if (peerRead) InboxOutgoingTickState.READ else InboxOutgoingTickState.SENT
+            }
+        }
+    }
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = 72.dp)
-            .pointerInput(Unit) {
+            .pointerInput(item.effectiveId) {
                 detectTapGestures(
                     onTap = { onClick() },
                     onLongPress = { onLongClick() }
@@ -1265,7 +1562,7 @@ private fun DmConversationRow(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 56dp Avatar Container (Single or Composite 2-4 members, never showing member count)
+            // 56dp Avatar Container (Single or Composite 2-member)
             DmConversationAvatar(
                 item = item,
                 modifier = Modifier.size(56.dp)
@@ -1278,7 +1575,7 @@ private fun DmConversationRow(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.Center
             ) {
-                // Line 1: Name + inline VerifiedBadge | Localized Timestamp (blue when unread)
+                // Line 1: Name + VerifiedBadge | Outgoing Read Tick + Localized Timestamp
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1288,12 +1585,18 @@ private fun DmConversationRow(
                         modifier = Modifier.weight(1f),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val titleText = "\u2068${item.effectiveTitle}\u2069"
+                        val isolatedTitle = ChatBidiFormatter.isolateFirstStrong(item.effectiveTitle)
+                        val titleAnnotated = rememberHighlightedText(
+                            text = isolatedTitle,
+                            query = highlightQuery,
+                            highlightColor = colors.primaryBlue
+                        )
                         Text(
-                            text = titleText,
+                            text = titleAnnotated,
                             color = colors.primaryText,
-                            fontSize = 16.sp,
-                            fontWeight = if (isUnread) FontWeight.Bold else FontWeight.SemiBold,
+                            style = ChatTypography.inboxTitle.copy(
+                                fontWeight = if (isUnread) FontWeight.Bold else FontWeight.SemiBold
+                            ),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false)
@@ -1307,31 +1610,88 @@ private fun DmConversationRow(
 
                     Spacer(modifier = Modifier.width(8.dp))
 
-                    // Localized short timestamp
-                    val timeText = formatLocalizedTime(item.lastMessageAt ?: item.lastActivityAt)
-                    Text(
-                        text = timeText,
-                        color = if (isUnread) colors.primaryBlue else colors.secondaryText,
-                        fontSize = 12.sp,
-                        fontWeight = if (isUnread) FontWeight.Bold else FontWeight.Normal
-                    )
+                    // Locked LTR cluster for outgoing read tick (✓ / ✓✓) + tabular timestamp
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            if (tickState != InboxOutgoingTickState.NONE) {
+                                AnimatedContent(
+                                    targetState = tickState,
+                                    transitionSpec = {
+                                        if (reduceMotion) {
+                                            fadeIn(tween(0)) togetherWith fadeOut(tween(0))
+                                        } else {
+                                            (fadeIn(ChatMotion.interactiveSpring()) + scaleIn(
+                                                initialScale = 0.72f,
+                                                animationSpec = spring(dampingRatio = 0.65f, stiffness = 500f)
+                                            )) togetherWith fadeOut(tween(90))
+                                        }
+                                    },
+                                    label = "inbox_tick_transition"
+                                ) { state ->
+                                    when (state) {
+                                        InboxOutgoingTickState.PENDING -> Icon(
+                                            painter = painterResource(id = R.drawable.ic_dm_clock),
+                                            contentDescription = null,
+                                            tint = colors.secondaryText,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        InboxOutgoingTickState.SENT -> Icon(
+                                            painter = painterResource(id = R.drawable.ic_check_single),
+                                            contentDescription = null,
+                                            tint = colors.secondaryText,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        InboxOutgoingTickState.READ -> Icon(
+                                            painter = painterResource(id = R.drawable.ic_check_double),
+                                            contentDescription = null,
+                                            tint = chatColors.inboxCheckReadAccent,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        InboxOutgoingTickState.NONE -> {}
+                                    }
+                                }
+                            }
+
+                            val timeText = formatLocalizedTime(item.effectiveLastMessageAt)
+                            if (timeText.isNotEmpty()) {
+                                Text(
+                                    text = ChatBidiFormatter.isolateLtr(timeText),
+                                    color = if (isUnread) colors.primaryBlue else colors.secondaryText,
+                                    style = ChatTypography.inboxTime.copy(
+                                        fontWeight = if (isUnread) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                )
+                            }
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(2.dp))
 
-                // Line 2: Sender Prefix + Preview Text | Trailing Status (pin, mute, unread badge)
+                // Line 2: BiDi-safe Preview Text | Trailing Status (pin, mute, spring unread badge)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Preview segment
-                    val previewString = buildConversationPreview(item)
-                    Text(
+                    val isRtlLayout = LocalLayoutDirection.current == LayoutDirection.Rtl
+                    val previewString = buildConversationPreview(item, isRtlLayout = isRtlLayout)
+                    val previewAnnotated = rememberHighlightedText(
                         text = previewString,
+                        query = highlightQuery,
+                        highlightColor = colors.primaryBlue
+                    )
+                    Text(
+                        text = previewAnnotated,
                         color = if (isUnread) colors.primaryText else colors.secondaryText,
-                        fontSize = 14.sp,
-                        fontWeight = if (isUnread) FontWeight.SemiBold else FontWeight.Normal,
+                        style = ChatTypography.inboxPreview.copy(
+                            fontWeight = if (isUnread) FontWeight.SemiBold else FontWeight.Normal,
+                            textDirection = if (isRtlLayout) TextDirection.Rtl else TextDirection.Ltr
+                        ),
+                        textAlign = TextAlign.Start,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
@@ -1339,30 +1699,55 @@ private fun DmConversationRow(
 
                     Spacer(modifier = Modifier.width(8.dp))
 
-                    // Trailing indicators (pin 14dp, bell-off 14dp, unread badge pill)
+                    // Trailing indicators (pin 14dp, bell-off 14dp, spring-animated unread badge pill)
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (item.isPinned) {
+                        AnimatedVisibility(
+                            visible = item.isPinned,
+                            enter = if (reduceMotion) fadeIn(tween(0)) else fadeIn(ChatMotion.interactiveSpring()) + scaleIn(
+                                initialScale = 0.6f,
+                                animationSpec = spring(dampingRatio = 0.65f, stiffness = 500f)
+                            ),
+                            exit = fadeOut(spring(stiffness = 550f)) + scaleOut(targetScale = 0.6f)
+                        ) {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_pin),
                                 contentDescription = "Pinned",
-                                tint = colors.secondaryText,
+                                tint = chatColors.pinnedBadgeTint,
                                 modifier = Modifier.size(14.dp)
                             )
                         }
 
-                        if (item.isMuted) {
+                        AnimatedVisibility(
+                            visible = isMuted,
+                            enter = if (reduceMotion) fadeIn(tween(0)) else fadeIn(ChatMotion.interactiveSpring()) + scaleIn(
+                                initialScale = 0.6f,
+                                animationSpec = spring(dampingRatio = 0.65f, stiffness = 500f)
+                            ),
+                            exit = fadeOut(spring(stiffness = 550f)) + scaleOut(targetScale = 0.6f)
+                        ) {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_bell_off),
                                 contentDescription = "Muted",
-                                tint = colors.secondaryText,
+                                tint = chatColors.pinnedBadgeTint,
                                 modifier = Modifier.size(14.dp)
                             )
                         }
 
-                        if (isUnread) {
+                        AnimatedVisibility(
+                            visible = isUnread,
+                            enter = if (reduceMotion) {
+                                fadeIn(tween(0))
+                            } else {
+                                fadeIn(ChatMotion.interactiveSpring()) + scaleIn(
+                                    initialScale = 0.45f,
+                                    animationSpec = spring(dampingRatio = 0.60f, stiffness = 500f)
+                                )
+                            },
+                            exit = fadeOut(spring(stiffness = 550f)) + scaleOut(targetScale = 0.45f)
+                        ) {
                             val badgeCount = item.unreadCount
                             val countText = if (badgeCount > 99) "99+" else if (badgeCount > 0) badgeCount.toString() else "•"
                             Box(
@@ -1370,20 +1755,62 @@ private fun DmConversationRow(
                                     .height(20.dp)
                                     .defaultMinSize(minWidth = 20.dp)
                                     .clip(CircleShape)
-                                    .background(if (item.isMuted) colors.secondaryText else colors.primaryBlue)
+                                    .background(if (isMuted) chatColors.unreadBadgeMutedBg else chatColors.unreadBadgeBg)
                                     .padding(horizontal = 5.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(
-                                    text = countText,
-                                    color = Color.White,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                                AnimatedContent(
+                                    targetState = countText,
+                                    transitionSpec = {
+                                        if (reduceMotion) {
+                                            fadeIn(tween(0)) togetherWith fadeOut(tween(0))
+                                        } else {
+                                            (fadeIn(ChatMotion.interactiveSpring()) + scaleIn(
+                                                initialScale = 0.72f,
+                                                animationSpec = spring(dampingRatio = 0.62f, stiffness = 500f)
+                                            )) togetherWith (fadeOut(tween(80)) + scaleOut(targetScale = 0.8f))
+                                        }
+                                    },
+                                    label = "unread_badge_count"
+                                ) { targetCount ->
+                                    Text(
+                                        text = targetCount,
+                                        color = chatColors.unreadBadgeText,
+                                        style = ChatTypography.unreadBadge
+                                    )
+                                }
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun rememberHighlightedText(
+    text: String,
+    query: String,
+    highlightColor: Color
+): AnnotatedString = remember(text, query, highlightColor) {
+    if (query.isBlank()) {
+        AnnotatedString(text)
+    } else {
+        buildAnnotatedString {
+            append(text)
+            var startIndex = text.indexOf(query, ignoreCase = true)
+            while (startIndex >= 0) {
+                val endIndex = startIndex + query.length
+                addStyle(
+                    style = SpanStyle(
+                        color = highlightColor,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    start = startIndex,
+                    end = endIndex
+                )
+                startIndex = text.indexOf(query, startIndex = endIndex, ignoreCase = true)
             }
         }
     }
@@ -1403,7 +1830,7 @@ private fun DmConversationAvatar(
 ) {
     val colors = BuildXTheme.colors
     val isGroup = item.kind == "group"
-    val photo = item.avatarUrl
+    val photo = item.effectiveAvatarUrl
 
     if (!isGroup || !photo.isNullOrBlank()) {
         Box(
@@ -1501,29 +1928,37 @@ private fun GroupAvatarCircle(
 }
 
 /**
- * Builds preview string with Bidi isolation, prefixes ("You: " or "Ali: "), and types.
+ * Builds preview string with strict Unicode BiDi isolation via `ChatBidiFormatter`
+ * so mixed-direction prefixes ("You: هلا" or "أنت: Hello") never invert the prefix or colon.
  */
 @Composable
-private fun buildConversationPreview(item: DmInboxItem): String {
+private fun buildConversationPreview(
+    item: DmInboxItem,
+    isRtlLayout: Boolean = LocalLayoutDirection.current == LayoutDirection.Rtl
+): String {
     val isGroup = item.kind == "group"
-    val lastText = item.lastMessageText
+    val lastText = item.effectiveLastMessageText
 
-    if (lastText == null && item.lastMessageAt == null) {
+    if (lastText == null && item.effectiveLastMessageAt == null) {
         return stringResource(R.string.dm_no_messages_yet)
     }
 
-    val prefix = when {
-        item.senderFirstName == "You" -> stringResource(R.string.dm_you_prefix)
-        isGroup && !item.senderFirstName.isNullOrBlank() -> "${item.senderFirstName}: "
-        else -> ""
+    val rawPrefix = when {
+        item.senderFirstName == "You" -> stringResource(R.string.dm_you_prefix).removeSuffix(":").trim()
+        isGroup && !item.senderFirstName.isNullOrBlank() -> item.senderFirstName.trim()
+        else -> null
     }
 
-    val content = when (item.lastMessageType) {
+    val content = when (item.effectiveLastMessageType) {
         "image", "media" -> stringResource(R.string.dm_media_photo)
         else -> lastText ?: stringResource(R.string.dm_no_messages_yet)
     }
 
-    return "$prefix\u2068$content\u2069"
+    return ChatBidiFormatter.formatInboxPreview(
+        prefix = rawPrefix,
+        body = content,
+        isRtlContext = isRtlLayout
+    )
 }
 
 /**
@@ -1602,9 +2037,6 @@ private fun formatLocalizedTime(isoString: String?): String {
     }
 }
 
-/**
- * Contextual Empty States per Tab
- */
 @Composable
 private fun DmContextualEmptyState(
     tab: DmFilterTab,
@@ -1639,7 +2071,7 @@ private fun DmContextualEmptyState(
 
     Column(
         modifier = Modifier
-            .fillMaxSize()
+            .fillMaxWidth()
             .padding(horizontal = 32.dp, vertical = 56.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -1685,7 +2117,7 @@ private fun DmContextualEmptyState(
                 modifier = Modifier
                     .clip(RoundedCornerShape(20.dp))
                     .background(colors.primaryBlue)
-                    .clickable(onClick = actionClick)
+                    .pressScaleClickable(onClick = actionClick)
                     .padding(horizontal = 22.dp, vertical = 10.dp)
             ) {
                 Text(
@@ -1699,9 +2131,6 @@ private fun DmContextualEmptyState(
     }
 }
 
-/**
- * Skeleton Loading rows on #F1F3F0
- */
 @Composable
 private fun DmInboxSkeletonList() {
     val colors = BuildXTheme.colors
@@ -1747,29 +2176,37 @@ private fun DmInboxSkeletonList() {
     }
 }
 
-/**
- * Search results with live text query highlighting
- */
 @Composable
 private fun DmSearchResultsContent(
     query: String,
     conversations: List<DmInboxItem>,
     people: List<PersonSearchResult>,
     isLoadingPeople: Boolean,
+    activeDmDetail: DmConversationDetail?,
+    currentUserId: String?,
+    chatColors: ChatColors,
+    reduceMotion: Boolean,
+    contentTopPadding: androidx.compose.ui.unit.Dp,
+    contentBottomPadding: androidx.compose.ui.unit.Dp,
     onConversationClick: (String) -> Unit,
     onPersonClick: (String) -> Unit
 ) {
     val colors = BuildXTheme.colors
     val matchedConvs = conversations.filter {
         it.effectiveTitle.contains(query, ignoreCase = true) ||
-        (it.lastMessageText?.contains(query, ignoreCase = true) == true)
+            (it.effectiveLastMessageText?.contains(query, ignoreCase = true) == true)
     }
 
     if (matchedConvs.isEmpty() && people.isEmpty() && !isLoadingPeople) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(32.dp),
+                .padding(
+                    top = contentTopPadding + 32.dp,
+                    bottom = contentBottomPadding + 32.dp,
+                    start = 32.dp,
+                    end = 32.dp
+                ),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -1797,7 +2234,10 @@ private fun DmSearchResultsContent(
     } else {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(vertical = 8.dp)
+            contentPadding = PaddingValues(
+                top = contentTopPadding + 4.dp,
+                bottom = contentBottomPadding
+            )
         ) {
             if (matchedConvs.isNotEmpty()) {
                 item {
@@ -1812,6 +2252,10 @@ private fun DmSearchResultsContent(
                 items(matchedConvs, key = { "conv_${it.effectiveId}" }) { item ->
                     DmConversationRow(
                         item = item,
+                        currentUserId = currentUserId,
+                        activeDmDetail = activeDmDetail,
+                        chatColors = chatColors,
+                        reduceMotion = reduceMotion,
                         onClick = { onConversationClick(item.effectiveId) },
                         onLongClick = {},
                         highlightQuery = query
@@ -1858,10 +2302,13 @@ private fun DmSearchResultsContent(
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = person.displayName.ifBlank { person.username },
+                                    text = ChatBidiFormatter.isolateFirstStrong(
+                                        person.displayName.ifBlank { person.username }
+                                    ),
                                     color = colors.primaryText,
                                     fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    style = TextStyle(textDirection = TextDirection.ContentOrLtr)
                                 )
                                 if (person.isVerified) {
                                     Spacer(modifier = Modifier.width(4.dp))
@@ -1869,9 +2316,10 @@ private fun DmSearchResultsContent(
                                 }
                             }
                             Text(
-                                text = "@${person.username}",
+                                text = ChatBidiFormatter.isolateLtr("@${person.username}"),
                                 color = colors.secondaryText,
-                                fontSize = 13.sp
+                                fontSize = 13.sp,
+                                style = TextStyle(textDirection = TextDirection.Ltr)
                             )
                         }
                     }

@@ -2,11 +2,15 @@ package app.buildx.chat.ui.screens
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -34,14 +38,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.buildx.chat.R
 import app.buildx.chat.data.model.DmInboxItem
+import app.buildx.chat.ui.chat.ChatGlassCapsuleContainer
+import app.buildx.chat.ui.chat.ChatGlassTokens
+import app.buildx.chat.ui.chat.ChatMotion
+import app.buildx.chat.ui.chat.rememberReduceMotion
+import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.theme.BuildXTheme
-import app.buildx.chat.ui.theme.softShadow
 
 sealed class DmPopupView {
     object Main : DmPopupView()
@@ -65,24 +75,54 @@ fun DmConversationPopupCard(
     modifier: Modifier = Modifier
 ) {
     val colors = BuildXTheme.colors
+    val reduceMotion = rememberReduceMotion()
     var currentView by remember { mutableStateOf<DmPopupView>(DmPopupView.Main) }
 
-    Box(
-        modifier = modifier
-            .width(232.dp)
-            .softShadow(
-                color = colors.composerShadowColor,
-                cornerRadius = 16.dp,
-                blurRadius = 22.dp,
-                offsetY = 6.dp
-            )
-            .clip(RoundedCornerShape(16.dp))
-            .background(colors.cardBackground)
-            .border(1.dp, colors.subtleSurfaceBorder, RoundedCornerShape(16.dp))
+    val glassCardColor = colors.cardBackground.copy(
+        alpha = if (colors.isDark) 0.92f else 0.96f
+    )
+
+    ChatGlassCapsuleContainer(
+        shape = RoundedCornerShape(16.dp),
+        glassColor = glassCardColor,
+        borderColor = colors.subtleSurfaceBorder,
+        shadowColor = colors.composerShadowColor,
+        cornerRadius = 16.dp,
+        shadowBlur = 22.dp,
+        shadowOffsetY = 6.dp,
+        blurRadius = ChatGlassTokens.MenuBlurRadius,
+        isDark = colors.isDark,
+        borderWidth = 1.dp,
+        modifier = modifier.width(232.dp)
     ) {
         AnimatedContent(
             targetState = currentView,
-            transitionSpec = { fadeIn() togetherWith fadeOut() },
+            transitionSpec = {
+                val enter = if (reduceMotion) {
+                    fadeIn(tween(0))
+                } else {
+                    fadeIn(ChatMotion.interactiveSpring()) + scaleIn(
+                        initialScale = 0.90f,
+                        animationSpec = spring(dampingRatio = 0.68f, stiffness = 480f)
+                    )
+                }
+                val exit = if (reduceMotion) {
+                    fadeOut(tween(0))
+                } else {
+                    fadeOut(spring(stiffness = 550f)) + scaleOut(
+                        targetScale = 0.94f,
+                        animationSpec = spring(stiffness = 550f)
+                    )
+                }
+                (enter togetherWith exit).using(
+                    SizeTransform(
+                        clip = true,
+                        sizeAnimationSpec = { _, _ ->
+                            if (reduceMotion) tween(0) else ChatMotion.layoutGestureSpring()
+                        }
+                    )
+                )
+            },
             label = "popup_morph"
         ) { view ->
             when (view) {
@@ -94,7 +134,7 @@ fun DmConversationPopupCard(
                             onDismiss()
                         },
                         onMuteClick = {
-                            if (item.isMuted) {
+                            if (item.effectiveIsMuted) {
                                 onMuteSelect(null)
                                 onDismiss()
                             } else {
@@ -171,6 +211,7 @@ private fun MainActionsView(
     onLeaveClick: () -> Unit
 ) {
     val isGroup = item.kind == "group"
+    val isMuted = item.effectiveIsMuted
 
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
         // 1. Pin / Unpin
@@ -182,13 +223,13 @@ private fun MainActionsView(
 
         // 2. Mute / Unmute
         PopupActionRow(
-            label = if (item.isMuted) stringResource(R.string.dm_action_unmute) else stringResource(R.string.dm_action_mute),
-            iconRes = if (item.isMuted) R.drawable.ic_bell else R.drawable.ic_bell_off,
+            label = if (isMuted) stringResource(R.string.dm_action_unmute) else stringResource(R.string.dm_action_mute),
+            iconRes = if (isMuted) R.drawable.ic_bell else R.drawable.ic_bell_off,
             onClick = onMuteClick
         )
 
         // 3. Mark Read / Unread
-        val isUnread = item.unreadCount > 0 || item.isMarkedUnread
+        val isUnread = item.effectiveIsUnread
         PopupActionRow(
             label = if (isUnread) stringResource(R.string.dm_action_mark_read) else stringResource(R.string.dm_action_mark_unread),
             iconRes = if (isUnread) R.drawable.ic_mark_read else R.drawable.ic_mark_unread,
@@ -259,7 +300,8 @@ private fun MuteSelectorView(
                 text = stringResource(R.string.dm_mute_notifications_title),
                 color = colors.primaryText,
                 fontSize = 14.sp,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                style = TextStyle(textDirection = TextDirection.ContentOrLtr)
             )
         }
 
@@ -307,7 +349,8 @@ private fun ConfirmDeleteView(
             text = stringResource(R.string.dm_confirm_delete_title),
             color = colors.primaryText,
             fontSize = 16.sp,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
+            style = TextStyle(textDirection = TextDirection.ContentOrLtr)
         )
 
         Spacer(modifier = Modifier.height(6.dp))
@@ -316,7 +359,8 @@ private fun ConfirmDeleteView(
             text = stringResource(R.string.dm_confirm_delete_body),
             color = colors.secondaryText,
             fontSize = 13.sp,
-            lineHeight = 18.sp
+            lineHeight = 18.sp,
+            style = TextStyle(textDirection = TextDirection.ContentOrLtr)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -329,7 +373,7 @@ private fun ConfirmDeleteView(
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable(onClick = onCancel)
+                    .pressScaleClickable(onClick = onCancel)
                     .padding(horizontal = 14.dp, vertical = 8.dp)
             ) {
                 Text(
@@ -346,7 +390,7 @@ private fun ConfirmDeleteView(
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))
                     .background(colors.destructiveRed)
-                    .clickable(onClick = onConfirm)
+                    .pressScaleClickable(onClick = onConfirm)
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 Text(
@@ -381,7 +425,8 @@ private fun ConfirmLeaveView(
             },
             color = colors.primaryText,
             fontSize = 16.sp,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
+            style = TextStyle(textDirection = TextDirection.ContentOrLtr)
         )
 
         Spacer(modifier = Modifier.height(6.dp))
@@ -399,7 +444,8 @@ private fun ConfirmLeaveView(
             text = bodyText,
             color = colors.secondaryText,
             fontSize = 13.sp,
-            lineHeight = 18.sp
+            lineHeight = 18.sp,
+            style = TextStyle(textDirection = TextDirection.ContentOrLtr)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -412,7 +458,7 @@ private fun ConfirmLeaveView(
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable(onClick = onCancel)
+                    .pressScaleClickable(onClick = onCancel)
                     .padding(horizontal = 14.dp, vertical = 8.dp)
             ) {
                 Text(
@@ -429,7 +475,7 @@ private fun ConfirmLeaveView(
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))
                     .background(colors.destructiveRed)
-                    .clickable(onClick = onConfirm)
+                    .pressScaleClickable(onClick = onConfirm)
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 Text(
@@ -461,7 +507,7 @@ private fun PopupActionRow(
         modifier = Modifier
             .fillMaxWidth()
             .height(48.dp)
-            .clickable(onClick = onClick)
+            .pressScaleClickable(onClick = onClick)
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -472,6 +518,7 @@ private fun PopupActionRow(
             fontSize = 14.5.sp,
             fontWeight = FontWeight.Medium,
             textAlign = TextAlign.Start,
+            style = TextStyle(textDirection = TextDirection.ContentOrLtr),
             modifier = Modifier.weight(1f)
         )
         Icon(

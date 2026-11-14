@@ -1,9 +1,9 @@
 package app.buildx.chat.ui.screens
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,18 +38,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.buildx.chat.R
 import app.buildx.chat.data.model.DmInboxItem
+import app.buildx.chat.ui.chat.ChatBidiFormatter
+import app.buildx.chat.ui.chat.ChatDimens
+import app.buildx.chat.ui.chat.ChatMotion
+import app.buildx.chat.ui.chat.rememberReduceMotion
 import app.buildx.chat.ui.components.VerifiedBadge
+import app.buildx.chat.ui.components.pressScaleClickable
 import app.buildx.chat.ui.theme.BuildXTheme
 import coil.compose.AsyncImage
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,6 +76,19 @@ fun DmConversationActionsSheet(
     val colors = BuildXTheme.colors
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    val reduceMotion = rememberReduceMotion()
+    val entranceScale = remember { Animatable(if (reduceMotion) 1f else 0.94f) }
+    val entranceAlpha = remember { Animatable(if (reduceMotion) 1f else 0f) }
+
+    LaunchedEffect(Unit) {
+        if (reduceMotion) {
+            entranceScale.snapTo(1f)
+            entranceAlpha.snapTo(1f)
+        } else {
+            launch { entranceScale.animateTo(1f, ChatMotion.interactiveSpring()) }
+            launch { entranceAlpha.animateTo(1f, tween(160)) }
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -86,6 +110,12 @@ fun DmConversationActionsSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .graphicsLayer {
+                    scaleX = entranceScale.value
+                    scaleY = entranceScale.value
+                    alpha = entranceAlpha.value
+                    transformOrigin = TransformOrigin(0.5f, 1f)
+                }
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp, vertical = 6.dp)
         ) {
@@ -193,10 +223,11 @@ fun DmConversationActionsSheet(
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = displayName,
+                            text = ChatBidiFormatter.isolateFirstStrong(displayName),
                             fontSize = 16.5.sp,
                             fontWeight = FontWeight.Bold,
                             color = colors.primaryText,
+                            style = TextStyle(textDirection = TextDirection.ContentOrLtr),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -211,9 +242,10 @@ fun DmConversationActionsSheet(
                     val subtitle = if (item.kind == "direct") {
                         val statusList = mutableListOf<String>()
                         if (item.isPinned) statusList.add(stringResource(R.string.dm_pinned_conversations))
-                        if (item.isMuted) statusList.add(stringResource(R.string.dm_mute_chat))
+                        if (item.effectiveIsMuted) statusList.add(stringResource(R.string.dm_mute_chat))
                         if (!item.peer?.handle.isNullOrBlank()) {
-                            if (statusList.isEmpty()) "@${item.peer.handle}" else "${statusList.joinToString(" · ")} • @${item.peer.handle}"
+                            val handleTag = ChatBidiFormatter.isolateLtr("@${item.peer.handle}")
+                            if (statusList.isEmpty()) handleTag else "${statusList.joinToString(" · ")} • $handleTag"
                         } else {
                             statusList.joinToString(" · ")
                         }
@@ -223,9 +255,10 @@ fun DmConversationActionsSheet(
 
                     if (subtitle.isNotEmpty()) {
                         Text(
-                            text = subtitle,
+                            text = ChatBidiFormatter.isolateFirstStrong(subtitle),
                             fontSize = 13.sp,
                             color = colors.secondaryText,
+                            style = TextStyle(textDirection = TextDirection.ContentOrLtr),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -236,7 +269,7 @@ fun DmConversationActionsSheet(
             Spacer(modifier = Modifier.height(4.dp))
             HorizontalDivider(
                 color = colors.hairlineBorder,
-                thickness = 0.7.dp,
+                thickness = ChatDimens.GlassSurfaceBorderWidth,
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(modifier = Modifier.height(8.dp))
@@ -254,9 +287,9 @@ fun DmConversationActionsSheet(
 
             // Action 2: Mute / Unmute Notifications
             ActionRow(
-                iconRes = if (item.isMuted) R.drawable.ic_bell else R.drawable.ic_volume_off,
-                title = if (item.isMuted) stringResource(R.string.dm_unmute_chat) else stringResource(R.string.dm_mute_chat),
-                tint = if (item.isMuted) colors.primaryBlue else colors.primaryText,
+                iconRes = if (item.effectiveIsMuted) R.drawable.ic_bell else R.drawable.ic_volume_off,
+                title = if (item.effectiveIsMuted) stringResource(R.string.dm_unmute_chat) else stringResource(R.string.dm_mute_chat),
+                tint = if (item.effectiveIsMuted) colors.primaryBlue else colors.primaryText,
                 onClick = {
                     onDismiss()
                     onToggleMute()
@@ -264,7 +297,7 @@ fun DmConversationActionsSheet(
             )
 
             // Action 3: Mark as Read / Mark as Unread
-            val isUnread = item.unreadCount > 0 || item.isMarkedUnread
+            val isUnread = item.effectiveIsUnread
             ActionRow(
                 iconRes = if (isUnread) R.drawable.ic_check else R.drawable.ic_chat_bubble,
                 title = if (isUnread) stringResource(R.string.dm_mark_read) else stringResource(R.string.dm_mark_unread),
@@ -302,7 +335,7 @@ fun DmConversationActionsSheet(
             ActionRow(
                 iconRes = R.drawable.ic_trash,
                 title = if (item.kind == "group") stringResource(R.string.dm_leave_group) else stringResource(R.string.dm_delete_chat),
-                tint = Color(0xFFE53935),
+                tint = colors.destructiveRed,
                 isDestructive = true,
                 onClick = {
                     showDeleteConfirmDialog = true
@@ -342,7 +375,7 @@ fun DmConversationActionsSheet(
                         onDeleteOrLeave()
                     },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFE53935),
+                        containerColor = colors.destructiveRed,
                         contentColor = Color.White
                     ),
                     shape = RoundedCornerShape(12.dp)
@@ -380,7 +413,7 @@ private fun ActionRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
+            .pressScaleClickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -390,7 +423,7 @@ private fun ActionRow(
                 .clip(CircleShape)
                 .background(
                     if (isDestructive) {
-                        Color(0xFFE53935).copy(alpha = 0.12f)
+                        colors.destructiveRed.copy(alpha = 0.12f)
                     } else {
                         colors.surfaceMuted
                     }
@@ -411,7 +444,7 @@ private fun ActionRow(
             text = title,
             fontSize = 15.5.sp,
             fontWeight = FontWeight.SemiBold,
-            color = if (isDestructive) Color(0xFFE53935) else colors.primaryText,
+            color = if (isDestructive) colors.destructiveRed else colors.primaryText,
             modifier = Modifier.weight(1f)
         )
     }
