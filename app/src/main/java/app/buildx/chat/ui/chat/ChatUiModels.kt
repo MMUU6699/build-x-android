@@ -43,8 +43,20 @@ sealed interface ChatListItem {
         val seenParticipants: List<DmParticipant>,
         val resolvedSenderName: String? = null,
         val resolvedSenderHandle: String? = null,
-        val senderIsVerified: Boolean = false
-    ) : ChatListItem
+        val senderIsVerified: Boolean = false,
+        val isNewlyInserted: Boolean = false,
+        val isFirstInCluster: Boolean = (position == ChatBubblePosition.SINGLE || position == ChatBubblePosition.FIRST),
+        val isLastInCluster: Boolean = (position == ChatBubblePosition.SINGLE || position == ChatBubblePosition.LAST),
+        val topCornerDp: Float = if (isFirstInCluster) ChatDimens.BubbleCornerLarge.value else ChatDimens.BubbleCornerGrouped.value,
+        val bottomCornerDp: Float = if (isLastInCluster) ChatDimens.BubbleCornerLarge.value else ChatDimens.BubbleCornerGrouped.value,
+        val isolatedSenderName: String? = null,
+        val isolatedFormattedTime: String = formattedTime,
+        val isolatedReplySenderName: String? = null,
+        val isolatedReplyContent: String? = null
+    ) : ChatListItem {
+        val isGroupedWithNext: Boolean
+            get() = position == ChatBubblePosition.FIRST || position == ChatBubblePosition.MIDDLE
+    }
 
     @Immutable
     data class DateSeparator(
@@ -71,5 +83,17 @@ data class ChatHeaderUiState(
     val isPinned: Boolean,
     val isTyping: Boolean,
     val isOnline: Boolean,
-    val peerHandle: String?
+    val peerHandle: String?,
+    val isolatedTitle: String = title,
+    val isolatedSubtitle: String = subtitle
+)
+
+/**
+ * Canonical DM inbox badge counts derived from the unfiltered conversation list.
+ */
+@Immutable
+data class ChatInboxCounters(
+    val totalUnreadMessages: Int = 0,
+    val unreadConversationsCount: Int = 0,
+    val groupsCount: Int = 0
 )

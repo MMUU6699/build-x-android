@@ -1,8 +1,13 @@
 package app.buildx.chat
 
+import app.buildx.chat.data.model.DmConversationDetail
+import app.buildx.chat.data.model.DmConversationMetadata
+import app.buildx.chat.data.model.DmInboxItem
 import app.buildx.chat.data.model.DmMessage
 import app.buildx.chat.data.model.DmParticipant
+import app.buildx.chat.data.model.DmReplyPreview
 import app.buildx.chat.data.model.DmSendStatus
+import app.buildx.chat.ui.chat.ChatBidiFormatter
 import app.buildx.chat.ui.chat.ChatBubblePosition
 import app.buildx.chat.ui.chat.ChatDeliveryStatus
 import app.buildx.chat.ui.chat.ChatListItem
@@ -411,5 +416,176 @@ class ChatMessageMapperTest {
         assertEquals(2, dateLabels.size)
         assertEquals("Yesterday", dateLabels[1])
         assertFalse(dateLabels[0].contains(":"))
+    }
+
+    @Test
+    fun `clusterFlagsAndCornerDpReflectBubblePositionsAndSystemBreaks`() {
+        val messages = listOf(
+            msg("m1", "me", "2026-11-12T10:00:00Z"),
+            msg("m2", "me", "2026-11-12T10:00:25Z"),
+            msg("m3", "me", "2026-11-12T10:00:50Z"),
+            DmMessage(
+                id = "sys1",
+                conversationId = "c1",
+                senderId = "me",
+                messageType = "system",
+                content = "Pinned a message",
+                createdAt = "2026-11-12T10:01:05Z"
+            ),
+            msg("m4", "me", "2026-11-12T10:01:20Z")
+        )
+        val reversed = ChatMessageMapper.mapToReversedListItems(
+            messages = messages,
+            currentUserId = "me",
+            isDirect = true,
+            participants = emptyList(),
+            peerIntro = null,
+            defaultRtl = false,
+            zoneId = ZoneOffset.UTC,
+            locale = Locale.US
+        ).filterIsInstance<ChatListItem.MessageItem>()
+
+        // Reversed order: m4, sys1, m3, m2, m1
+        val byId = reversed.associateBy { it.message.id }
+        val m1 = byId.getValue("m1")
+        val m2 = byId.getValue("m2")
+        val m3 = byId.getValue("m3")
+        val m4 = byId.getValue("m4")
+
+        assertEquals(ChatBubblePosition.FIRST, m1.position)
+        assertTrue(m1.isFirstInCluster)
+        assertFalse(m1.isLastInCluster)
+        assertEquals(18f, m1.topCornerDp, 0.01f)
+        assertEquals(4f, m1.bottomCornerDp, 0.01f)
+
+        assertEquals(ChatBubblePosition.MIDDLE, m2.position)
+        assertFalse(m2.isFirstInCluster)
+        assertFalse(m2.isLastInCluster)
+        assertEquals(4f, m2.topCornerDp, 0.01f)
+        assertEquals(4f, m2.bottomCornerDp, 0.01f)
+
+        assertEquals(ChatBubblePosition.LAST, m3.position)
+        assertFalse(m3.isFirstInCluster)
+        assertTrue(m3.isLastInCluster)
+        assertEquals(4f, m3.topCornerDp, 0.01f)
+        assertEquals(18f, m3.bottomCornerDp, 0.01f)
+
+        // System message broke the cluster so m4 starts a fresh SINGLE bubble
+        assertEquals(ChatBubblePosition.SINGLE, m4.position)
+        assertTrue(m4.isFirstInCluster)
+        assertTrue(m4.isLastInCluster)
+        assertEquals(18f, m4.topCornerDp, 0.01f)
+        assertEquals(18f, m4.bottomCornerDp, 0.01f)
+    }
+
+    @Test
+    fun `newlyInsertedTrackingMarksOptimisticAndServerMatchedIds`() {
+        val messages = listOf(
+            msg("old", "me", "2026-11-12T10:00:00Z"),
+            msg("temp-uuid-1", "me", "2026-11-12T10:00:30Z", clientTempId = "client-1", status = DmSendStatus.SENDING)
+        )
+        val items = ChatMessageMapper.mapToReversedListItems(
+            messages = messages,
+            currentUserId = "me",
+            isDirect = true,
+            participants = emptyList(),
+            peerIntro = null,
+            defaultRtl = false,
+            zoneId = ZoneOffset.UTC,
+            locale = Locale.US,
+            newlyInsertedIds = setOf("client-1")
+        ).filterIsInstance<ChatListItem.MessageItem>().associateBy { it.message.id }
+
+        assertFalse(items.getValue("old").isNewlyInserted)
+        assertTrue(items.getValue("temp-uuid-1").isNewlyInserted)
+    }
+
+    @Test
+    fun `bidiFormatterIsolatesMixedArabicAndEnglishInboxPreviews`() {
+        assertTrue(ChatBidiFormatter.firstStrongIsRtl("مرحبا BuildX"))
+        assertFalse(ChatBidiFormatter.firstStrongIsRtl("BuildX مرحبا"))
+
+        val ltrPreview = ChatBidiFormatter.formatInboxPreview(
+            prefix = "You",
+            body = "مرحبا بالعالم!",
+            isRtlContext = false
+        )
+        assertTrue(ltrPreview.startsWith("${ChatBidiFormatter.FSI}You${ChatBidiFormatter.PDI}:${ChatBidiFormatter.LRM} "))
+        assertTrue(ltrPreview.endsWith("${ChatBidiFormatter.FSI}مرحبا بالعالم!${ChatBidiFormatter.PDI}"))
+
+        val rtlPreview = ChatBidiFormatter.formatInboxPreview(
+            prefix = "أحمد",
+            body = "Deploy build v2?",
+            isRtlContext = true
+        )
+        assertTrue(rtlPreview.contains("${ChatBidiFormatter.FSI}أحمد${ChatBidiFormatter.PDI}:${ChatBidiFormatter.RLM}"))
+        assertTrue(rtlPreview.endsWith("${ChatBidiFormatter.FSI}Deploy build v2?${ChatBidiFormatter.PDI}"))
+
+        val detail = DmConversationDetail(
+            success = true,
+            conversation = DmConversationMetadata(id = "g1", kind = "group", title = "فريق BuildX"),
+            participants = listOf(DmParticipant(userId = "me", status = "active"))
+        )
+        val header = ChatMessageMapper.mapHeaderState(
+            detail = detail,
+            currentUserId = "me",
+            typingUserIds = emptySet(),
+            membersFormat = { "$it members" }
+        )
+        assertEquals("فريق BuildX", header.title)
+        assertEquals("${ChatBidiFormatter.FSI}فريق BuildX${ChatBidiFormatter.PDI}", header.isolatedTitle)
+    }
+
+    @Test
+    fun `editAndDeleteHelpersUpdateMessagesAndReplyPreviewsAtomically`() {
+        val original = DmMessage(
+            id = "m1",
+            conversationId = "c1",
+            senderId = "me",
+            content = "Original",
+            createdAt = "2026-11-12T10:00:00Z"
+        )
+        val reply = DmMessage(
+            id = "m2",
+            conversationId = "c1",
+            senderId = "peer",
+            content = "Reply",
+            replyTo = DmReplyPreview(id = "m1", senderId = "me", content = "Original"),
+            createdAt = "2026-11-12T10:01:00Z"
+        )
+
+        val afterEdit = ChatMessageMapper.applyMessageEditToHistory(
+            messages = listOf(original, reply),
+            messageId = "m1",
+            newContent = "Edited text",
+            editedAtIso = "2026-11-12T10:02:00Z"
+        )
+        assertEquals("Edited text", afterEdit[0].content)
+        assertTrue(afterEdit[0].isEdited)
+        assertEquals("Edited text", afterEdit[1].replyTo?.content)
+
+        val afterDelete = ChatMessageMapper.applyMessageDeleteToHistory(
+            messages = afterEdit,
+            messageId = "m1",
+            deletedAtIso = "2026-11-12T10:03:00Z"
+        )
+        assertTrue(afterDelete[0].isDeleted)
+        assertFalse(afterDelete[0].isEdited)
+        assertEquals("", afterDelete[0].content)
+        assertTrue(afterDelete[1].replyTo?.isDeleted == true)
+        assertEquals("", afterDelete[1].replyTo?.content)
+    }
+
+    @Test
+    fun `computeInboxCountersIncludesMarkedUnreadAndGroups`() {
+        val items = listOf(
+            DmInboxItem(id = "c1", kind = "direct", unreadCount = 3),
+            DmInboxItem(id = "c2", kind = "group", unreadCount = 0, isMarkedUnread = true),
+            DmInboxItem(id = "c3", kind = "group", unreadCount = 2)
+        )
+        val counters = ChatMessageMapper.computeInboxCounters(items)
+        assertEquals(6, counters.totalUnreadMessages)
+        assertEquals(3, counters.unreadConversationsCount)
+        assertEquals(2, counters.groupsCount)
     }
 }

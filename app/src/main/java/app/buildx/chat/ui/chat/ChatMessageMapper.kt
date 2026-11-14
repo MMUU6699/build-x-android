@@ -1,6 +1,7 @@
 package app.buildx.chat.ui.chat
 
 import app.buildx.chat.data.model.DmConversationDetail
+import app.buildx.chat.data.model.DmInboxItem
 import app.buildx.chat.data.model.DmMessage
 import app.buildx.chat.data.model.DmParticipant
 import app.buildx.chat.data.model.DmSendStatus
@@ -12,6 +13,83 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
 import kotlin.math.max
+
+/**
+ * Pure Unicode BiDi isolation utilities safe for both Android UI and JVM unit tests.
+ * Uses FSI (\u2068), LRI (\u2066), RLI (\u2067), and PDI (\u2069) plus directional marks
+ * to prevent mixed Arabic/English strings, handles, timestamps, and prefixes from colliding.
+ */
+object ChatBidiFormatter {
+    const val LRM: Char = '\u200E'
+    const val RLM: Char = '\u200F'
+    const val LRI: Char = '\u2066'
+    const val RLI: Char = '\u2067'
+    const val FSI: Char = '\u2068'
+    const val PDI: Char = '\u2069'
+
+    fun firstStrongIsRtl(text: String, defaultRtl: Boolean = false): Boolean {
+        var i = 0
+        while (i < text.length) {
+            val cp = text.codePointAt(i)
+            when (Character.getDirectionality(cp)) {
+                Character.DIRECTIONALITY_RIGHT_TO_LEFT,
+                Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC,
+                Character.DIRECTIONALITY_RIGHT_TO_LEFT_EMBEDDING,
+                Character.DIRECTIONALITY_RIGHT_TO_LEFT_OVERRIDE,
+                Character.DIRECTIONALITY_RIGHT_TO_LEFT_ISOLATE -> return true
+                Character.DIRECTIONALITY_LEFT_TO_RIGHT,
+                Character.DIRECTIONALITY_LEFT_TO_RIGHT_EMBEDDING,
+                Character.DIRECTIONALITY_LEFT_TO_RIGHT_OVERRIDE,
+                Character.DIRECTIONALITY_LEFT_TO_RIGHT_ISOLATE -> return false
+            }
+            i += Character.charCount(cp)
+        }
+        return defaultRtl
+    }
+
+    /**
+     * Wraps [text] in Unicode First-Strong Isolate (`FSI ... PDI`).
+     */
+    fun isolateFirstStrong(text: String): String {
+        if (text.isBlank()) return text
+        if (text.length >= 2 && text.first() == FSI && text.last() == PDI) return text
+        return "$FSI$text$PDI"
+    }
+
+    /**
+     * Wraps [text] in an explicit LTR (`LRI ... PDI`) or RTL (`RLI ... PDI`) isolate.
+     */
+    fun isolateWithDirection(text: String, isRtl: Boolean): String {
+        if (text.isBlank()) return text
+        val open = if (isRtl) RLI else LRI
+        if (text.length >= 2 && text.first() == open && text.last() == PDI) return text
+        return "$open$text$PDI"
+    }
+
+    fun isolateLtr(text: String): String = isolateWithDirection(text, isRtl = false)
+
+    fun isolateRtl(text: String): String = isolateWithDirection(text, isRtl = true)
+
+    /**
+     * Formats an inbox preview with strict BiDi isolation around both an optional
+     * sender/self prefix (e.g. `"You"`, `"أحمد"`) and the message body so mixed
+     * Arabic/English fragments never reorder colons or punctuation.
+     */
+    fun formatInboxPreview(
+        prefix: String?,
+        body: String,
+        isRtlContext: Boolean = false
+    ): String {
+        val cleanBody = body.trim()
+        if (cleanBody.isEmpty()) return ""
+        val isolatedBody = isolateFirstStrong(cleanBody)
+        val cleanPrefix = prefix?.trim().orEmpty()
+        if (cleanPrefix.isEmpty()) return isolatedBody
+        val isolatedPrefix = isolateFirstStrong(cleanPrefix)
+        val dirMark = if (isRtlContext) RLM else LRM
+        return "$isolatedPrefix:$dirMark $isolatedBody"
+    }
+}
 
 /**
  * Result of computing inline-vs-trailing metadata placement inside a message bubble.
@@ -150,7 +228,8 @@ object ChatMessageMapper {
         peerIntro: app.buildx.chat.data.model.DmPeerIntro?,
         defaultRtl: Boolean,
         zoneId: ZoneId = ZoneId.systemDefault(),
-        locale: Locale = Locale.getDefault()
+        locale: Locale = Locale.getDefault(),
+        newlyInsertedIds: Set<String> = emptySet()
     ): List<ChatListItem> {
         if (messages.isEmpty()) {
             return if (isDirect && peerIntro != null) {
@@ -198,20 +277,25 @@ object ChatMessageMapper {
                 )
             }
 
-            val isDeleted = msg.deletedAt != null
+            val isDeleted = msg.isDeleted
+            val isSystem = msg.messageType == "system"
             val isOwn = msg.senderId == currentUserId
 
             val groupedWithPrev = prev != null &&
-                prev.deletedAt == null &&
+                !prev.isDeleted &&
+                prev.messageType != "system" &&
                 !isDeleted &&
+                !isSystem &&
                 prev.senderId == msg.senderId &&
                 msgDay == prevDay &&
                 msgMillis != null && prevMillis != null &&
                 (msgMillis - prevMillis) in 0L..ChatDimens.GroupMergeThresholdMillis
 
             val groupedWithNext = next != null &&
-                next.deletedAt == null &&
+                !next.isDeleted &&
+                next.messageType != "system" &&
                 !isDeleted &&
+                !isSystem &&
                 next.senderId == msg.senderId &&
                 msgDay == nextDay &&
                 msgMillis != null && nextMillis != null &&
@@ -223,6 +307,10 @@ object ChatMessageMapper {
                 groupedWithNext -> ChatBubblePosition.FIRST
                 else -> ChatBubblePosition.SINGLE
             }
+            val isFirstInCluster = position == ChatBubblePosition.SINGLE || position == ChatBubblePosition.FIRST
+            val isLastInCluster = position == ChatBubblePosition.SINGLE || position == ChatBubblePosition.LAST
+            val topCornerDp = if (isFirstInCluster) ChatDimens.BubbleCornerLarge.value else ChatDimens.BubbleCornerGrouped.value
+            val bottomCornerDp = if (isLastInCluster) ChatDimens.BubbleCornerLarge.value else ChatDimens.BubbleCornerGrouped.value
 
             val deliveryStatus = computeDeliveryStatus(
                 message = msg,
@@ -244,6 +332,9 @@ object ChatMessageMapper {
                 ?: participant?.handle?.trim()?.takeIf { it.isNotBlank() }
                 ?: participant?.username?.trim()?.takeIf { it.isNotBlank() }
             val senderIsVerified = msg.senderIsVerified || (participant?.isVerified == true)
+            val formattedTime = formatShortTime(msg.createdAt, zoneId, locale)
+            val isNewlyInserted = msg.id in newlyInsertedIds ||
+                (msg.clientTempId != null && msg.clientTempId in newlyInsertedIds)
 
             chronologicalItems.add(
                 ChatListItem.MessageItem(
@@ -252,19 +343,34 @@ object ChatMessageMapper {
                     isOwn = isOwn,
                     isGroupChat = !isDirect,
                     isDeleted = isDeleted,
-                    isEdited = msg.editedAt != null,
+                    isEdited = msg.isEdited,
                     isRtlContent = isRtlText(msg.content, defaultRtl = defaultRtl),
                     position = position,
                     isGroupedWithPrevious = groupedWithPrev,
-                    showSenderName = !isDirect && !isOwn && !isDeleted && !groupedWithPrev && !resolvedSenderName.isNullOrBlank(),
+                    showSenderName = !isDirect && !isOwn && !isDeleted && !isSystem && !groupedWithPrev && !resolvedSenderName.isNullOrBlank(),
                     showSenderAvatar = !isDirect && !isOwn && !groupedWithNext,
-                    formattedTime = formatShortTime(msg.createdAt, zoneId, locale),
+                    formattedTime = formattedTime,
                     deliveryStatus = deliveryStatus,
                     replyPreview = msg.replyTo,
                     seenParticipants = seenAtThisMessage,
                     resolvedSenderName = resolvedSenderName,
                     resolvedSenderHandle = resolvedSenderHandle,
-                    senderIsVerified = senderIsVerified
+                    senderIsVerified = senderIsVerified,
+                    isNewlyInserted = isNewlyInserted,
+                    isFirstInCluster = isFirstInCluster,
+                    isLastInCluster = isLastInCluster,
+                    topCornerDp = topCornerDp,
+                    bottomCornerDp = bottomCornerDp,
+                    isolatedSenderName = resolvedSenderName?.let(ChatBidiFormatter::isolateFirstStrong),
+                    isolatedFormattedTime = ChatBidiFormatter.isolateLtr(formattedTime),
+                    isolatedReplySenderName = msg.replyTo?.senderDisplayName
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let(ChatBidiFormatter::isolateFirstStrong),
+                    isolatedReplyContent = msg.replyTo?.content
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let(ChatBidiFormatter::isolateFirstStrong)
                 )
             )
         }
@@ -300,41 +406,141 @@ object ChatMessageMapper {
         detail: DmConversationDetail?,
         currentUserId: String,
         typingUserIds: Set<String>,
-        membersFormat: (Int) -> String
+        membersFormat: (Int) -> String,
+        fallbackInboxItem: app.buildx.chat.data.model.DmInboxItem? = null
     ): ChatHeaderUiState {
         val conv = detail?.conversation
-        val isDirect = conv?.kind != "group"
+        val isDirect = when {
+            conv != null -> conv.kind != "group"
+            fallbackInboxItem != null -> fallbackInboxItem.kind != "group"
+            else -> true
+        }
         val peerIntro = detail?.peerIntro
         val myParticipant = detail?.participants?.firstOrNull { it.userId == currentUserId }
         val isTyping = typingUserIds.any { it != currentUserId }
 
+        val resolvedPeerHandle = peerIntro?.handle?.trim()?.removePrefix("@")?.takeIf { it.isNotBlank() }
+            ?: peerIntro?.username?.trim()?.removePrefix("@")?.takeIf { it.isNotBlank() }
+            ?: fallbackInboxItem?.handle?.trim()?.removePrefix("@")?.takeIf { it.isNotBlank() }
+            ?: fallbackInboxItem?.peer?.handle?.trim()?.removePrefix("@")?.takeIf { it.isNotBlank() }
+            ?: fallbackInboxItem?.peer?.username?.trim()?.removePrefix("@")?.takeIf { it.isNotBlank() }
+
         val title = if (isDirect) {
             peerIntro?.displayName?.takeIf { it.isNotBlank() }
-                ?: peerIntro?.handle
+                ?: fallbackInboxItem?.effectiveTitle?.takeIf { it.isNotBlank() }
+                ?: resolvedPeerHandle
                 ?: ""
         } else {
-            conv?.title ?: ""
+            conv?.title?.takeIf { it.isNotBlank() }
+                ?: fallbackInboxItem?.effectiveTitle?.takeIf { it.isNotBlank() }
+                ?: ""
         }
 
         val subtitle = if (isDirect) {
-            peerIntro?.handle?.takeIf { it.isNotBlank() }?.let { "@$it" } ?: ""
+            resolvedPeerHandle?.let { "@$it" } ?: ""
         } else {
-            val activeCount = detail?.participants?.count { it.status == "active" } ?: 0
-            membersFormat(activeCount)
+            val activeCount = detail?.participants
+                ?.count { it.status == "active" }
+                ?.takeIf { it > 0 }
+                ?: fallbackInboxItem?.memberCount?.takeIf { it > 0 }
+                ?: 0
+            if (activeCount > 0) membersFormat(activeCount) else ""
         }
+
+        val resolvedAvatarUrl = if (isDirect) {
+            peerIntro?.avatarUrl?.takeIf { it.isNotBlank() }
+                ?: fallbackInboxItem?.peer?.avatarUrl?.takeIf { it.isNotBlank() }
+                ?: fallbackInboxItem?.avatarUrl?.takeIf { it.isNotBlank() }
+        } else {
+            conv?.avatarUrl?.takeIf { it.isNotBlank() }
+                ?: fallbackInboxItem?.avatarUrl?.takeIf { it.isNotBlank() }
+        }
+
+        val resolvedVerified = isDirect && (peerIntro?.isVerified == true || fallbackInboxItem?.effectiveIsVerified == true)
+        val resolvedMuted = myParticipant?.isMuted ?: (fallbackInboxItem?.isMuted == true)
+        val resolvedPinned = myParticipant?.isPinned ?: (fallbackInboxItem?.isPinned == true)
 
         return ChatHeaderUiState(
             title = title,
             subtitle = subtitle,
-            avatarUrl = if (isDirect) peerIntro?.avatarUrl else conv?.avatarUrl,
+            avatarUrl = resolvedAvatarUrl,
             isDirect = isDirect,
-            isVerified = isDirect && peerIntro?.isVerified == true,
-            isMuted = myParticipant?.isMuted == true,
-            isPinned = myParticipant?.isPinned == true,
+            isVerified = resolvedVerified,
+            isMuted = resolvedMuted,
+            isPinned = resolvedPinned,
             isTyping = isTyping,
             isOnline = false,
-            peerHandle = peerIntro?.handle
+            peerHandle = resolvedPeerHandle,
+            isolatedTitle = ChatBidiFormatter.isolateFirstStrong(title),
+            isolatedSubtitle = if (isDirect && subtitle.startsWith("@")) {
+                ChatBidiFormatter.isolateLtr(subtitle)
+            } else {
+                ChatBidiFormatter.isolateFirstStrong(subtitle)
+            }
         )
+    }
+
+    /**
+     * Computes badge/tab counters from the canonical unfiltered inbox list so tab
+     * switching never alters badge totals.
+     */
+    fun computeInboxCounters(items: List<DmInboxItem>): ChatInboxCounters {
+        var totalUnread = 0
+        var unreadConvs = 0
+        var groups = 0
+        for (item in items) {
+            if (item.unreadCount > 0) {
+                totalUnread += item.unreadCount
+            } else if (item.isMarkedUnread) {
+                totalUnread += 1
+            }
+            if (item.effectiveIsUnread) unreadConvs++
+            if (item.kind == "group") groups++
+        }
+        return ChatInboxCounters(
+            totalUnreadMessages = totalUnread,
+            unreadConversationsCount = unreadConvs,
+            groupsCount = groups
+        )
+    }
+
+    /**
+     * Applies a local message edit across both the message entry and any reply
+     * previews in [messages] pointing to [messageId].
+     */
+    fun applyMessageEditToHistory(
+        messages: List<DmMessage>,
+        messageId: String,
+        newContent: String,
+        editedAtIso: String
+    ): List<DmMessage> = messages.map { msg ->
+        when {
+            msg.id == messageId -> msg.copy(content = newContent, editedAt = editedAtIso)
+            msg.replyTo?.id == messageId -> msg.copy(replyTo = msg.replyTo.copy(content = newContent))
+            else -> msg
+        }
+    }
+
+    /**
+     * Applies a local soft-delete across both the message entry and any reply
+     * previews in [messages] pointing to [messageId].
+     */
+    fun applyMessageDeleteToHistory(
+        messages: List<DmMessage>,
+        messageId: String,
+        deletedAtIso: String
+    ): List<DmMessage> = messages.map { msg ->
+        when {
+            msg.id == messageId -> msg.copy(
+                deletedAt = deletedAtIso,
+                content = "",
+                messageType = "deleted"
+            )
+            msg.replyTo?.id == messageId -> msg.copy(
+                replyTo = msg.replyTo.copy(isDeleted = true, content = "")
+            )
+            else -> msg
+        }
     }
 
     fun extractSharedMedia(messages: List<DmMessage>): List<DmMessage> =
