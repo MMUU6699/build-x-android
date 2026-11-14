@@ -81,7 +81,15 @@ data class ChatColors(
     val swipeReplyIconTint: Color = Color(0xFFFFFFFF),
     val replyHighlightOverlay: Color = Color(0x260064E0),
     val unreadDividerBg: Color = Color(0x140064E0),
-    val unreadDividerText: Color = Color(0xFF0064E0)
+    val unreadDividerText: Color = Color(0xFF0064E0),
+    // System Event & Date Pills + Reaction Bar / Context Menu translucent tokens
+    val systemPillBg: Color = Color(0xCCEBEEF2),
+    val systemPillText: Color = Color(0xFF4F5660),
+    val systemPillBorder: Color = Color(0x14000000),
+    val reactionPillBg: Color = Color(0xF5FFFFFF),
+    val reactionPillBorder: Color = Color(0x14000000),
+    val contextMenuBg: Color = Color(0xF8FFFFFF),
+    val contextMenuBorder: Color = Color(0x14000000)
 )
 
 fun BuildXColors.toChatColors(): ChatColors = if (isDark) {
@@ -135,7 +143,14 @@ fun BuildXColors.toChatColors(): ChatColors = if (isDark) {
         swipeReplyIconTint = Color(0xFFFFFFFF),
         replyHighlightOverlay = primaryBlue.copy(alpha = 0.22f),
         unreadDividerBg = primaryBlue.copy(alpha = 0.16f),
-        unreadDividerText = primaryBlue
+        unreadDividerText = primaryBlue,
+        systemPillBg = Color(0xCC1B2027), // 80% translucent dark slate pill over wallpapers
+        systemPillText = Color(0xFFD0D5DC),
+        systemPillBorder = Color(0x1FFFFFFF),
+        reactionPillBg = Color(0xF21E2228),
+        reactionPillBorder = subtleSurfaceBorder,
+        contextMenuBg = Color(0xF51D2126),
+        contextMenuBorder = subtleSurfaceBorder
     )
 } else {
     ChatColors(
@@ -188,7 +203,14 @@ fun BuildXColors.toChatColors(): ChatColors = if (isDark) {
         swipeReplyIconTint = Color(0xFFFFFFFF),
         replyHighlightOverlay = Color(0x1F0064E0),
         unreadDividerBg = Color(0x140064E0),
-        unreadDividerText = Color(0xFF0064E0)
+        unreadDividerText = Color(0xFF0064E0),
+        systemPillBg = Color(0xCCEBEEF2), // 80% translucent frosted pill over light/wallpaper canvas
+        systemPillText = Color(0xFF4F5660),
+        systemPillBorder = Color(0x14000000),
+        reactionPillBg = Color(0xF5FFFFFF),
+        reactionPillBorder = subtleSurfaceBorder,
+        contextMenuBg = Color(0xF8FFFFFF),
+        contextMenuBorder = subtleSurfaceBorder
     )
 }
 
@@ -317,6 +339,37 @@ object ChatDimens {
     val SwipeReplyIconCircleSize: Dp = 36.dp
     val ScrollToBottomSize: Dp = 42.dp
     val ScrollToBottomMargin: Dp = 16.dp
+
+    // Tight Telegram Bubble Tokens
+    val BubblePaddingHorizontal: Dp = 11.dp
+    val BubblePaddingVertical: Dp = 6.dp
+    val BubbleIntraClusterSpacing: Dp = 2.dp
+    val BubbleInterClusterSpacing: Dp = 8.dp
+    val BubbleCornerSmall: Dp = 4.dp
+
+    // System Event & Date Pills
+    val SystemPillHeight: Dp = 26.dp
+    const val SystemPillCornerPercent: Int = 50
+    val SystemPillPaddingH: Dp = 12.dp
+    val SystemPillPaddingV: Dp = 4.dp
+
+    // Telegram ChatBox (Unified Capsule + External Mic/Send Action Button)
+    val ComposerCapsuleMinHeight: Dp = 46.dp
+    val ComposerExternalButtonSize: Dp = 48.dp
+    val UnifiedReplyBarHeight: Dp = 42.dp
+    val UnifiedReplyAccentWidth: Dp = 3.dp
+
+    // Reaction Pill Bar & Left-Icon Context Menu
+    val ReactionPillHeight: Dp = 44.dp
+    val ReactionPillCornerRadius: Dp = 22.dp
+    val ContextMenuWidth: Dp = 210.dp
+    val ContextMenuCornerRadius: Dp = 16.dp
+
+    // Group/Chat Info Screen
+    val ChatInfoAvatarExpandedSize: Dp = 88.dp
+    val ChatInfoAvatarCollapsedSize: Dp = 36.dp
+    val ChatInfoActionSquircleRadius: Dp = 14.dp
+    val ChatInfoTopBarHeight: Dp = 56.dp
 }
 
 /**
@@ -379,6 +432,14 @@ object ChatTypography {
     val dateChip = TextStyle(
         fontFamily = BuildXFontFamily,
         fontWeight = FontWeight.SemiBold,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        textDirection = TextDirection.ContentOrLtr
+    )
+
+    val systemPill = TextStyle(
+        fontFamily = BuildXFontFamily,
+        fontWeight = FontWeight.Medium,
         fontSize = 12.sp,
         lineHeight = 16.sp,
         textDirection = TextDirection.ContentOrLtr
@@ -533,6 +594,16 @@ object ChatMotion {
     fun <T> fastOutBezierTween(durationMillis: Int = 280): TweenSpec<T> = tween(
         durationMillis = durationMillis,
         easing = FastOutCubicBezier
+    )
+
+    // Telegram send flight physics (0.82f damping, 420f stiffness)
+    const val SendFlightDampingRatio: Float = 0.82f
+    const val SendFlightStiffness: Float = 420f
+
+    fun <T> sendFlightSpring(visibilityThreshold: T? = null): SpringSpec<T> = spring(
+        dampingRatio = SendFlightDampingRatio,
+        stiffness = SendFlightStiffness,
+        visibilityThreshold = visibilityThreshold
     )
 
     // Bubble send transition ("composer -> bubble" spring flight)
