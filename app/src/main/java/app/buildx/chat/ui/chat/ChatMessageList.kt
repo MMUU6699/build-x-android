@@ -1,7 +1,6 @@
 package app.buildx.chat.ui.chat
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -9,8 +8,6 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,11 +31,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -57,7 +52,8 @@ import kotlinx.coroutines.launch
 
 /**
  * Reversed message list (`reverseLayout = true`, index 0 = newest at bottom):
- * - Smooth item placement spring when new messages push older ones up
+ * - Smooth 120fps item placement spring (`dampingRatio = 0.82f, stiffness = 420f`)
+ * - Strictly clipped bounds (`Modifier.clipToBounds()`) so scrolled items never bleed into chrome
  * - Bottom-pinned when at bottom; never yanks the user if scrolled up
  * - Floating "Scroll to bottom" button with unread badge
  * - Top pagination trigger without scroll jump
@@ -90,6 +86,8 @@ fun ChatMessageList(
     todayOverride: java.time.LocalDate? = null,
     onImageClick: (DmMessage) -> Unit = onMessageTap,
     onMessageLongPress: (DmMessage) -> Unit = onMessageTap,
+    onMessageLongPressWithBounds: ((ChatListItem.MessageItem, Rect, Dp) -> Unit)? = null,
+    onToggleReaction: (String, String) -> Unit = { _, _ -> },
     highlightedMessageId: String? = null,
     composerFlightBoundsInWindow: Rect? = null,
     lastOptimisticMessageId: String? = null
@@ -187,39 +185,11 @@ fun ChatMessageList(
         }
     }
 
-    val hasActiveMenu = activeMenuMessageId != null
-    val menuFocusProgress by animateFloatAsState(
-        targetValue = if (hasActiveMenu) 1f else 0f,
-        animationSpec = if (reduceMotion) snap() else ChatMotion.interactiveSpring(),
-        label = "menu_backdrop_focus"
-    )
-    val menuBackdropColor = chatColors.menuBackdropScrim.copy(
-        alpha = (chatColors.menuBackdropScrim.alpha * menuFocusProgress).coerceIn(0f, 1f)
-    )
-    val nonMessageDimAlpha = (1f - (0.38f * menuFocusProgress)).coerceIn(0.45f, 1f)
-
     Box(
         modifier = modifier
             .fillMaxSize()
-            .then(
-                if (hasActiveMenu) {
-                    Modifier.clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onDismissMenu
-                    )
-                } else {
-                    Modifier
-                }
-            )
+            .clipToBounds()
     ) {
-        if (menuFocusProgress > 0.01f) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(menuBackdropColor)
-            )
-        }
         if (isLoadingInitial && items.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -235,7 +205,9 @@ fun ChatMessageList(
             LazyColumn(
                 state = listState,
                 reverseLayout = true,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clipToBounds(),
                 contentPadding = PaddingValues(
                     start = ChatDimens.ListHorizontalPadding,
                     end = ChatDimens.ListHorizontalPadding,
@@ -249,6 +221,7 @@ fun ChatMessageList(
                     contentType = { item ->
                         when (item) {
                             is ChatListItem.MessageItem -> "message"
+                            is ChatListItem.SystemEventItem -> "system_event"
                             is ChatListItem.DateSeparator -> "date_separator"
                             is ChatListItem.PeerIntroItem -> "peer_intro"
                         }
@@ -259,7 +232,7 @@ fun ChatMessageList(
                     } else {
                         Modifier.animateItem(
                             fadeInSpec = null,
-                            placementSpec = ChatMotion.layoutGestureSpring(),
+                            placementSpec = ChatMotion.sendFlightSpring(),
                             fadeOutSpec = null
                         )
                     }
@@ -273,11 +246,6 @@ fun ChatMessageList(
                                 )
                             val isNewlyReceived = !item.isOwn && item.stableKey in newlyReceivedKeys
                             val isThisMenuOpen = activeMenuMessageId == item.message.id
-                            val siblingBlurModifier = if (hasActiveMenu && !isThisMenuOpen && !reduceMotion) {
-                                Modifier.blur((2.5f * menuFocusProgress).dp)
-                            } else {
-                                Modifier
-                            }
 
                             ChatMessageRow(
                                 item = item,
@@ -296,6 +264,14 @@ fun ChatMessageList(
                                 },
                                 onBubbleTap = { onMessageTap(item.message) },
                                 onBubbleLongPress = { onMessageLongPress(item.message) },
+                                onBubbleLongPressWithBounds = { boundsInWindow, maxBubbleWidth ->
+                                    if (onMessageLongPressWithBounds != null) {
+                                        onMessageLongPressWithBounds(item, boundsInWindow, maxBubbleWidth)
+                                    } else {
+                                        onMessageLongPress(item.message)
+                                    }
+                                },
+                                onReactionClick = { emoji -> onToggleReaction(item.message.id, emoji) },
                                 onImageClick = { onImageClick(item.message) },
                                 onRetryClick = { onRetryFailedMessage(item.message) },
                                 onReplyPreviewClick = { targetId ->
@@ -313,9 +289,18 @@ fun ChatMessageList(
                                 onSwipeToReply = { onSwipeToReply(item.message) },
                                 onSenderProfileClick = onViewProfileClick,
                                 isHighlighted = item.message.id == highlightedMessageId || item.message.id == transientHighlightId,
-                                isDimmed = hasActiveMenu && !isThisMenuOpen,
+                                isDimmed = false,
+                                isHiddenForFocusOverlay = isThisMenuOpen,
                                 composerFlightBoundsInWindow = composerFlightBoundsInWindow,
-                                modifier = placementModifier.then(siblingBlurModifier)
+                                modifier = placementModifier
+                            )
+                        }
+
+                        is ChatListItem.SystemEventItem -> {
+                            ChatSystemEventPill(
+                                text = item.isolatedText,
+                                chatColors = chatColors,
+                                modifier = placementModifier
                             )
                         }
 
@@ -323,7 +308,7 @@ fun ChatMessageList(
                             ChatDateSeparatorChip(
                                 createdAtIso = item.createdAtIso,
                                 chatColors = chatColors,
-                                modifier = placementModifier.graphicsLayer { alpha = nonMessageDimAlpha },
+                                modifier = placementModifier,
                                 todayOverride = todayOverride
                             )
                         }
@@ -335,7 +320,7 @@ fun ChatMessageList(
                                 onViewProfileClick = {
                                     item.intro.handle?.takeIf { it.isNotBlank() }?.let(onViewProfileClick)
                                 },
-                                modifier = placementModifier.graphicsLayer { alpha = nonMessageDimAlpha }
+                                modifier = placementModifier
                             )
                         }
                     }
