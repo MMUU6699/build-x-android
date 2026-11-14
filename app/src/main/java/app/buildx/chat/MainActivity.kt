@@ -1228,6 +1228,9 @@ fun BuildXRoot(
                             },
                             onShowSnackbar = { message ->
                                 viewModel.showSnackbar(message)
+                            },
+                            onToggleReaction = { msgId, emoji ->
+                                viewModel.toggleDmMessageReaction(msgId, emoji)
                             }
                         )
                     }
