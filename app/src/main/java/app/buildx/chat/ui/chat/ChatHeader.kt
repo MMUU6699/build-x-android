@@ -60,7 +60,6 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -78,12 +77,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
 import app.buildx.chat.R
 import app.buildx.chat.ui.components.ActionMenuItem
-import app.buildx.chat.ui.components.ActionMenuPopup
 import app.buildx.chat.ui.components.VerifiedBadge
 import app.buildx.chat.ui.components.pressScaleClickable
+import app.buildx.chat.ui.screens.TelegramContextMenuCard
 import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.softShadow
@@ -114,14 +114,11 @@ fun ChatHeader(
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     var isMoreMenuOpen by remember { mutableStateOf(false) }
 
-    UpdateStatusBarAppearance(
-        isLightSurface = chatColors.headerGlassBg.luminance() > 0.5f
-    )
-
     val capsuleHeight = 56.dp
-    val sideButtonSize = 48.dp
+    val sideButtonSize = 44.dp
     val avatarSize = 40.dp
     val capsuleShape = RoundedCornerShape(capsuleHeight / 2)
+    val headerBlurRadius = ChatGlassTokens.HeaderBlurRadius.coerceAtMost(18.dp)
 
     val shadowBlur by animateDpAsState(
         targetValue = if (isListScrolled) ChatDimens.HeaderShadowBlurScrolled else ChatDimens.HeaderShadowBlurBase,
@@ -142,10 +139,19 @@ fun ChatHeader(
     val glassSurfaceColor = chatColors.headerGlassBg.copy(
         alpha = if (isListScrolled) glassAlpha else (glassAlpha - 0.04f).coerceAtLeast(0.72f)
     )
+    val topProtectiveScrim = remember(chatColors.pageBackground) {
+        Brush.verticalGradient(
+            0.00f to chatColors.pageBackground.copy(alpha = 0.95f),
+            0.58f to chatColors.pageBackground.copy(alpha = 0.78f),
+            1.00f to Color.Transparent
+        )
+    }
 
     Box(
         modifier = modifier
             .fillMaxWidth()
+            .zIndex(10f)
+            .background(topProtectiveScrim)
             .then(if (applyStatusBarsPadding) Modifier.windowInsetsPadding(WindowInsets.statusBars) else Modifier)
             .padding(
                 horizontal = ChatDimens.HeaderHorizontalPadding,
@@ -157,7 +163,7 @@ fun ChatHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ChatDimens.HeaderItemGap)
         ) {
-            // Back circle button (48dp floating glass pill)
+            // Back circle button (44dp floating glass pill)
             ChatGlassCapsuleContainer(
                 shape = CircleShape,
                 glassColor = glassSurfaceColor,
@@ -166,7 +172,7 @@ fun ChatHeader(
                 cornerRadius = sideButtonSize / 2,
                 shadowBlur = shadowBlur,
                 shadowOffsetY = shadowOffsetY,
-                blurRadius = ChatGlassTokens.HeaderBlurRadius,
+                blurRadius = headerBlurRadius,
                 isDark = colors.isDark,
                 modifier = Modifier
                     .size(sideButtonSize)
@@ -178,7 +184,7 @@ fun ChatHeader(
                     contentDescription = stringResource(R.string.dm_back),
                     tint = colors.primaryText,
                     modifier = Modifier
-                        .size(21.dp)
+                        .size(20.dp)
                         .then(if (isRtl) Modifier.graphicsLayer(scaleX = -1f) else Modifier)
                 )
             }
@@ -192,7 +198,7 @@ fun ChatHeader(
                 cornerRadius = capsuleHeight / 2,
                 shadowBlur = shadowBlur,
                 shadowOffsetY = shadowOffsetY,
-                blurRadius = ChatGlassTokens.HeaderBlurRadius,
+                blurRadius = headerBlurRadius,
                 isDark = colors.isDark,
                 modifier = Modifier
                     .weight(1f)
@@ -282,7 +288,7 @@ fun ChatHeader(
                 }
             }
 
-            // Overflow circle button (48dp floating glass pill)
+            // Overflow circle button (44dp floating glass pill)
             ChatGlassCapsuleContainer(
                 shape = CircleShape,
                 glassColor = glassSurfaceColor,
@@ -291,7 +297,7 @@ fun ChatHeader(
                 cornerRadius = sideButtonSize / 2,
                 shadowBlur = shadowBlur,
                 shadowOffsetY = shadowOffsetY,
-                blurRadius = ChatGlassTokens.HeaderBlurRadius,
+                blurRadius = headerBlurRadius,
                 isDark = colors.isDark,
                 modifier = Modifier
                     .size(sideButtonSize)
@@ -302,7 +308,7 @@ fun ChatHeader(
                     painter = painterResource(id = R.drawable.ic_more_vertical),
                     contentDescription = stringResource(R.string.dm_chat_info),
                     tint = colors.primaryText,
-                    modifier = Modifier.size(21.dp)
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }
@@ -332,8 +338,7 @@ fun ChatHeader(
                         },
                         exit = fadeOut(tween(90)) + scaleOut(targetScale = 0.92f)
                     ) {
-                        ActionMenuPopup(
-                            transformOrigin = TransformOrigin(if (isRtl) 0.1f else 0.9f, 0f),
+                        TelegramContextMenuCard(
                             items = buildList {
                                 add(
                                     ActionMenuItem(
@@ -342,7 +347,7 @@ fun ChatHeader(
                                         } else {
                                             stringResource(R.string.dm_pin_chat)
                                         },
-                                        iconRes = R.drawable.ic_pin,
+                                        iconRes = R.drawable.ic_tg_pin,
                                         onClick = {
                                             isMoreMenuOpen = false
                                             onTogglePinConversation()
@@ -356,7 +361,7 @@ fun ChatHeader(
                                         } else {
                                             stringResource(R.string.dm_mute_chat)
                                         },
-                                        iconRes = R.drawable.ic_bell_off,
+                                        iconRes = if (state.isMuted) R.drawable.ic_tg_unmute else R.drawable.ic_tg_mute,
                                         onClick = {
                                             isMoreMenuOpen = false
                                             onToggleMuteConversation()
@@ -552,11 +557,12 @@ internal fun ChatGlassCapsuleContainer(
         contentAlignment = contentAlignment
     ) {
         // Dedicated glass backdrop layer so RenderEffect blur softens the frosted gradient
-        // without blurring crisp foreground text, avatars, or icons.
+        // without blurring crisp foreground text, avatars, or icons (clamped to <= 18.dp).
+        val effectiveBlurRadius = blurRadius.coerceAtMost(18.dp)
         Box(
             modifier = Modifier
                 .matchParentSize()
-                .compatRenderEffectBlur(blurRadius = blurRadius, clipShape = shape)
+                .compatRenderEffectBlur(blurRadius = effectiveBlurRadius, clipShape = shape)
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
