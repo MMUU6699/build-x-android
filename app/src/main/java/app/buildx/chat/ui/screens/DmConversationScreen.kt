@@ -6,6 +6,10 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.RenderEffect
+import android.graphics.Shader
+import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,8 +17,10 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -39,6 +45,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
@@ -64,14 +71,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -81,8 +92,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import app.buildx.chat.R
@@ -92,6 +105,7 @@ import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.ui.chat.ChatBidiFormatter
 import app.buildx.chat.ui.chat.ChatComposer
+import app.buildx.chat.ui.chat.ChatFocusedMessageMenuOverlay
 import app.buildx.chat.ui.chat.ChatHeader
 import app.buildx.chat.ui.chat.ChatListItem
 import app.buildx.chat.ui.chat.ChatMessageList
@@ -100,6 +114,7 @@ import app.buildx.chat.ui.chat.ChatMotion
 import app.buildx.chat.ui.chat.ChatTypography
 import app.buildx.chat.ui.chat.ChatWallpaperLayer
 import app.buildx.chat.ui.chat.DmMediaViewerDialog
+import app.buildx.chat.ui.chat.FocusedMessageMenuState
 import app.buildx.chat.ui.chat.rememberReduceMotion
 import app.buildx.chat.ui.chat.toChatColors
 import app.buildx.chat.ui.components.ActionMenuItem
@@ -156,6 +171,7 @@ fun DmConversationScreen(
     openSearchRequested: Boolean = false,
     onConsumeOpenSearchRequest: () -> Unit = {},
     onShowSnackbar: (String) -> Unit = {},
+    onToggleReaction: (String, String) -> Unit = { _, _ -> },
     todayOverride: java.time.LocalDate? = null
 ) {
     val colors = BuildXTheme.colors
@@ -177,7 +193,10 @@ fun DmConversationScreen(
 
     var isAttachmentSheetOpen by remember { mutableStateOf(false) }
     var selectedAttachmentUris by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var activeMenuMessage by remember { mutableStateOf<DmMessage?>(null) }
+    var activeMenuMessageId by remember { mutableStateOf<String?>(null) }
+    var activeMenuAnchorInWindow by remember { mutableStateOf<Rect?>(null) }
+    var activeMenuMaxBubbleWidth by remember { mutableStateOf(280.dp) }
+    var rootBoundsInWindow by remember { mutableStateOf<Rect?>(null) }
     var selectTextContent by remember { mutableStateOf<String?>(null) }
     var viewerMessage by remember { mutableStateOf<DmMessage?>(null) }
     var isChatInfoSheetOpen by remember { mutableStateOf(false) }
@@ -242,7 +261,9 @@ fun DmConversationScreen(
         detail?.participants,
         peerIntro,
         strings.isRtl,
-        newlyInsertedIds
+        newlyInsertedIds,
+        uiState.dmMessageReactions,
+        uiState.dmMyMessageReactions
     ) {
         ChatMessageMapper.mapToReversedListItems(
             messages = uiState.dmMessages,
@@ -251,8 +272,26 @@ fun DmConversationScreen(
             participants = detail?.participants.orEmpty(),
             peerIntro = peerIntro,
             defaultRtl = strings.isRtl,
-            newlyInsertedIds = newlyInsertedIds
+            newlyInsertedIds = newlyInsertedIds,
+            reactionsByMessageId = uiState.dmMessageReactions,
+            myReactionsByMessageId = uiState.dmMyMessageReactions
         )
+    }
+
+    val activeMenuItem = remember(listItems, activeMenuMessageId) {
+        activeMenuMessageId?.let { id ->
+            listItems.firstOrNull { it is ChatListItem.MessageItem && it.message.id == id } as? ChatListItem.MessageItem
+        }
+    }
+    LaunchedEffect(activeMenuMessageId, activeMenuItem) {
+        if (activeMenuMessageId != null && activeMenuItem == null) {
+            activeMenuMessageId = null
+            activeMenuAnchorInWindow = null
+        }
+    }
+    BackHandler(enabled = activeMenuItem != null) {
+        activeMenuMessageId = null
+        activeMenuAnchorInWindow = null
     }
 
     val searchMatchMessageIds = remember(listItems, inChatSearchQuery) {
@@ -310,15 +349,15 @@ fun DmConversationScreen(
     }
 
     val density = LocalDensity.current
-    var topOverlayHeightPx by remember { mutableIntStateOf(0) }
-    var bottomOverlayHeightPx by remember { mutableIntStateOf(0) }
     val navAndImeInsets = WindowInsets.navigationBars.union(WindowInsets.ime)
-    val fallbackBottomInsetDp = navAndImeInsets.asPaddingValues().calculateBottomPadding()
-    val topOverlayDp = with(density) { topOverlayHeightPx.toDp() }
-    val bottomOverlayDp = with(density) { bottomOverlayHeightPx.toDp() }
-    val listTopPadding = if (topOverlayHeightPx > 0) topOverlayDp + 8.dp else 96.dp
-    val listBottomPadding = if (bottomOverlayHeightPx > 0) bottomOverlayDp + 8.dp else fallbackBottomInsetDp + 76.dp
-    val fabBottomOffset = if (bottomOverlayHeightPx > 0) bottomOverlayDp + 16.dp else fallbackBottomInsetDp + 84.dp
+    val statusBarTopDp = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val extraTopBannerDp = (if (isSearchActive) 48.dp else 0.dp) +
+        (if (detail?.pinnedMessage != null) 46.dp else 0.dp)
+    val stableListTopPadding = statusBarTopDp + 72.dp + extraTopBannerDp + 8.dp
+    // Message viewport applies navAndImeInsets directly; keep bottom content padding stable
+    // against transient reply/edit/typing bars so sending never causes a LazyColumn jump.
+    val stableListBottomPadding = 72.dp
+    val fabBottomOffset = 78.dp
     val openChatInfoAction = remember(onOpenChatInfo) {
         {
             if (onOpenChatInfo != null) {
@@ -329,267 +368,334 @@ fun DmConversationScreen(
         }
     }
 
-    // Transparent tap-outside dismiss layer when menu is open — zero grey dimming
-    val chromeScrimColor = Color.Transparent
+    val menuFocusProgress by animateFloatAsState(
+        targetValue = if (activeMenuItem != null) 1f else 0f,
+        animationSpec = if (reduceMotion) snap() else ChatMotion.interactiveSpring(),
+        label = "dm_menu_focus_blur"
+    )
+    val dismissActiveMenu = {
+        activeMenuMessageId = null
+        activeMenuAnchorInWindow = null
+    }
+    val buildMenuForItem: (ChatListItem.MessageItem) -> List<ActionMenuItem> = { item ->
+        buildDmMessageMenuItems(
+            item = item,
+            isPinned = detail?.pinnedMessage?.id == item.message.id,
+            context = context,
+            onDismiss = dismissActiveMenu,
+            onReply = {
+                onReplyToMessage(item.message)
+                dismissActiveMenu()
+            },
+            onSelectText = {
+                selectTextContent = item.message.content
+                dismissActiveMenu()
+            },
+            onEdit = {
+                onEditMessage(item.message)
+                dismissActiveMenu()
+            },
+            onTogglePin = {
+                onTogglePinMessage(item.message.id)
+                dismissActiveMenu()
+            },
+            onDelete = {
+                onDeleteMessage(item.message.id)
+                dismissActiveMenu()
+            },
+            onReport = {
+                onReportMessage(item.message)
+                dismissActiveMenu()
+            }
+        )
+    }
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(chatColors.pageBackground)
+            .onGloballyPositioned { coords ->
+                rootBoundsInWindow = coords.boundsInWindow()
+            }
     ) {
-        ChatWallpaperLayer(
-            config = uiState.activeDmWallpaper,
-            isDark = colors.isDark,
-            fallbackBackground = chatColors.pageBackground,
-            modifier = Modifier.fillMaxSize()
-        )
-
-        ChatMessageList(
-            items = listItems,
-            listState = listState,
-            chatColors = chatColors,
-            isLoadingInitial = uiState.isDmMessagesLoading,
-            isPaginating = uiState.isDmPaginating,
-            hasMoreMessages = uiState.hasMoreDmMessages,
-            activeMenuMessageId = activeMenuMessage?.id,
-            justSentClientTempIds = uiState.justSentClientTempIds,
-            reduceMotion = reduceMotion,
-            buildMenuItems = { item ->
-                buildDmMessageMenuItems(
-                    item = item,
-                    context = context,
-                    onDismiss = { activeMenuMessage = null },
-                    onReply = {
-                        onReplyToMessage(item.message)
-                        activeMenuMessage = null
-                    },
-                    onSelectText = {
-                        selectTextContent = item.message.content
-                        activeMenuMessage = null
-                    },
-                    onEdit = {
-                        onEditMessage(item.message)
-                        activeMenuMessage = null
-                    },
-                    onTogglePin = {
-                        onTogglePinMessage(item.message.id)
-                        activeMenuMessage = null
-                    },
-                    onDelete = {
-                        onDeleteMessage(item.message.id)
-                        activeMenuMessage = null
-                    },
-                    onReport = {
-                        onReportMessage(item.message)
-                        activeMenuMessage = null
-                    }
-                )
-            },
-            onLoadOlderMessages = onLoadOlderMessages,
-            onConsumeJustSent = onConsumeJustSent,
-            onMessageTap = { msg ->
-                if (activeMenuMessage != null) {
-                    activeMenuMessage = null
-                } else if (msg.localSendStatus == DmSendStatus.FAILED) {
-                    onRetryFailedMessage(msg)
-                }
-            },
-            onMessageLongPress = { msg ->
-                val hasMenu = msg.deletedAt == null || msg.senderId != currentUserId
-                if (hasMenu) {
-                    activeMenuMessage = msg
-                }
-            },
-            onImageClick = { msg -> viewerMessage = msg },
-            onRetryFailedMessage = onRetryFailedMessage,
-            onDismissMenu = { activeMenuMessage = null },
-            onSwipeToReply = onReplyToMessage,
-            onViewProfileClick = onProfileClick,
-            topContentPadding = listTopPadding,
-            bottomContentPadding = listBottomPadding,
-            scrollToBottomFabBottomOffset = fabBottomOffset,
-            jumpToMessageId = jumpToMessageId,
-            onConsumeJumpToMessage = onConsumeJumpToMessage,
-            highlightedMessageId = activeSearchHighlightId,
-            todayOverride = todayOverride,
-            composerFlightBoundsInWindow = composerBoundsInWindow,
-            lastOptimisticMessageId = uiState.lastOptimisticMessageId,
-            modifier = Modifier.fillMaxSize()
-        )
-
-        val hasCustomWallpaper = !uiState.activeDmWallpaper.isDefault
-        val topGradientHighAlpha = if (hasCustomWallpaper) 0.78f else 0.96f
-        val topGradientLowAlpha = if (hasCustomWallpaper) 0.46f else 0.84f
-        val bottomGradientHighAlpha = if (hasCustomWallpaper) 0.82f else 0.96f
-        val bottomGradientLowAlpha = if (hasCustomWallpaper) 0.48f else 0.80f
-        Column(
+        // Single-pass background scaffold (wallpaper + clipped list + top/bottom chrome);
+        // blurred as a single layer on API 31+ when the sharp message context overlay is active.
+        Box(
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        0.0f to chatColors.pageBackground.copy(alpha = topGradientHighAlpha),
-                        0.72f to chatColors.pageBackground.copy(alpha = topGradientLowAlpha),
-                        1.0f to Color.Transparent
-                    )
-                )
-                .onSizeChanged { topOverlayHeightPx = it.height }
-                .statusBarsPadding()
-        ) {
-            ChatHeader(
-                state = headerState,
-                chatColors = chatColors,
-                isListScrolled = isListScrolled,
-                reduceMotion = reduceMotion,
-                onBackClick = onBackClick,
-                onPillClick = openChatInfoAction,
-                onViewProfileClick = {
-                    val handle = peerIntro?.handle ?: headerState.peerHandle
-                    if (isDirect && !handle.isNullOrBlank()) {
-                        onProfileClick(handle)
+                .fillMaxSize()
+                .then(
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && menuFocusProgress > 0.01f) {
+                        val radiusPx = with(density) { (18.dp * menuFocusProgress).toPx() }.coerceAtLeast(0.5f)
+                        Modifier.graphicsLayer {
+                            renderEffect = RenderEffect.createBlurEffect(
+                                radiusPx,
+                                radiusPx,
+                                Shader.TileMode.CLAMP
+                            ).asComposeRenderEffect()
+                        }
+                    } else {
+                        Modifier
                     }
-                },
-                onOpenInfoClick = openChatInfoAction,
-                onOpenWallpaperClick = onOpenWallpaperClick,
-                onTogglePinConversation = onTogglePinConversation,
-                onToggleMuteConversation = onToggleMuteConversation
+                )
+        ) {
+            ChatWallpaperLayer(
+                config = uiState.activeDmWallpaper,
+                isDark = colors.isDark,
+                fallbackBackground = chatColors.pageBackground,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(0f)
             )
 
-            AnimatedVisibility(
-                visible = isSearchActive,
-                enter = expandVertically(ChatMotion.layoutGestureSpring()) + fadeIn(ChatMotion.interactiveSpring()),
-                exit = shrinkVertically(ChatMotion.layoutGestureSpring()) + fadeOut(ChatMotion.fastOutBezierTween(140))
-            ) {
-                DmInChatSearchBar(
-                    query = inChatSearchQuery,
-                    onQueryChange = { inChatSearchQuery = it },
-                    matchCount = searchMatchMessageIds.size,
-                    currentMatchIndex = searchMatchIndex,
-                    onPrevMatch = {
-                        if (searchMatchMessageIds.isNotEmpty()) {
-                            val nextIdx = (searchMatchIndex + 1) % searchMatchMessageIds.size
-                            searchMatchIndex = nextIdx
-                            val targetId = searchMatchMessageIds[nextIdx]
-                            val rowIdx = listItems.indexOfFirst {
-                                it is ChatListItem.MessageItem && it.message.id == targetId
-                            }
-                            if (rowIdx >= 0) {
-                                coroutineScope.launch { listState.animateScrollToItem(rowIdx) }
-                            }
-                        }
-                    },
-                    onNextMatch = {
-                        if (searchMatchMessageIds.isNotEmpty()) {
-                            val prevIdx = if (searchMatchIndex - 1 < 0) searchMatchMessageIds.lastIndex else searchMatchIndex - 1
-                            searchMatchIndex = prevIdx
-                            val targetId = searchMatchMessageIds[prevIdx]
-                            val rowIdx = listItems.indexOfFirst {
-                                it is ChatListItem.MessageItem && it.message.id == targetId
-                            }
-                            if (rowIdx >= 0) {
-                                coroutineScope.launch { listState.animateScrollToItem(rowIdx) }
-                            }
-                        }
-                    },
-                    onClose = {
-                        isSearchActive = false
-                        inChatSearchQuery = ""
-                        searchMatchIndex = 0
-                    }
-                )
-            }
-
-            detail?.pinnedMessage?.let { pinned ->
-                DmPinnedMessageBanner(
-                    pinnedMessage = pinned,
-                    onUnpinClick = { onTogglePinMessage(pinned.id) }
-                )
-            }
-        }
-
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        0.0f to Color.Transparent,
-                        0.32f to chatColors.pageBackground.copy(alpha = bottomGradientLowAlpha),
-                        1.0f to chatColors.pageBackground.copy(alpha = bottomGradientHighAlpha)
-                    )
-                )
-                .onSizeChanged { bottomOverlayHeightPx = it.height }
-                .windowInsetsPadding(navAndImeInsets)
-        ) {
-            AnimatedVisibility(
-                visible = uiState.dmTypingUserIds.isNotEmpty() && !uiState.isVoiceListening,
-                enter = fadeIn(ChatMotion.interactiveSpring()) + expandVertically(ChatMotion.layoutGestureSpring()),
-                exit = fadeOut(ChatMotion.fastOutBezierTween(140)) + shrinkVertically(ChatMotion.layoutGestureSpring())
-            ) {
-                DmBottomTypingPill(
-                    chatColors = chatColors,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp)
-                )
-            }
-
-            if (uiState.isVoiceListening) {
-                VoiceDictationBar(
-                    amplitudes = uiState.voiceAmplitudes,
-                    recognizedText = uiState.voicePartialTranscript,
-                    onCancel = onCancelVoiceDictation,
-                    onConfirm = onConfirmVoiceTranscript,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                )
-            } else {
-                ChatComposer(
-                    text = uiState.dmComposerText,
-                    onTextChange = onComposerTextChange,
-                    stagedAttachments = uiState.dmStagedAttachments,
-                    onRemoveAttachment = onRemoveStagedAttachment,
-                    replyingTo = uiState.dmReplyingToMessage,
-                    onCancelReply = onCancelReply,
-                    editing = uiState.dmEditingMessage,
-                    onCancelEdit = onCancelEdit,
-                    onAttachClick = {
-                        selectedAttachmentUris = emptySet()
-                        isAttachmentSheetOpen = true
-                        onLoadRecentImages()
-                    },
-                    onSendClick = onSendMessage,
-                    onVoiceDictationClick = onVoiceDictationClick,
-                    chatColors = chatColors,
-                    reduceMotion = reduceMotion,
-                    onInputBoundsChanged = { composerBoundsInWindow = it }
-                )
-            }
-        }
-
-        if (activeMenuMessage != null) {
             Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(1f)
+                    .windowInsetsPadding(navAndImeInsets)
+                    .clipToBounds()
+            ) {
+                ChatMessageList(
+                    items = listItems,
+                    listState = listState,
+                    chatColors = chatColors,
+                    isLoadingInitial = uiState.isDmMessagesLoading,
+                    isPaginating = uiState.isDmPaginating,
+                    hasMoreMessages = uiState.hasMoreDmMessages,
+                    activeMenuMessageId = activeMenuItem?.message?.id,
+                    justSentClientTempIds = uiState.justSentClientTempIds,
+                    reduceMotion = reduceMotion,
+                    buildMenuItems = buildMenuForItem,
+                    onLoadOlderMessages = onLoadOlderMessages,
+                    onConsumeJustSent = onConsumeJustSent,
+                    onMessageTap = { msg ->
+                        if (activeMenuMessageId != null) {
+                            dismissActiveMenu()
+                        } else if (msg.localSendStatus == DmSendStatus.FAILED) {
+                            onRetryFailedMessage(msg)
+                        }
+                    },
+                    onMessageLongPress = { msg ->
+                        val hasMenu = msg.deletedAt == null || msg.senderId != currentUserId
+                        if (hasMenu) {
+                            activeMenuMessageId = msg.id
+                            if (activeMenuAnchorInWindow == null) {
+                                val fallbackBounds = rootBoundsInWindow ?: Rect(0f, 0f, 1080f, 1920f)
+                                val centerY = (fallbackBounds.top + fallbackBounds.bottom) * 0.5f
+                                val centerX = (fallbackBounds.left + fallbackBounds.right) * 0.5f
+                                activeMenuAnchorInWindow = Rect(centerX - 120f, centerY - 32f, centerX + 120f, centerY + 32f)
+                            }
+                        }
+                    },
+                    onMessageLongPressWithBounds = { msgItem, anchorInWindow, maxBubbleWidth ->
+                        val msg = msgItem.message
+                        val hasMenu = msg.deletedAt == null || msg.senderId != currentUserId
+                        if (hasMenu) {
+                            activeMenuMessageId = msg.id
+                            activeMenuAnchorInWindow = anchorInWindow
+                            activeMenuMaxBubbleWidth = maxBubbleWidth
+                        }
+                    },
+                    onToggleReaction = onToggleReaction,
+                    onImageClick = { msg -> viewerMessage = msg },
+                    onRetryFailedMessage = onRetryFailedMessage,
+                    onDismissMenu = dismissActiveMenu,
+                    onSwipeToReply = onReplyToMessage,
+                    onViewProfileClick = onProfileClick,
+                    topContentPadding = stableListTopPadding,
+                    bottomContentPadding = stableListBottomPadding,
+                    scrollToBottomFabBottomOffset = fabBottomOffset,
+                    jumpToMessageId = jumpToMessageId,
+                    onConsumeJumpToMessage = onConsumeJumpToMessage,
+                    highlightedMessageId = activeSearchHighlightId,
+                    todayOverride = todayOverride,
+                    composerFlightBoundsInWindow = composerBoundsInWindow,
+                    lastOptimisticMessageId = uiState.lastOptimisticMessageId,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            Column(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .height(with(density) { topOverlayHeightPx.toDp() }.coerceAtLeast(0.dp))
-                    .background(chromeScrimColor)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { activeMenuMessage = null }
+                    .zIndex(10f)
+                    .background(
+                        Brush.verticalGradient(
+                            0.0f to chatColors.pageBackground.copy(alpha = 0.95f),
+                            0.72f to chatColors.pageBackground.copy(alpha = 0.78f),
+                            1.0f to Color.Transparent
+                        )
                     )
-            )
-            Box(
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(bottom = 12.dp)
+            ) {
+                ChatHeader(
+                    state = headerState,
+                    chatColors = chatColors,
+                    isListScrolled = isListScrolled,
+                    reduceMotion = reduceMotion,
+                    onBackClick = onBackClick,
+                    onPillClick = openChatInfoAction,
+                    onViewProfileClick = {
+                        val handle = peerIntro?.handle ?: headerState.peerHandle
+                        if (isDirect && !handle.isNullOrBlank()) {
+                            onProfileClick(handle)
+                        }
+                    },
+                    onOpenInfoClick = openChatInfoAction,
+                    onOpenWallpaperClick = onOpenWallpaperClick,
+                    onTogglePinConversation = onTogglePinConversation,
+                    onToggleMuteConversation = onToggleMuteConversation
+                )
+
+                AnimatedVisibility(
+                    visible = isSearchActive,
+                    enter = expandVertically(ChatMotion.layoutGestureSpring()) + fadeIn(ChatMotion.interactiveSpring()),
+                    exit = shrinkVertically(ChatMotion.layoutGestureSpring()) + fadeOut(ChatMotion.fastOutBezierTween(140))
+                ) {
+                    DmInChatSearchBar(
+                        query = inChatSearchQuery,
+                        onQueryChange = { inChatSearchQuery = it },
+                        matchCount = searchMatchMessageIds.size,
+                        currentMatchIndex = searchMatchIndex,
+                        onPrevMatch = {
+                            if (searchMatchMessageIds.isNotEmpty()) {
+                                val nextIdx = (searchMatchIndex + 1) % searchMatchMessageIds.size
+                                searchMatchIndex = nextIdx
+                                val targetId = searchMatchMessageIds[nextIdx]
+                                val rowIdx = listItems.indexOfFirst {
+                                    it is ChatListItem.MessageItem && it.message.id == targetId
+                                }
+                                if (rowIdx >= 0) {
+                                    coroutineScope.launch { listState.animateScrollToItem(rowIdx) }
+                                }
+                            }
+                        },
+                        onNextMatch = {
+                            if (searchMatchMessageIds.isNotEmpty()) {
+                                val prevIdx = if (searchMatchIndex - 1 < 0) searchMatchMessageIds.lastIndex else searchMatchIndex - 1
+                                searchMatchIndex = prevIdx
+                                val targetId = searchMatchMessageIds[prevIdx]
+                                val rowIdx = listItems.indexOfFirst {
+                                    it is ChatListItem.MessageItem && it.message.id == targetId
+                                }
+                                if (rowIdx >= 0) {
+                                    coroutineScope.launch { listState.animateScrollToItem(rowIdx) }
+                                }
+                            }
+                        },
+                        onClose = {
+                            isSearchActive = false
+                            inChatSearchQuery = ""
+                            searchMatchIndex = 0
+                        }
+                    )
+                }
+
+                detail?.pinnedMessage?.let { pinned ->
+                    DmPinnedMessageBanner(
+                        pinnedMessage = pinned,
+                        onUnpinClick = { onTogglePinMessage(pinned.id) }
+                    )
+                }
+            }
+
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .height(with(density) { bottomOverlayHeightPx.toDp() }.coerceAtLeast(0.dp))
-                    .background(chromeScrimColor)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { activeMenuMessage = null }
+                    .zIndex(10f)
+                    .background(
+                        Brush.verticalGradient(
+                            0.0f to Color.Transparent,
+                            0.32f to chatColors.pageBackground.copy(alpha = 0.78f),
+                            1.0f to chatColors.pageBackground.copy(alpha = 0.95f)
+                        )
                     )
+                    .padding(top = 12.dp)
+                    .windowInsetsPadding(navAndImeInsets)
+            ) {
+                AnimatedVisibility(
+                    visible = uiState.dmTypingUserIds.isNotEmpty() && !uiState.isVoiceListening,
+                    enter = fadeIn(ChatMotion.interactiveSpring()) + expandVertically(ChatMotion.layoutGestureSpring()),
+                    exit = fadeOut(ChatMotion.fastOutBezierTween(140)) + shrinkVertically(ChatMotion.layoutGestureSpring())
+                ) {
+                    DmBottomTypingPill(
+                        chatColors = chatColors,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp)
+                    )
+                }
+
+                if (uiState.isVoiceListening) {
+                    VoiceDictationBar(
+                        amplitudes = uiState.voiceAmplitudes,
+                        recognizedText = uiState.voicePartialTranscript,
+                        onCancel = onCancelVoiceDictation,
+                        onConfirm = onConfirmVoiceTranscript,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                } else {
+                    ChatComposer(
+                        text = uiState.dmComposerText,
+                        onTextChange = onComposerTextChange,
+                        stagedAttachments = uiState.dmStagedAttachments,
+                        onRemoveAttachment = onRemoveStagedAttachment,
+                        replyingTo = uiState.dmReplyingToMessage,
+                        onCancelReply = onCancelReply,
+                        editing = uiState.dmEditingMessage,
+                        onCancelEdit = onCancelEdit,
+                        onAttachClick = {
+                            selectedAttachmentUris = emptySet()
+                            isAttachmentSheetOpen = true
+                            onLoadRecentImages()
+                        },
+                        onSendClick = onSendMessage,
+                        onVoiceDictationClick = onVoiceDictationClick,
+                        chatColors = chatColors,
+                        reduceMotion = reduceMotion,
+                        onInputBoundsChanged = { composerBoundsInWindow = it }
+                    )
+                }
+            }
+        }
+
+        val anchorInRoot = remember(activeMenuAnchorInWindow, rootBoundsInWindow) {
+            val windowRect = activeMenuAnchorInWindow ?: return@remember null
+            val rootOffset = rootBoundsInWindow?.topLeft ?: Offset.Zero
+            windowRect.translate(-rootOffset)
+        }
+        val focusedMenuState = remember(
+            activeMenuItem,
+            anchorInRoot,
+            activeMenuMaxBubbleWidth,
+            context,
+            currentUserId,
+            detail?.pinnedMessage?.id
+        ) {
+            val item = activeMenuItem ?: return@remember null
+            val anchor = anchorInRoot ?: return@remember null
+            FocusedMessageMenuState(
+                item = item,
+                anchorBoundsInRoot = anchor,
+                maxBubbleWidth = activeMenuMaxBubbleWidth,
+                menuItems = buildMenuForItem(item)
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(30f)
+        ) {
+            ChatFocusedMessageMenuOverlay(
+                state = focusedMenuState,
+                chatColors = chatColors,
+                reduceMotion = reduceMotion,
+                onSelectReaction = { messageId, emoji ->
+                    onToggleReaction(messageId, emoji)
+                },
+                onDismiss = dismissActiveMenu
             )
         }
 
@@ -722,6 +828,7 @@ fun DmConversationScreen(
 
 private fun buildDmMessageMenuItems(
     item: ChatListItem.MessageItem,
+    isPinned: Boolean,
     context: Context,
     onDismiss: () -> Unit,
     onReply: () -> Unit,
@@ -739,19 +846,19 @@ private fun buildDmMessageMenuItems(
     val copyLabel = context.getString(R.string.dm_action_copy)
     val selectTextLabel = context.getString(R.string.action_select_text)
     val editLabel = context.getString(R.string.dm_action_edit)
-    val pinLabel = context.getString(R.string.dm_pin_message)
+    val pinLabel = context.getString(if (isPinned) R.string.dm_action_unpin else R.string.dm_pin_message)
     val forwardLabel = context.getString(R.string.dm_action_forward)
     val deleteLabel = context.getString(R.string.dm_action_delete)
     val reportLabel = context.getString(R.string.dm_action_report)
 
     return buildList {
         if (!isDeleted) {
-            add(ActionMenuItem(label = replyLabel, iconRes = R.drawable.ic_reply, onClick = onReply))
+            add(ActionMenuItem(label = replyLabel, iconRes = R.drawable.ic_tg_reply, onClick = onReply))
             if (message.content.isNotBlank()) {
                 add(
                     ActionMenuItem(
                         label = copyLabel,
-                        iconRes = R.drawable.ic_copy,
+                        iconRes = R.drawable.ic_tg_copy,
                         onClick = {
                             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             cm.setPrimaryClip(ClipData.newPlainText("message", message.content))
@@ -768,13 +875,13 @@ private fun buildDmMessageMenuItems(
                 )
             }
             if (isOwn && message.messageType == "text") {
-                add(ActionMenuItem(label = editLabel, iconRes = R.drawable.ic_pencil, onClick = onEdit))
+                add(ActionMenuItem(label = editLabel, iconRes = R.drawable.ic_tg_edit, onClick = onEdit))
             }
-            add(ActionMenuItem(label = pinLabel, iconRes = R.drawable.ic_pin, onClick = onTogglePin))
+            add(ActionMenuItem(label = pinLabel, iconRes = R.drawable.ic_tg_pin, onClick = onTogglePin))
             add(
                 ActionMenuItem(
                     label = forwardLabel,
-                    iconRes = R.drawable.ic_forward,
+                    iconRes = R.drawable.ic_tg_forward,
                     onClick = {
                         val share = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
@@ -790,7 +897,7 @@ private fun buildDmMessageMenuItems(
             add(
                 ActionMenuItem(
                     label = deleteLabel,
-                    iconRes = R.drawable.ic_trash,
+                    iconRes = R.drawable.ic_tg_delete,
                     isDestructive = true,
                     onClick = onDelete
                 )
