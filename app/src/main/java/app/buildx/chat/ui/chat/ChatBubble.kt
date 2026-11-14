@@ -1,17 +1,17 @@
 package app.buildx.chat.ui.chat
 
-import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -43,18 +42,33 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -65,6 +79,8 @@ import androidx.compose.ui.layout.Measurable
 import androidx.compose.ui.layout.MeasurePolicy
 import androidx.compose.ui.layout.MeasureResult
 import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -79,6 +95,7 @@ import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -107,9 +124,29 @@ import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+private val BubbleIntraClusterSpacing: Dp = 2.dp
+private val BubbleInterClusterSpacing: Dp = 8.dp
+private val BubbleGroupAvatarSize: Dp = 32.dp
+private val QuoteMinHeight: Dp = 36.dp
+
+@Immutable
+data class BubbleCornerRadii(
+    val topStart: Dp,
+    val topEnd: Dp,
+    val bottomEnd: Dp,
+    val bottomStart: Dp
+) {
+    fun toShape(): RoundedCornerShape = RoundedCornerShape(
+        topStart = topStart,
+        topEnd = topEnd,
+        bottomEnd = bottomEnd,
+        bottomStart = bottomStart
+    )
+}
+
 /**
  * RTL-aware bubble corner system:
- * Large radius (20dp) on outer corners, smaller radius (6dp) on grouped sender-side corners.
+ * Large radius (18.dp) on outer corners, smaller radius (4.dp) on grouped sender-side corners.
  */
 fun chatBubbleShape(
     isOwn: Boolean,
@@ -146,6 +183,100 @@ fun chatBubbleShape(
     }
 }
 
+/**
+ * Dynamically morphs inner connected bubble corners between 18.dp and 4.dp in real time
+ * using the non-bouncy layout spring (`dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 420f`)
+ * when adjacent messages from the same sender arrive above or below.
+ */
+@Composable
+fun rememberAnimatedBubbleCorners(
+    isOwn: Boolean,
+    position: ChatBubblePosition,
+    topCornerDp: Dp? = null,
+    bottomCornerDp: Dp? = null,
+    reduceMotion: Boolean = false
+): BubbleCornerRadii {
+    val large = ChatDimens.BubbleCornerLarge
+    val grouped = ChatDimens.BubbleCornerGrouped
+    val connectedAbove = position == ChatBubblePosition.MIDDLE || position == ChatBubblePosition.LAST
+    val connectedBelow = position == ChatBubblePosition.FIRST || position == ChatBubblePosition.MIDDLE
+
+    val resolvedTopCluster = topCornerDp ?: if (connectedAbove) grouped else large
+    val resolvedBottomCluster = bottomCornerDp ?: if (connectedBelow) grouped else large
+
+    val targetTopStart = if (!isOwn && connectedAbove) resolvedTopCluster else large
+    val targetTopEnd = if (isOwn && connectedAbove) resolvedTopCluster else large
+    val targetBottomEnd = if (isOwn && connectedBelow) resolvedBottomCluster else large
+    val targetBottomStart = if (!isOwn && connectedBelow) resolvedBottomCluster else large
+
+    val spec = if (reduceMotion) snap<Dp>() else ChatMotion.layoutGestureSpring()
+    val topStart by animateDpAsState(targetValue = targetTopStart, animationSpec = spec, label = "corner_top_start")
+    val topEnd by animateDpAsState(targetValue = targetTopEnd, animationSpec = spec, label = "corner_top_end")
+    val bottomEnd by animateDpAsState(targetValue = targetBottomEnd, animationSpec = spec, label = "corner_bottom_end")
+    val bottomStart by animateDpAsState(targetValue = targetBottomStart, animationSpec = spec, label = "corner_bottom_start")
+
+    return BubbleCornerRadii(
+        topStart = topStart,
+        topEnd = topEnd,
+        bottomEnd = bottomEnd,
+        bottomStart = bottomStart
+    )
+}
+
+@Composable
+fun rememberAnimatedChatBubbleShape(
+    isOwn: Boolean,
+    position: ChatBubblePosition,
+    reduceMotion: Boolean = false
+): RoundedCornerShape = rememberAnimatedBubbleCorners(
+    isOwn = isOwn,
+    position = position,
+    reduceMotion = reduceMotion
+).toShape()
+
+/**
+ * Hardware-accelerated GPU Canvas bubble surface renderer.
+ * Draws the morphed 18.dp/4.dp rounded geometry, optional jump-highlight overlay, and optional border
+ * directly on the Canvas without offscreen clipping layers.
+ */
+private fun Modifier.drawBubbleSurface(
+    corners: BubbleCornerRadii,
+    backgroundColor: Color,
+    borderColor: Color? = null,
+    borderWidth: Dp = ChatDimens.GlassSurfaceBorderWidth,
+    highlightOverlayColor: Color = Color.Transparent
+): Modifier = this.drawWithCache {
+    val isRtl = layoutDirection == LayoutDirection.Rtl
+    val tl = (if (isRtl) corners.topEnd else corners.topStart).toPx()
+    val tr = (if (isRtl) corners.topStart else corners.topEnd).toPx()
+    val br = (if (isRtl) corners.bottomStart else corners.bottomEnd).toPx()
+    val bl = (if (isRtl) corners.bottomEnd else corners.bottomStart).toPx()
+    val path = Path().apply {
+        addRoundRect(
+            RoundRect(
+                left = 0f,
+                top = 0f,
+                right = size.width,
+                bottom = size.height,
+                topLeftCornerRadius = CornerRadius(tl, tl),
+                topRightCornerRadius = CornerRadius(tr, tr),
+                bottomRightCornerRadius = CornerRadius(br, br),
+                bottomLeftCornerRadius = CornerRadius(bl, bl)
+            )
+        )
+    }
+    val strokePx = borderWidth.toPx()
+    onDrawBehind {
+        drawPath(path = path, color = backgroundColor)
+        if (highlightOverlayColor.alpha > 0.005f) {
+            drawPath(path = path, color = highlightOverlayColor)
+        }
+        if (borderColor != null && borderColor.alpha > 0.005f) {
+            drawPath(path = path, color = borderColor, style = Stroke(width = strokePx))
+        }
+    }
+}
+
 @Composable
 fun ChatMessageRow(
     item: ChatListItem.MessageItem,
@@ -167,31 +298,41 @@ fun ChatMessageRow(
     onBubbleLongPress: () -> Unit = onBubbleTap,
     onSenderProfileClick: (String) -> Unit = {},
     isHighlighted: Boolean = false,
-    isDimmed: Boolean = false
+    isDimmed: Boolean = false,
+    composerFlightBoundsInWindow: Rect? = null
 ) {
     val topSpacing = if (item.isGroupedWithPrevious) {
-        ChatDimens.IntraGroupSpacing
+        BubbleIntraClusterSpacing
     } else {
-        ChatDimens.InterGroupSpacing
+        BubbleInterClusterSpacing
     }
-    val rowDimAlpha = 1f
+    val dimAlpha by animateFloatAsState(
+        targetValue = if (isDimmed && !isMenuOpen) 0.55f else 1f,
+        animationSpec = if (reduceMotion) snap() else ChatMotion.interactiveSpring(),
+        label = "row_dim_alpha"
+    )
+    var bubbleBoundsInWindow by remember { mutableStateOf<Rect?>(null) }
 
     ChatBubbleEntryWrapper(
         isOwn = item.isOwn,
         isJustSent = isJustSent,
         isNewlyReceived = isNewlyReceived,
         reduceMotion = reduceMotion,
+        composerFlightBoundsInWindow = composerFlightBoundsInWindow,
+        bubbleBoundsInWindow = bubbleBoundsInWindow,
         onConsumeJustSent = onConsumeJustSent,
         onConsumeNewlyReceived = onConsumeNewlyReceived,
         modifier = modifier
             .fillMaxWidth()
             .zIndex(if (isMenuOpen) 10f else 0f)
-            .graphicsLayer { alpha = rowDimAlpha }
+            .graphicsLayer { alpha = dimAlpha }
             .padding(top = topSpacing)
-    ) {
+    ) { sendFlightProgress ->
         Column(modifier = Modifier.fillMaxWidth()) {
             ChatSwipeToReplyContainer(
                 enabled = !item.isDeleted && item.deliveryStatus != ChatDeliveryStatus.SENDING,
+                chatColors = chatColors,
+                reduceMotion = reduceMotion,
                 onSwipeToReply = onSwipeToReply
             ) {
                 Row(
@@ -203,21 +344,27 @@ fun ChatMessageRow(
                         if (item.showSenderAvatar) {
                             ChatGroupSenderAvatar(
                                 avatarUrl = item.message.senderAvatarUrl,
-                                displayName = item.resolvedSenderName,
+                                displayName = item.isolatedSenderName ?: item.resolvedSenderName,
                                 chatColors = chatColors,
                                 onClick = item.resolvedSenderHandle?.let { handle ->
                                     { onSenderProfileClick(handle) }
                                 }
                             )
                         } else {
-                            Spacer(modifier = Modifier.width(ChatDimens.GroupAvatarSize))
+                            Spacer(modifier = Modifier.width(BubbleGroupAvatarSize))
                         }
                         Spacer(modifier = Modifier.width(ChatDimens.GroupAvatarGap))
                     }
 
                     Column(
                         horizontalAlignment = if (item.isOwn) Alignment.End else Alignment.Start,
-                        modifier = Modifier.weight(1f, fill = false)
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .onGloballyPositioned { coords ->
+                                if (coords.isAttached) {
+                                    bubbleBoundsInWindow = coords.boundsInWindow()
+                                }
+                            }
                     ) {
                         ChatBubbleContent(
                             item = item,
@@ -226,6 +373,8 @@ fun ChatMessageRow(
                             isHighlighted = isHighlighted,
                             menuItems = menuItems,
                             reduceMotion = reduceMotion,
+                            isJustSentFlight = isJustSent && !reduceMotion,
+                            sendFlightProgress = sendFlightProgress,
                             onBubbleTap = onBubbleTap,
                             onBubbleLongPress = onBubbleLongPress,
                             onImageClick = onImageClick,
@@ -255,10 +404,12 @@ private fun ChatBubbleEntryWrapper(
     isJustSent: Boolean,
     isNewlyReceived: Boolean,
     reduceMotion: Boolean,
+    composerFlightBoundsInWindow: Rect?,
+    bubbleBoundsInWindow: Rect?,
     onConsumeJustSent: () -> Unit,
     onConsumeNewlyReceived: () -> Unit,
     modifier: Modifier = Modifier,
-    content: @Composable () -> Unit
+    content: @Composable (sendFlightProgress: Float) -> Unit
 ) {
     val isScreenRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val density = LocalDensity.current
@@ -284,16 +435,13 @@ private fun ChatBubbleEntryWrapper(
                 launch {
                     sendAlpha.animateTo(
                         targetValue = 1f,
-                        animationSpec = tween(durationMillis = ChatMotion.SendFadeDurationMs)
+                        animationSpec = ChatMotion.fastOutBezierTween(durationMillis = ChatMotion.SendFadeDurationMs)
                     )
                 }
                 launch {
                     animProgress.animateTo(
                         targetValue = 1f,
-                        animationSpec = spring(
-                            dampingRatio = ChatMotion.SendLiftDampingRatio,
-                            stiffness = ChatMotion.SendLiftStiffness
-                        )
+                        animationSpec = ChatMotion.interactiveSpring()
                     )
                 }
             }
@@ -303,48 +451,67 @@ private fun ChatBubbleEntryWrapper(
             animProgress.snapTo(0f)
             animProgress.animateTo(
                 targetValue = 1f,
-                animationSpec = tween(
-                    durationMillis = ChatMotion.ReceiveEntryDurationMs,
-                    easing = ChatMotion.EmphasizedDecelerate
-                )
+                animationSpec = ChatMotion.layoutGestureSpring()
             )
             onConsumeNewlyReceived()
         }
     }
 
-    val p = animProgress.value
-    val graphicsModifier = if (p >= 0.999f && sendAlpha.value >= 0.999f) {
+    val sendFlightProgress = if (isJustSent && !reduceMotion) animProgress.value.coerceIn(0f, 1f) else 1f
+    val fallbackYPx = with(density) { ChatMotion.SendLiftStartTranslationY.toPx() }
+    val fallbackXPx = with(density) { ChatMotion.SendLiftStartTranslationX.toPx() }
+    val receiveSlidePx = with(density) { ChatMotion.ReceiveEntrySlideY.toPx() }
+
+    val graphicsModifier = if (reduceMotion || (!isJustSent && !isNewlyReceived && !animProgress.isRunning)) {
         Modifier
-    } else if (isJustSent) {
-        val startYPx = with(density) { ChatMotion.SendLiftStartTranslationY.toPx() }
-        val startXPx = with(density) { ChatMotion.SendLiftStartTranslationX.toPx() }
-        val signedStartX = if (isOwn xor isScreenRtl) startXPx else -startXPx
-        val sx = ChatMotion.SendLiftStartScaleX + (1f - ChatMotion.SendLiftStartScaleX) * p
-        val sy = ChatMotion.SendLiftStartScaleY + (1f - ChatMotion.SendLiftStartScaleY) * p
-        val originX = if (isOwn xor isScreenRtl) 1f else 0f
-        Modifier.graphicsLayer {
-            scaleX = sx
-            scaleY = sy
-            translationX = signedStartX * (1f - p)
-            translationY = startYPx * (1f - p)
-            alpha = sendAlpha.value.coerceIn(0f, 1f)
-            transformOrigin = TransformOrigin(originX, 1f)
-        }
     } else {
-        val slidePx = with(density) { ChatMotion.ReceiveEntrySlideY.toPx() }
-        val scale = ChatMotion.ReceiveEntryStartScale + (1f - ChatMotion.ReceiveEntryStartScale) * p
-        val originX = if (isScreenRtl) 0.9f else 0.1f
         Modifier.graphicsLayer {
-            scaleX = scale
-            scaleY = scale
-            translationY = slidePx * (1f - p)
-            alpha = p
-            transformOrigin = TransformOrigin(originX, 1f)
+            val p = animProgress.value
+            if (p >= 0.999f && sendAlpha.value >= 0.999f) {
+                scaleX = 1f
+                scaleY = 1f
+                translationX = 0f
+                translationY = 0f
+                alpha = 1f
+            } else if (isJustSent) {
+                val signedFallbackX = if (isOwn xor isScreenRtl) -fallbackXPx else fallbackXPx
+                val resolvedStartY = if (composerFlightBoundsInWindow != null && bubbleBoundsInWindow != null &&
+                    composerFlightBoundsInWindow.height > 0f && bubbleBoundsInWindow.height > 0f
+                ) {
+                    (composerFlightBoundsInWindow.center.y - bubbleBoundsInWindow.center.y).coerceIn(24f, 240f)
+                } else {
+                    fallbackYPx
+                }
+                val resolvedStartX = if (composerFlightBoundsInWindow != null && bubbleBoundsInWindow != null &&
+                    composerFlightBoundsInWindow.width > 0f && bubbleBoundsInWindow.width > 0f
+                ) {
+                    ((composerFlightBoundsInWindow.center.x - bubbleBoundsInWindow.center.x) * 0.45f).coerceIn(-220f, 220f)
+                } else {
+                    signedFallbackX
+                }
+                val startScale = ChatMotion.SendFlightStartScale
+                val scale = startScale + (1f - startScale) * p
+                val originX = if (isOwn xor isScreenRtl) 1f else 0f
+                scaleX = scale
+                scaleY = scale
+                translationX = resolvedStartX * (1f - p)
+                translationY = resolvedStartY * (1f - p)
+                alpha = sendAlpha.value.coerceIn(0f, 1f)
+                transformOrigin = TransformOrigin(originX, 1f)
+            } else {
+                val scale = ChatMotion.ReceiveEntryStartScale + (1f - ChatMotion.ReceiveEntryStartScale) * p
+                val originX = if (isScreenRtl) 0.9f else 0.1f
+                scaleX = scale
+                scaleY = scale
+                translationY = receiveSlidePx * (1f - p)
+                alpha = p.coerceIn(0f, 1f)
+                transformOrigin = TransformOrigin(originX, 1f)
+            }
         }
     }
 
     Box(modifier = modifier.then(graphicsModifier)) {
-        content()
+        content(sendFlightProgress)
     }
 }
 
@@ -356,6 +523,8 @@ private fun ChatBubbleContent(
     isHighlighted: Boolean,
     menuItems: List<ActionMenuItem>,
     reduceMotion: Boolean,
+    isJustSentFlight: Boolean = false,
+    sendFlightProgress: Float = 1f,
     onBubbleTap: () -> Unit,
     onBubbleLongPress: () -> Unit,
     onImageClick: () -> Unit,
@@ -365,7 +534,14 @@ private fun ChatBubbleContent(
     onDismissMenu: () -> Unit
 ) {
     val msg = item.message
-    val shape = chatBubbleShape(isOwn = item.isOwn, position = item.position)
+    val corners = rememberAnimatedBubbleCorners(
+        isOwn = item.isOwn,
+        position = item.position,
+        topCornerDp = item.topCornerDp.dp,
+        bottomCornerDp = item.bottomCornerDp.dp,
+        reduceMotion = reduceMotion
+    )
+    val shape = remember(corners) { corners.toShape() }
     val hasAttachment = !msg.attachmentPath.isNullOrBlank() && !item.isDeleted
     val hasSenderHeader = item.showSenderName && !item.resolvedSenderName.isNullOrBlank()
     val hasQuote = !item.isDeleted && item.replyPreview != null
@@ -373,15 +549,23 @@ private fun ChatBubbleContent(
     val isDark = BuildXTheme.colors.isDark
     val haptic = LocalHapticFeedback.current
     val focusScale by animateFloatAsState(
-        targetValue = if (isMenuOpen && !reduceMotion) 1.02f else 1f,
-        animationSpec = tween(if (reduceMotion) 0 else 150),
+        targetValue = if (isMenuOpen && !reduceMotion) 1.03f else 1f,
+        animationSpec = if (reduceMotion) snap() else ChatMotion.interactiveSpring(),
         label = "bubble_focus_scale"
     )
-    val highlightAlpha by animateFloatAsState(
-        targetValue = if (isHighlighted) 0.72f else 0f,
-        animationSpec = tween(if (reduceMotion) 0 else 240),
+    val highlightFraction by animateFloatAsState(
+        targetValue = if (isHighlighted) 1f else 0f,
+        animationSpec = if (reduceMotion) snap() else ChatMotion.interactiveSpring(),
         label = "bubble_jump_highlight"
     )
+    val highlightBorderAlpha = (highlightFraction * 0.72f).coerceIn(0f, 1f)
+    val highlightOverlay = if (highlightFraction > 0.01f) {
+        chatColors.replyHighlightOverlay.copy(
+            alpha = (chatColors.replyHighlightOverlay.alpha * highlightFraction).coerceIn(0f, 1f)
+        )
+    } else {
+        Color.Transparent
+    }
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val maxBubbleWidth = maxWidth * ChatDimens.BubbleMaxWidthFraction
@@ -395,17 +579,25 @@ private fun ChatBubbleContent(
                     scaleX = focusScale
                     scaleY = focusScale
                 }
-                .animateContentSize(
-                    animationSpec = if (reduceMotion) tween(0) else tween(ChatMotion.DeleteCrossfadeMs)
+                .then(
+                    if (reduceMotion) {
+                        Modifier
+                    } else {
+                        Modifier.animateContentSize(animationSpec = ChatMotion.layoutGestureSpring())
+                    }
                 )
         ) {
             if (item.isDeleted) {
                 Box(
                     modifier = Modifier
                         .widthIn(max = maxBubbleWidth)
-                        .clip(shape)
-                        .background(chatColors.deletedPillBg)
-                        .border(0.8.dp, chatColors.deletedPillBorder, shape)
+                        .drawBubbleSurface(
+                            corners = corners,
+                            backgroundColor = chatColors.deletedPillBg,
+                            borderColor = chatColors.deletedPillBorder,
+                            borderWidth = 1.dp,
+                            highlightOverlayColor = highlightOverlay
+                        )
                         .pointerInput(msg.id) {
                             detectTapGestures(
                                 onTap = { onBubbleTap() },
@@ -423,18 +615,41 @@ private fun ChatBubbleContent(
                     Text(
                         text = stringResource(R.string.dm_message_deleted),
                         color = chatColors.deletedPillText,
-                        fontSize = ChatDimens.DeletedFontSize,
-                        fontStyle = FontStyle.Italic,
-                        fontFamily = BuildXFontFamily
+                        style = ChatTypography.messageDeleted
                     )
                     if (isMenuOpen && menuItems.isNotEmpty()) {
-                        ChatBubbleActionPopup(items = menuItems, onDismiss = onDismissMenu)
+                        ChatBubbleActionPopup(isOwn = item.isOwn, items = menuItems, onDismiss = onDismissMenu)
                     }
                 }
             } else if (hasAttachment) {
-                val bubbleBg = if (item.isOwn) chatColors.sentBubbleBg else chatColors.receivedBubbleBg
-                val textColor = if (item.isOwn) chatColors.sentBubbleText else chatColors.receivedBubbleText
-                val metaTint = if (item.isOwn) chatColors.sentMetaText else chatColors.receivedMetaText
+                val flightFraction = if (isJustSentFlight) sendFlightProgress.coerceIn(0f, 1f) else 1f
+                val bubbleBg = if (item.isOwn) {
+                    if (flightFraction < 0.999f) {
+                        lerp(chatColors.composerBg, chatColors.sentBubbleBg, flightFraction)
+                    } else {
+                        chatColors.sentBubbleBg
+                    }
+                } else {
+                    chatColors.receivedBubbleBg
+                }
+                val textColor = if (item.isOwn) {
+                    if (flightFraction < 0.999f) {
+                        lerp(chatColors.receivedBubbleText, chatColors.sentBubbleText, flightFraction)
+                    } else {
+                        chatColors.sentBubbleText
+                    }
+                } else {
+                    chatColors.receivedBubbleText
+                }
+                val metaTint = if (item.isOwn) {
+                    if (flightFraction < 0.999f) {
+                        lerp(chatColors.receivedMetaText, chatColors.sentMetaText, flightFraction)
+                    } else {
+                        chatColors.sentMetaText
+                    }
+                } else {
+                    chatColors.receivedMetaText
+                }
                 val isStandaloneMedia = msg.content.isBlank() && !hasSenderHeader && !hasQuote && !hasNoteReply
                 val containerShape = if (isStandaloneMedia) RoundedCornerShape(ChatDimens.MediaBubbleCorner) else shape
                 val focusShadowModifier = if (isMenuOpen) {
@@ -457,17 +672,21 @@ private fun ChatBubbleContent(
                         .background(if (isStandaloneMedia) chatColors.receivedBubbleBg else bubbleBg)
                         .then(
                             when {
-                                highlightAlpha > 0.01f -> Modifier.border(
+                                highlightBorderAlpha > 0.01f -> Modifier.border(
                                     2.dp,
-                                    BuildXTheme.colors.primaryBlue.copy(alpha = highlightAlpha),
+                                    BuildXTheme.colors.primaryBlue.copy(alpha = highlightBorderAlpha),
                                     containerShape
                                 )
                                 isMenuOpen -> Modifier.border(
-                                    0.8.dp,
+                                    ChatDimens.GlassSurfaceBorderWidth,
                                     if (item.isOwn) Color.White.copy(alpha = 0.28f) else BuildXTheme.colors.subtleSurfaceBorder,
                                     containerShape
                                 )
-                                isStandaloneMedia -> Modifier.border(0.8.dp, chatColors.headerGlassBorder, containerShape)
+                                isStandaloneMedia -> Modifier.border(
+                                    ChatDimens.GlassSurfaceBorderWidth,
+                                    chatColors.headerGlassBorder,
+                                    containerShape
+                                )
                                 else -> Modifier
                             }
                         )
@@ -500,7 +719,7 @@ private fun ChatBubbleContent(
                         ) {
                             if (hasSenderHeader) {
                                 ChatGroupSenderHeader(
-                                    name = item.resolvedSenderName!!,
+                                    name = item.isolatedSenderName ?: item.resolvedSenderName!!,
                                     senderId = msg.senderId,
                                     isVerified = item.senderIsVerified,
                                     handle = item.resolvedSenderHandle,
@@ -514,6 +733,8 @@ private fun ChatBubbleContent(
                             if (hasQuote) {
                                 ChatQuotedReplyCard(
                                     reply = item.replyPreview!!,
+                                    isolatedSenderName = item.isolatedReplySenderName,
+                                    isolatedContent = item.isolatedReplyContent,
                                     isOwn = item.isOwn,
                                     chatColors = chatColors,
                                     maxContentWidth = maxTextWidth,
@@ -569,6 +790,8 @@ private fun ChatBubbleContent(
                                     isOwn = item.isOwn,
                                     status = item.deliveryStatus,
                                     tint = Color.White,
+                                    pendingTint = chatColors.sentCheckPendingTint,
+                                    deliveredTint = chatColors.sentCheckDeliveredTint,
                                     readTint = chatColors.readCheckAccent,
                                     failedTint = chatColors.failedAccent,
                                     reduceMotion = reduceMotion
@@ -596,6 +819,8 @@ private fun ChatBubbleContent(
                                 isOwn = item.isOwn,
                                 status = item.deliveryStatus,
                                 metaTint = metaTint,
+                                pendingTint = chatColors.sentCheckPendingTint,
+                                deliveredTint = chatColors.sentCheckDeliveredTint,
                                 readTint = chatColors.readCheckAccent,
                                 failedTint = chatColors.failedAccent,
                                 reduceMotion = reduceMotion
@@ -606,13 +831,38 @@ private fun ChatBubbleContent(
                     }
 
                     if (isMenuOpen && menuItems.isNotEmpty()) {
-                        ChatBubbleActionPopup(items = menuItems, onDismiss = onDismissMenu)
+                        ChatBubbleActionPopup(isOwn = item.isOwn, items = menuItems, onDismiss = onDismissMenu)
                     }
                 }
             } else if (msg.content.isNotBlank()) {
-                val bubbleBg = if (item.isOwn) chatColors.sentBubbleBg else chatColors.receivedBubbleBg
-                val textColor = if (item.isOwn) chatColors.sentBubbleText else chatColors.receivedBubbleText
-                val metaTint = if (item.isOwn) chatColors.sentMetaText else chatColors.receivedMetaText
+                val flightFraction = if (isJustSentFlight) sendFlightProgress.coerceIn(0f, 1f) else 1f
+                val bubbleBg = if (item.isOwn) {
+                    if (flightFraction < 0.999f) {
+                        lerp(chatColors.composerBg, chatColors.sentBubbleBg, flightFraction)
+                    } else {
+                        chatColors.sentBubbleBg
+                    }
+                } else {
+                    chatColors.receivedBubbleBg
+                }
+                val textColor = if (item.isOwn) {
+                    if (flightFraction < 0.999f) {
+                        lerp(chatColors.receivedBubbleText, chatColors.sentBubbleText, flightFraction)
+                    } else {
+                        chatColors.sentBubbleText
+                    }
+                } else {
+                    chatColors.receivedBubbleText
+                }
+                val metaTint = if (item.isOwn) {
+                    if (flightFraction < 0.999f) {
+                        lerp(chatColors.receivedMetaText, chatColors.sentMetaText, flightFraction)
+                    } else {
+                        chatColors.sentMetaText
+                    }
+                } else {
+                    chatColors.receivedMetaText
+                }
                 val focusShadowModifier = if (isMenuOpen) {
                     Modifier.softShadow(
                         color = BuildXTheme.colors.composerShadowColor,
@@ -623,27 +873,23 @@ private fun ChatBubbleContent(
                 } else {
                     Modifier
                 }
+                val surfaceBorderColor = when {
+                    highlightBorderAlpha > 0.01f -> BuildXTheme.colors.primaryBlue.copy(alpha = highlightBorderAlpha)
+                    isMenuOpen -> if (item.isOwn) Color.White.copy(alpha = 0.28f) else BuildXTheme.colors.subtleSurfaceBorder
+                    else -> null
+                }
+                val surfaceBorderWidth = if (highlightBorderAlpha > 0.01f) 2.dp else ChatDimens.GlassSurfaceBorderWidth
 
                 Box(
                     modifier = Modifier
                         .widthIn(max = maxBubbleWidth)
                         .then(focusShadowModifier)
-                        .clip(shape)
-                        .background(bubbleBg)
-                        .then(
-                            when {
-                                highlightAlpha > 0.01f -> Modifier.border(
-                                    2.dp,
-                                    BuildXTheme.colors.primaryBlue.copy(alpha = highlightAlpha),
-                                    shape
-                                )
-                                isMenuOpen -> Modifier.border(
-                                    0.8.dp,
-                                    if (item.isOwn) Color.White.copy(alpha = 0.28f) else BuildXTheme.colors.subtleSurfaceBorder,
-                                    shape
-                                )
-                                else -> Modifier
-                            }
+                        .drawBubbleSurface(
+                            corners = corners,
+                            backgroundColor = bubbleBg,
+                            borderColor = surfaceBorderColor,
+                            borderWidth = surfaceBorderWidth,
+                            highlightOverlayColor = highlightOverlay
                         )
                         .pointerInput(msg.id, item.deliveryStatus) {
                             detectTapGestures(
@@ -670,7 +916,7 @@ private fun ChatBubbleContent(
                     ) {
                         if (hasSenderHeader) {
                             ChatGroupSenderHeader(
-                                name = item.resolvedSenderName!!,
+                                name = item.isolatedSenderName ?: item.resolvedSenderName!!,
                                 senderId = msg.senderId,
                                 isVerified = item.senderIsVerified,
                                 handle = item.resolvedSenderHandle,
@@ -684,6 +930,8 @@ private fun ChatBubbleContent(
                         if (hasQuote) {
                             ChatQuotedReplyCard(
                                 reply = item.replyPreview!!,
+                                isolatedSenderName = item.isolatedReplySenderName,
+                                isolatedContent = item.isolatedReplyContent,
                                 isOwn = item.isOwn,
                                 chatColors = chatColors,
                                 maxContentWidth = maxTextWidth,
@@ -710,6 +958,8 @@ private fun ChatBubbleContent(
                             isOwn = item.isOwn,
                             status = item.deliveryStatus,
                             metaTint = metaTint,
+                            pendingTint = chatColors.sentCheckPendingTint,
+                            deliveredTint = chatColors.sentCheckDeliveredTint,
                             readTint = chatColors.readCheckAccent,
                             failedTint = chatColors.failedAccent,
                             reduceMotion = reduceMotion
@@ -717,7 +967,7 @@ private fun ChatBubbleContent(
                     }
 
                     if (isMenuOpen && menuItems.isNotEmpty()) {
-                        ChatBubbleActionPopup(items = menuItems, onDismiss = onDismissMenu)
+                        ChatBubbleActionPopup(isOwn = item.isOwn, items = menuItems, onDismiss = onDismissMenu)
                     }
                 }
             }
@@ -765,10 +1015,7 @@ private fun ChatGroupSenderHeader(
         Text(
             text = name,
             color = senderNameColor(senderId, isDark),
-            fontSize = 13.sp,
-            lineHeight = 16.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = BuildXFontFamily,
+            style = ChatTypography.senderName,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f, fill = false)
@@ -797,6 +1044,8 @@ private fun ChatInlineMetaTextBlock(
     isOwn: Boolean,
     status: ChatDeliveryStatus,
     metaTint: Color,
+    pendingTint: Color,
+    deliveredTint: Color,
     readTint: Color,
     failedTint: Color,
     reduceMotion: Boolean
@@ -804,14 +1053,10 @@ private fun ChatInlineMetaTextBlock(
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
     val textStyle = remember(textColor, isRtlContent) {
-        TextStyle(
-            fontFamily = BuildXFontFamily,
+        ChatTypography.messageBody.copy(
             color = textColor,
-            fontSize = ChatDimens.MessageFontSize,
-            lineHeight = ChatDimens.MessageLineHeight,
-            fontWeight = FontWeight.Normal,
-            textAlign = TextAlign.Start,
-            textDirection = if (isRtlContent) TextDirection.Rtl else TextDirection.Ltr
+            textAlign = if (isRtlContent) TextAlign.Right else TextAlign.Left,
+            textDirection = TextDirection.ContentOrLtr
         )
     }
 
@@ -966,6 +1211,8 @@ private fun ChatInlineMetaTextBlock(
                 isOwn = isOwn,
                 status = status,
                 tint = metaTint,
+                pendingTint = pendingTint,
+                deliveredTint = deliveredTint,
                 readTint = readTint,
                 failedTint = failedTint,
                 reduceMotion = reduceMotion
@@ -986,6 +1233,8 @@ private fun ChatBubbleMetaCluster(
     isOwn: Boolean,
     status: ChatDeliveryStatus,
     tint: Color,
+    pendingTint: Color,
+    deliveredTint: Color,
     readTint: Color,
     failedTint: Color,
     reduceMotion: Boolean,
@@ -1000,29 +1249,23 @@ private fun ChatBubbleMetaCluster(
             if (isEdited) {
                 Text(
                     text = stringResource(R.string.dm_edited),
-                    color = tint,
-                    fontSize = ChatDimens.MetaTimeFontSize,
-                    lineHeight = ChatDimens.MetaTimeLineHeight,
-                    fontFamily = BuildXFontFamily
+                    style = ChatTypography.metaTimestamp.copy(
+                        color = tint,
+                        fontWeight = FontWeight.Normal
+                    )
                 )
             }
             if (timeText.isNotBlank()) {
                 Text(
                     text = timeText,
-                    style = TextStyle(
-                        fontFamily = BuildXFontFamily,
-                        color = tint,
-                        fontSize = ChatDimens.MetaTimeFontSize,
-                        lineHeight = ChatDimens.MetaTimeLineHeight,
-                        fontWeight = FontWeight.Medium,
-                        fontFeatureSettings = "tnum",
-                        textDirection = TextDirection.Ltr
-                    )
+                    style = ChatTypography.metaTimestamp.copy(color = tint)
                 )
             }
             if (isOwn) {
                 ChatStatusIcon(
                     status = status,
+                    pendingTint = pendingTint,
+                    deliveredTint = deliveredTint,
                     readTint = readTint,
                     failedTint = failedTint,
                     reduceMotion = reduceMotion
@@ -1032,64 +1275,237 @@ private fun ChatBubbleMetaCluster(
     }
 }
 
+/**
+ * Hardware-accelerated direct Canvas stroke renderer for delivery status (`SENDING` clock,
+ * `SENT`/`DELIVERED` single checkmark ✓, `READ` double checkmark ✓✓).
+ * Animates stroke draw progression and single->double shift with Telegram spring physics.
+ */
 @Composable
 private fun ChatStatusIcon(
     status: ChatDeliveryStatus,
+    pendingTint: Color,
+    deliveredTint: Color,
     readTint: Color,
     failedTint: Color,
     reduceMotion: Boolean
 ) {
-    Box(
-        modifier = Modifier.size(15.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        AnimatedContent(
-            targetState = status,
-            contentAlignment = Alignment.Center,
-            transitionSpec = {
-                if (reduceMotion) {
-                    fadeIn(tween(0)) togetherWith fadeOut(tween(0))
+    var previousStatus by remember { mutableStateOf(status) }
+    val checkDrawProgress = remember {
+        Animatable(if (status == ChatDeliveryStatus.SENDING) 0f else 1f)
+    }
+    val doubleCheckProgress = remember {
+        Animatable(if (status == ChatDeliveryStatus.READ) 1f else 0f)
+    }
+    val popScale = remember { Animatable(1f) }
+
+    LaunchedEffect(status, reduceMotion) {
+        if (reduceMotion) {
+            previousStatus = status
+            checkDrawProgress.snapTo(if (status == ChatDeliveryStatus.SENDING) 0f else 1f)
+            doubleCheckProgress.snapTo(if (status == ChatDeliveryStatus.READ) 1f else 0f)
+            popScale.snapTo(1f)
+            return@LaunchedEffect
+        }
+        if (status == previousStatus) return@LaunchedEffect
+        val prev = previousStatus
+        previousStatus = status
+
+        when (status) {
+            ChatDeliveryStatus.SENDING -> {
+                checkDrawProgress.snapTo(0f)
+                doubleCheckProgress.snapTo(0f)
+                popScale.snapTo(1f)
+            }
+            ChatDeliveryStatus.SENT,
+            ChatDeliveryStatus.DELIVERED -> {
+                doubleCheckProgress.animateTo(0f, ChatMotion.interactiveSpring())
+                if (prev == ChatDeliveryStatus.SENDING) {
+                    checkDrawProgress.snapTo(0f)
+                    coroutineScope {
+                        launch { checkDrawProgress.animateTo(1f, ChatMotion.interactiveSpring()) }
+                        launch {
+                            popScale.snapTo(ChatMotion.StatusStartScale)
+                            popScale.animateTo(1f, ChatMotion.interactiveSpring())
+                        }
+                    }
                 } else {
-                    (fadeIn(tween(ChatMotion.StatusTransitionMs)) +
-                        scaleIn(tween(ChatMotion.StatusTransitionMs), initialScale = ChatMotion.StatusStartScale)) togetherWith
-                        (fadeOut(tween(ChatMotion.StatusTransitionMs)) +
-                            scaleOut(tween(ChatMotion.StatusTransitionMs), targetScale = ChatMotion.StatusStartScale))
+                    checkDrawProgress.snapTo(1f)
                 }
-            },
-            label = "dm_status_icon"
-        ) { target ->
-            if (target == ChatDeliveryStatus.FAILED) {
-                Box(
-                    modifier = Modifier
-                        .size(ChatDimens.StatusIconSize)
-                        .clip(CircleShape)
-                        .background(Color.White),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_dm_error),
-                        contentDescription = target.name,
-                        tint = failedTint,
-                        modifier = Modifier.size(ChatDimens.StatusIconSize)
-                    )
+            }
+            ChatDeliveryStatus.READ -> {
+                checkDrawProgress.snapTo(1f)
+                if (prev == ChatDeliveryStatus.SENDING) {
+                    doubleCheckProgress.snapTo(0f)
                 }
-            } else {
-                val (iconRes, iconTint, iconSize) = when (target) {
-                    ChatDeliveryStatus.SENDING -> Triple(R.drawable.ic_dm_clock, Color.White.copy(alpha = 0.70f), 13.dp)
-                    ChatDeliveryStatus.SENT,
-                    ChatDeliveryStatus.DELIVERED -> Triple(R.drawable.ic_dm_single_check, Color.White.copy(alpha = 0.82f), 14.dp)
-                    ChatDeliveryStatus.READ -> Triple(R.drawable.ic_dm_double_check, readTint, 15.dp)
-                    ChatDeliveryStatus.FAILED -> Triple(R.drawable.ic_dm_error, failedTint, ChatDimens.StatusIconSize)
+                coroutineScope {
+                    launch { doubleCheckProgress.animateTo(1f, ChatMotion.interactiveSpring()) }
+                    launch {
+                        popScale.snapTo(0.88f)
+                        popScale.animateTo(1f, ChatMotion.interactiveSpring())
+                    }
                 }
-                Icon(
-                    painter = painterResource(id = iconRes),
-                    contentDescription = target.name,
-                    tint = iconTint,
-                    modifier = Modifier.size(iconSize)
-                )
+            }
+            ChatDeliveryStatus.FAILED -> {
+                popScale.snapTo(ChatMotion.StatusStartScale)
+                popScale.animateTo(1f, ChatMotion.interactiveSpring())
             }
         }
     }
+
+    val checkColor by animateColorAsState(
+        targetValue = when (status) {
+            ChatDeliveryStatus.SENDING -> pendingTint
+            ChatDeliveryStatus.SENT,
+            ChatDeliveryStatus.DELIVERED -> deliveredTint
+            ChatDeliveryStatus.READ -> readTint
+            ChatDeliveryStatus.FAILED -> failedTint
+        },
+        animationSpec = if (reduceMotion) snap() else ChatMotion.interactiveSpring(),
+        label = "status_check_tint"
+    )
+
+    Box(
+        modifier = Modifier
+            .size(15.dp)
+            .graphicsLayer {
+                val s = popScale.value
+                scaleX = s
+                scaleY = s
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        if (status == ChatDeliveryStatus.FAILED) {
+            Box(
+                modifier = Modifier
+                    .size(ChatDimens.StatusIconSize)
+                    .clip(CircleShape)
+                    .background(Color.White),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_dm_error),
+                    contentDescription = status.name,
+                    tint = failedTint,
+                    modifier = Modifier.size(ChatDimens.StatusIconSize)
+                )
+            }
+        } else if (status == ChatDeliveryStatus.SENDING) {
+            val clockRotation = if (reduceMotion) {
+                0f
+            } else {
+                val infinite = rememberInfiniteTransition(label = "sending_clock")
+                val angle by infinite.animateFloat(
+                    initialValue = 0f,
+                    targetValue = 360f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(durationMillis = 1400, easing = ChatMotion.FastOutCubicBezier),
+                        repeatMode = RepeatMode.Restart
+                    ),
+                    label = "clock_sweep"
+                )
+                angle
+            }
+            Canvas(modifier = Modifier.size(13.dp)) {
+                val scale = size.minDimension / 24f
+                val strokePx = 1.85f * scale
+                val cx = size.width / 2f
+                val cy = size.height / 2f
+                drawCircle(
+                    color = pendingTint,
+                    radius = 8.5f * scale,
+                    center = Offset(cx, cy),
+                    style = Stroke(width = strokePx)
+                )
+                drawLine(
+                    color = pendingTint,
+                    start = Offset(cx, cy),
+                    end = Offset(cx + 3.4f * scale, cy + 2.2f * scale),
+                    strokeWidth = strokePx,
+                    cap = StrokeCap.Round
+                )
+                rotate(degrees = clockRotation, pivot = Offset(cx, cy)) {
+                    drawLine(
+                        color = pendingTint,
+                        start = Offset(cx, cy),
+                        end = Offset(cx, cy - 5.2f * scale),
+                        strokeWidth = strokePx,
+                        cap = StrokeCap.Round
+                    )
+                }
+            }
+        } else {
+            val strokePath = remember { Path() }
+            Canvas(modifier = Modifier.size(15.dp)) {
+                val scale = size.minDimension / 24f
+                val strokePx = 1.85f * scale
+                val shiftX = 3.25f * doubleCheckProgress.value.coerceIn(0f, 1f)
+                val firstDraw = checkDrawProgress.value.coerceIn(0f, 1f)
+                val secondDraw = doubleCheckProgress.value.coerceIn(0f, 1f)
+
+                if (firstDraw > 0.01f) {
+                    drawProgressiveCheck(
+                        path = strokePath,
+                        p0 = Offset((5.0f - shiftX) * scale, 12.5f * scale),
+                        p1 = Offset((9.75f - shiftX) * scale, 17.25f * scale),
+                        p2 = Offset((19.25f - shiftX) * scale, 6.75f * scale),
+                        progress = firstDraw,
+                        color = checkColor,
+                        strokeWidthPx = strokePx
+                    )
+                }
+                if (secondDraw > 0.01f) {
+                    drawProgressiveCheck(
+                        path = strokePath,
+                        p0 = Offset(9.5f * scale, 14.5f * scale),
+                        p1 = Offset(12.25f * scale, 17.25f * scale),
+                        p2 = Offset(21.75f * scale, 6.75f * scale),
+                        progress = secondDraw,
+                        color = checkColor,
+                        strokeWidthPx = strokePx
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawProgressiveCheck(
+    path: Path,
+    p0: Offset,
+    p1: Offset,
+    p2: Offset,
+    progress: Float,
+    color: Color,
+    strokeWidthPx: Float
+) {
+    val seg1Dx = p1.x - p0.x
+    val seg1Dy = p1.y - p0.y
+    val len1 = kotlin.math.hypot(seg1Dx.toDouble(), seg1Dy.toDouble()).toFloat().coerceAtLeast(0.001f)
+    val seg2Dx = p2.x - p1.x
+    val seg2Dy = p2.y - p1.y
+    val len2 = kotlin.math.hypot(seg2Dx.toDouble(), seg2Dy.toDouble()).toFloat().coerceAtLeast(0.001f)
+    val totalLen = len1 + len2
+    val targetLen = totalLen * progress.coerceIn(0f, 1f)
+
+    path.reset()
+    path.moveTo(p0.x, p0.y)
+    if (targetLen <= len1) {
+        val t = (targetLen / len1).coerceIn(0f, 1f)
+        path.lineTo(p0.x + seg1Dx * t, p0.y + seg1Dy * t)
+    } else {
+        path.lineTo(p1.x, p1.y)
+        val t = ((targetLen - len1) / len2).coerceIn(0f, 1f)
+        path.lineTo(p1.x + seg2Dx * t, p1.y + seg2Dy * t)
+    }
+    drawPath(
+        path = path,
+        color = color,
+        style = Stroke(
+            width = strokeWidthPx,
+            cap = StrokeCap.Round,
+            join = StrokeJoin.Round
+        )
+    )
 }
 
 @Composable
@@ -1098,7 +1514,9 @@ private fun ChatQuotedReplyCard(
     isOwn: Boolean,
     chatColors: ChatColors,
     maxContentWidth: androidx.compose.ui.unit.Dp,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    isolatedSenderName: String? = null,
+    isolatedContent: String? = null
 ) {
     val isDark = BuildXTheme.colors.isDark
     val incomingAccent = senderNameColor(reply.senderId, isDark)
@@ -1110,12 +1528,26 @@ private fun ChatQuotedReplyCard(
     } else {
         BuildXTheme.colors.primaryText.copy(alpha = 0.84f)
     }
-    val quoteShape = RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 10.dp, bottomEnd = 10.dp)
+    val quoteShape = RoundedCornerShape(
+        topStart = ChatDimens.QuoteCornerSmall,
+        bottomStart = ChatDimens.QuoteCornerSmall,
+        topEnd = ChatDimens.QuoteCornerLarge,
+        bottomEnd = ChatDimens.QuoteCornerLarge
+    )
+    val resolvedSender = isolatedSenderName
+        ?: reply.senderDisplayName?.takeIf { it.isNotBlank() }
+        ?: stringResource(R.string.dm_you)
+    val resolvedBody = if (reply.isDeleted) {
+        stringResource(R.string.dm_message_deleted)
+    } else {
+        (isolatedContent ?: reply.content).ifBlank { stringResource(R.string.dm_media_attachment) }
+    }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .widthIn(min = 140.dp, max = maxContentWidth)
+            .heightIn(min = QuoteMinHeight)
             .clip(quoteShape)
             .background(bgColor)
             .clickable(onClick = onClick)
@@ -1124,9 +1556,9 @@ private fun ChatQuotedReplyCard(
     ) {
         Box(
             modifier = Modifier
-                .width(3.dp)
+                .width(ChatDimens.QuoteAccentBarWidth)
                 .fillMaxHeight()
-                .heightIn(min = 32.dp)
+                .heightIn(min = QuoteMinHeight)
                 .background(barColor)
         )
         Column(
@@ -1135,28 +1567,18 @@ private fun ChatQuotedReplyCard(
                 .padding(start = 8.dp, end = 10.dp, top = 5.dp, bottom = 5.dp)
         ) {
             Text(
-                text = reply.senderDisplayName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.dm_you),
-                color = nameColor,
-                fontSize = 12.5.sp,
-                lineHeight = 16.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = BuildXFontFamily,
+                text = resolvedSender,
+                style = ChatTypography.quoteSender.copy(color = nameColor),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = if (reply.isDeleted) {
-                    stringResource(R.string.dm_message_deleted)
-                } else {
-                    reply.content.ifBlank { stringResource(R.string.dm_media_attachment) }
-                },
-                color = if (reply.isDeleted) BuildXTheme.colors.secondaryText else bodyColor,
-                style = TextStyle(
-                    fontFamily = BuildXFontFamily,
+                text = resolvedBody,
+                style = ChatTypography.quoteBody.copy(
+                    color = if (reply.isDeleted) BuildXTheme.colors.secondaryText else bodyColor,
                     fontSize = 12.5.sp,
                     lineHeight = 16.sp,
-                    fontStyle = if (reply.isDeleted) FontStyle.Italic else FontStyle.Normal,
-                    textDirection = TextDirection.Content
+                    fontStyle = if (reply.isDeleted) FontStyle.Italic else FontStyle.Normal
                 ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -1187,6 +1609,7 @@ private fun ChatNoteReplyPill(
             color = textColor,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
+            style = TextStyle(textDirection = TextDirection.ContentOrLtr),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -1202,10 +1625,10 @@ private fun ChatGroupSenderAvatar(
 ) {
     Box(
         modifier = Modifier
-            .size(ChatDimens.GroupAvatarSize)
+            .size(BubbleGroupAvatarSize)
             .clip(CircleShape)
             .background(chatColors.receivedBubbleBg)
-            .border(0.8.dp, chatColors.headerGlassBorder, CircleShape)
+            .border(ChatDimens.GlassSurfaceBorderWidth, chatColors.headerGlassBorder, CircleShape)
             .let { mod ->
                 if (onClick != null) mod.clickable(onClick = onClick) else mod
             },
@@ -1222,7 +1645,7 @@ private fun ChatGroupSenderAvatar(
             Text(
                 text = displayName?.firstOrNull()?.uppercase() ?: "",
                 color = BuildXTheme.colors.primaryText,
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold
             )
         }
@@ -1284,12 +1707,11 @@ fun ChatDateSeparatorChip(
     ) {
         Text(
             text = label,
-            color = chatColors.dateChipText,
-            fontSize = ChatDimens.MetaTimeFontSize,
-            fontWeight = FontWeight.Medium,
+            style = ChatTypography.dateChip.copy(color = chatColors.dateChipText),
             modifier = Modifier
                 .clip(RoundedCornerShape(ChatDimens.DateChipCorner))
                 .background(chatColors.dateChipBg)
+                .border(ChatDimens.GlassSurfaceBorderWidth, chatColors.dateChipBorder, RoundedCornerShape(ChatDimens.DateChipCorner))
                 .padding(
                     horizontal = ChatDimens.DateChipPaddingH,
                     vertical = ChatDimens.DateChipPaddingV
@@ -1441,20 +1863,99 @@ fun ChatCompactPeerIntroCard(
 @Composable
 private fun ChatSwipeToReplyContainer(
     enabled: Boolean,
+    chatColors: ChatColors,
+    reduceMotion: Boolean = false,
     onSwipeToReply: () -> Unit,
     content: @Composable () -> Unit
 ) {
     val colors = BuildXTheme.colors
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
-    var offsetX by remember { mutableFloatStateOf(0f) }
+    val haptic = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    val offsetAnim = remember { Animatable(0f) }
+    var rawDragPx by remember { mutableFloatStateOf(0f) }
+    var hasTriggeredHaptic by remember { mutableStateOf(false) }
+
     val density = LocalDensity.current
     val maxPx = with(density) { ChatDimens.SwipeReplyMaxOffsetDp.toPx() }
     val triggerPx = with(density) { ChatDimens.SwipeReplyTriggerDp.toPx() }
 
+    val isThresholdCrossed by remember(triggerPx) {
+        derivedStateOf { offsetAnim.value >= triggerPx }
+    }
+    val showReplyBadge by remember {
+        derivedStateOf { offsetAnim.value > 2f }
+    }
+    val thresholdScaleBoost = remember { Animatable(0f) }
+    val thresholdRotationKick = remember { Animatable(0f) }
+
+    LaunchedEffect(isThresholdCrossed, reduceMotion) {
+        if (reduceMotion) {
+            thresholdScaleBoost.snapTo(if (isThresholdCrossed) 0.08f else 0f)
+            thresholdRotationKick.snapTo(0f)
+            return@LaunchedEffect
+        }
+        if (isThresholdCrossed) {
+            coroutineScope {
+                launch {
+                    thresholdScaleBoost.snapTo(-0.06f)
+                    thresholdScaleBoost.animateTo(
+                        targetValue = 0.08f,
+                        animationSpec = ChatMotion.interactiveSpring()
+                    )
+                }
+                launch {
+                    thresholdRotationKick.snapTo(-20f)
+                    thresholdRotationKick.animateTo(
+                        targetValue = 0f,
+                        animationSpec = ChatMotion.interactiveSpring()
+                    )
+                }
+            }
+        } else {
+            coroutineScope {
+                launch { thresholdScaleBoost.animateTo(0f, ChatMotion.interactiveSpring()) }
+                launch { thresholdRotationKick.animateTo(0f, ChatMotion.interactiveSpring()) }
+            }
+        }
+    }
+
+    val badgeBgColor by animateColorAsState(
+        targetValue = if (isThresholdCrossed) colors.primaryBlue else chatColors.scrollToBottomBg,
+        animationSpec = if (reduceMotion) snap() else ChatMotion.interactiveSpring(),
+        label = "swipe_reply_badge_bg"
+    )
+    val badgeIconTint by animateColorAsState(
+        targetValue = if (isThresholdCrossed) Color.White else colors.primaryBlue,
+        animationSpec = if (reduceMotion) snap() else ChatMotion.interactiveSpring(),
+        label = "swipe_reply_badge_tint"
+    )
+
     val draggableState = rememberDraggableState { delta ->
         if (!enabled) return@rememberDraggableState
         val direction = if (isRtl) -1f else 1f
-        offsetX = (offsetX + (delta * direction)).coerceIn(0f, maxPx)
+        rawDragPx = (rawDragPx + (delta * direction)).coerceAtLeast(0f)
+
+        // Elastic rubber-band resistance past the 56.dp trigger threshold up to 96.dp max
+        val visualOffset = if (rawDragPx <= triggerPx) {
+            rawDragPx
+        } else {
+            val excess = rawDragPx - triggerPx
+            val maxExtra = (maxPx - triggerPx).coerceAtLeast(1f)
+            val resisted = maxExtra * (1f - (1f / (1f + (excess / (triggerPx * 1.35f)))))
+            (triggerPx + resisted).coerceAtMost(maxPx)
+        }
+
+        if (visualOffset >= triggerPx && !hasTriggeredHaptic) {
+            hasTriggeredHaptic = true
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        } else if (visualOffset < triggerPx * 0.85f && hasTriggeredHaptic) {
+            hasTriggeredHaptic = false
+        }
+
+        scope.launch {
+            offsetAnim.snapTo(visualOffset)
+        }
     }
 
     Box(
@@ -1465,27 +1966,54 @@ private fun ChatSwipeToReplyContainer(
                 orientation = Orientation.Horizontal,
                 enabled = enabled,
                 onDragStopped = {
-                    if (offsetX > triggerPx) {
+                    val shouldReply = offsetAnim.value >= triggerPx || rawDragPx >= triggerPx
+                    rawDragPx = 0f
+                    hasTriggeredHaptic = false
+                    if (shouldReply) {
                         onSwipeToReply()
                     }
-                    offsetX = 0f
+                    scope.launch {
+                        if (reduceMotion) {
+                            offsetAnim.snapTo(0f)
+                        } else {
+                            offsetAnim.animateTo(
+                                targetValue = 0f,
+                                animationSpec = ChatMotion.layoutGestureSpring()
+                            )
+                        }
+                    }
                 }
             )
     ) {
-        if (offsetX > 16f) {
+        if (showReplyBadge) {
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .padding(start = 8.dp)
-                    .size(30.dp)
+                    .padding(start = 10.dp)
+                    .graphicsLayer {
+                        val current = offsetAnim.value
+                        val progress = (current / triggerPx.coerceAtLeast(1f)).coerceIn(0f, 1f)
+                        val badgeScale = (0.55f + (0.45f * progress) + thresholdScaleBoost.value).coerceAtLeast(0.4f)
+                        val dragRotation = (1f - progress) * -28f
+                        alpha = progress
+                        scaleX = badgeScale
+                        scaleY = badgeScale
+                        rotationZ = dragRotation + thresholdRotationKick.value
+                    }
+                    .size(32.dp)
                     .clip(CircleShape)
-                    .background(colors.surfaceMuted),
+                    .background(badgeBgColor)
+                    .border(
+                        width = ChatDimens.GlassSurfaceBorderWidth,
+                        color = if (isThresholdCrossed) Color.Transparent else chatColors.scrollToBottomBorder,
+                        shape = CircleShape
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     painter = painterResource(id = R.drawable.ic_reply),
                     contentDescription = stringResource(R.string.dm_action_reply),
-                    tint = colors.primaryBlue,
+                    tint = badgeIconTint,
                     modifier = Modifier.size(15.dp)
                 )
             }
@@ -1493,7 +2021,10 @@ private fun ChatSwipeToReplyContainer(
 
         Box(
             modifier = Modifier
-                .offset { IntOffset((if (isRtl) -offsetX else offsetX).roundToInt(), 0) }
+                .graphicsLayer {
+                    val current = offsetAnim.value
+                    translationX = if (isRtl) -current else current
+                }
                 .fillMaxWidth()
         ) {
             content()
@@ -1503,13 +2034,27 @@ private fun ChatSwipeToReplyContainer(
 
 @Composable
 private fun ChatBubbleActionPopup(
+    isOwn: Boolean,
     items: List<ActionMenuItem>,
     onDismiss: () -> Unit
 ) {
     if (items.isEmpty()) return
     val strings = BuildXTheme.strings
+    var placedAbove by remember { mutableStateOf(false) }
+    val pivotX = if (strings.isRtl) {
+        if (isOwn) 0.15f else 0.85f
+    } else {
+        if (isOwn) 0.85f else 0.15f
+    }
+    val pivotY = if (placedAbove) 1f else 0f
+
     Popup(
-        popupPositionProvider = remember(strings.isRtl) { BubblePopupPositionProvider(strings.isRtl) },
+        popupPositionProvider = remember(strings.isRtl) {
+            BubblePopupPositionProvider(
+                isRtl = strings.isRtl,
+                onDirectionResolved = { above -> placedAbove = above }
+            )
+        },
         onDismissRequest = onDismiss,
         properties = PopupProperties(
             focusable = true,
@@ -1521,7 +2066,8 @@ private fun ChatBubbleActionPopup(
             items = items,
             popupWidth = 200.dp,
             borderWidth = 0.8.dp,
-            shadowBlurRadius = 18.dp
+            shadowBlurRadius = 18.dp,
+            transformOrigin = TransformOrigin(pivotX, pivotY)
         )
     }
 }

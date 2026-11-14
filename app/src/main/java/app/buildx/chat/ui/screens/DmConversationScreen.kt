@@ -64,6 +64,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -71,6 +74,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -86,11 +90,14 @@ import app.buildx.chat.data.model.DmMessage
 import app.buildx.chat.data.model.DmSendStatus
 import app.buildx.chat.data.model.ReportReason
 import app.buildx.chat.data.model.StagedAttachment
+import app.buildx.chat.ui.chat.ChatBidiFormatter
 import app.buildx.chat.ui.chat.ChatComposer
 import app.buildx.chat.ui.chat.ChatHeader
 import app.buildx.chat.ui.chat.ChatListItem
 import app.buildx.chat.ui.chat.ChatMessageList
 import app.buildx.chat.ui.chat.ChatMessageMapper
+import app.buildx.chat.ui.chat.ChatMotion
+import app.buildx.chat.ui.chat.ChatTypography
 import app.buildx.chat.ui.chat.ChatWallpaperLayer
 import app.buildx.chat.ui.chat.DmMediaViewerDialog
 import app.buildx.chat.ui.chat.rememberReduceMotion
@@ -160,8 +167,11 @@ fun DmConversationScreen(
     val context = LocalContext.current
 
     val detail = uiState.activeDmDetail
+    val fallbackInboxItem = remember(uiState.dmInboxItems, conversationId) {
+        uiState.dmInboxItems.firstOrNull { it.effectiveId == conversationId }
+    }
     val conversation = detail?.conversation
-    val isDirect = conversation?.kind != "group"
+    val isDirect = (conversation?.kind ?: fallbackInboxItem?.kind) != "group"
     val peerIntro = detail?.peerIntro
     val currentUserId = uiState.profile?.id ?: ""
 
@@ -172,6 +182,7 @@ fun DmConversationScreen(
     var viewerMessage by remember { mutableStateOf<DmMessage?>(null) }
     var isChatInfoSheetOpen by remember { mutableStateOf(false) }
     var pendingCameraUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var composerBoundsInWindow by remember { mutableStateOf<Rect?>(null) }
 
     var isSearchActive by remember { mutableStateOf(false) }
     var inChatSearchQuery by remember { mutableStateOf("") }
@@ -217,13 +228,21 @@ fun DmConversationScreen(
         }
     }
 
+    val newlyInsertedIds = remember(uiState.justSentClientTempIds, uiState.lastOptimisticMessageId) {
+        buildSet {
+            addAll(uiState.justSentClientTempIds)
+            uiState.lastOptimisticMessageId?.let(::add)
+        }
+    }
+
     val listItems = remember(
         uiState.dmMessages,
         currentUserId,
         isDirect,
         detail?.participants,
         peerIntro,
-        strings.isRtl
+        strings.isRtl,
+        newlyInsertedIds
     ) {
         ChatMessageMapper.mapToReversedListItems(
             messages = uiState.dmMessages,
@@ -231,7 +250,8 @@ fun DmConversationScreen(
             isDirect = isDirect,
             participants = detail?.participants.orEmpty(),
             peerIntro = peerIntro,
-            defaultRtl = strings.isRtl
+            defaultRtl = strings.isRtl,
+            newlyInsertedIds = newlyInsertedIds
         )
     }
 
@@ -271,14 +291,15 @@ fun DmConversationScreen(
     }
 
     val membersCountTemplate = stringResource(R.string.dm_members_count, 0)
-    val headerState = remember(detail, currentUserId, membersCountTemplate, uiState.dmTypingUserIds) {
+    val headerState = remember(detail, fallbackInboxItem, currentUserId, membersCountTemplate, uiState.dmTypingUserIds) {
         ChatMessageMapper.mapHeaderState(
             detail = detail,
             currentUserId = currentUserId,
             typingUserIds = uiState.dmTypingUserIds,
             membersFormat = { count ->
                 context.getString(R.string.dm_members_count, count)
-            }
+            },
+            fallbackInboxItem = fallbackInboxItem
         )
     }
 
@@ -297,7 +318,7 @@ fun DmConversationScreen(
     val bottomOverlayDp = with(density) { bottomOverlayHeightPx.toDp() }
     val listTopPadding = if (topOverlayHeightPx > 0) topOverlayDp + 8.dp else 96.dp
     val listBottomPadding = if (bottomOverlayHeightPx > 0) bottomOverlayDp + 8.dp else fallbackBottomInsetDp + 76.dp
-    val fabBottomOffset = if (bottomOverlayHeightPx > 0) bottomOverlayDp + 12.dp else fallbackBottomInsetDp + 78.dp
+    val fabBottomOffset = if (bottomOverlayHeightPx > 0) bottomOverlayDp + 16.dp else fallbackBottomInsetDp + 84.dp
     val openChatInfoAction = remember(onOpenChatInfo) {
         {
             if (onOpenChatInfo != null) {
@@ -391,12 +412,16 @@ fun DmConversationScreen(
             onConsumeJumpToMessage = onConsumeJumpToMessage,
             highlightedMessageId = activeSearchHighlightId,
             todayOverride = todayOverride,
+            composerFlightBoundsInWindow = composerBoundsInWindow,
+            lastOptimisticMessageId = uiState.lastOptimisticMessageId,
             modifier = Modifier.fillMaxSize()
         )
 
         val hasCustomWallpaper = !uiState.activeDmWallpaper.isDefault
-        val topGradientHighAlpha = if (hasCustomWallpaper) 0.72f else 0.96f
-        val topGradientLowAlpha = if (hasCustomWallpaper) 0.44f else 0.84f
+        val topGradientHighAlpha = if (hasCustomWallpaper) 0.78f else 0.96f
+        val topGradientLowAlpha = if (hasCustomWallpaper) 0.46f else 0.84f
+        val bottomGradientHighAlpha = if (hasCustomWallpaper) 0.82f else 0.96f
+        val bottomGradientLowAlpha = if (hasCustomWallpaper) 0.48f else 0.80f
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -419,7 +444,7 @@ fun DmConversationScreen(
                 onBackClick = onBackClick,
                 onPillClick = openChatInfoAction,
                 onViewProfileClick = {
-                    val handle = peerIntro?.handle
+                    val handle = peerIntro?.handle ?: headerState.peerHandle
                     if (isDirect && !handle.isNullOrBlank()) {
                         onProfileClick(handle)
                     }
@@ -432,8 +457,8 @@ fun DmConversationScreen(
 
             AnimatedVisibility(
                 visible = isSearchActive,
-                enter = expandVertically(tween(180)) + fadeIn(tween(160)),
-                exit = shrinkVertically(tween(160)) + fadeOut(tween(120))
+                enter = expandVertically(ChatMotion.layoutGestureSpring()) + fadeIn(ChatMotion.interactiveSpring()),
+                exit = shrinkVertically(ChatMotion.layoutGestureSpring()) + fadeOut(ChatMotion.fastOutBezierTween(140))
             ) {
                 DmInChatSearchBar(
                     query = inChatSearchQuery,
@@ -486,13 +511,20 @@ fun DmConversationScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        0.0f to Color.Transparent,
+                        0.32f to chatColors.pageBackground.copy(alpha = bottomGradientLowAlpha),
+                        1.0f to chatColors.pageBackground.copy(alpha = bottomGradientHighAlpha)
+                    )
+                )
                 .onSizeChanged { bottomOverlayHeightPx = it.height }
                 .windowInsetsPadding(navAndImeInsets)
         ) {
             AnimatedVisibility(
                 visible = uiState.dmTypingUserIds.isNotEmpty() && !uiState.isVoiceListening,
-                enter = fadeIn(tween(150)) + expandVertically(tween(160)),
-                exit = fadeOut(tween(120)) + shrinkVertically(tween(140))
+                enter = fadeIn(ChatMotion.interactiveSpring()) + expandVertically(ChatMotion.layoutGestureSpring()),
+                exit = fadeOut(ChatMotion.fastOutBezierTween(140)) + shrinkVertically(ChatMotion.layoutGestureSpring())
             ) {
                 DmBottomTypingPill(
                     chatColors = chatColors,
@@ -528,7 +560,8 @@ fun DmConversationScreen(
                     onSendClick = onSendMessage,
                     onVoiceDictationClick = onVoiceDictationClick,
                     chatColors = chatColors,
-                    reduceMotion = reduceMotion
+                    reduceMotion = reduceMotion,
+                    onInputBoundsChanged = { composerBoundsInWindow = it }
                 )
             }
         }
@@ -787,6 +820,14 @@ private fun DmInChatSearchBar(
     onClose: () -> Unit
 ) {
     val colors = BuildXTheme.colors
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+        keyboardController?.show()
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -812,6 +853,7 @@ private fun DmInChatSearchBar(
                     color = colors.secondaryText,
                     fontSize = 14.sp,
                     fontFamily = BuildXFontFamily,
+                    style = TextStyle(textDirection = TextDirection.ContentOrLtr),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -824,10 +866,12 @@ private fun DmInChatSearchBar(
                     fontFamily = BuildXFontFamily,
                     color = colors.primaryText,
                     fontSize = 14.sp,
-                    textDirection = TextDirection.Content
+                    textDirection = TextDirection.ContentOrLtr
                 ),
                 cursorBrush = SolidColor(colors.primaryBlue),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester)
             )
         }
         if (query.isNotBlank()) {
@@ -912,7 +956,11 @@ private fun DmBottomTypingPill(
                 initialValue = 0.3f,
                 targetValue = 1f,
                 animationSpec = infiniteRepeatable(
-                    animation = tween(durationMillis = 480, delayMillis = i * 140),
+                    animation = tween(
+                        durationMillis = ChatMotion.TypingDotCycleMs / 2,
+                        delayMillis = i * ChatMotion.TypingDotStaggerMs,
+                        easing = ChatMotion.FastOutCubicBezier
+                    ),
                     repeatMode = RepeatMode.Reverse
                 ),
                 label = "typing_dot_$i"
@@ -920,8 +968,9 @@ private fun DmBottomTypingPill(
             Box(
                 modifier = Modifier
                     .size(6.dp)
+                    .graphicsLayer { alpha = dotAlpha }
                     .clip(CircleShape)
-                    .background(chatColors.receivedMetaText.copy(alpha = dotAlpha))
+                    .background(chatColors.typingDot)
             )
         }
         Spacer(modifier = Modifier.width(2.dp))
@@ -940,13 +989,17 @@ private fun DmPinnedMessageBanner(
     onUnpinClick: () -> Unit
 ) {
     val colors = BuildXTheme.colors
+    val chatColors = remember(colors) { colors.toChatColors() }
+    val previewText = ChatBidiFormatter.isolateFirstStrong(
+        pinnedMessage.content.ifBlank { stringResource(R.string.dm_media_attachment) }
+    )
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 6.dp)
             .softShadow(colors.headerHaloShadowColor, cornerRadius = 14.dp, blurRadius = 8.dp, offsetY = 1.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(colors.cardBackground)
+            .background(chatColors.pinnedBannerBg)
             .border(0.8.dp, colors.subtleSurfaceBorder, RoundedCornerShape(14.dp))
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
@@ -957,22 +1010,18 @@ private fun DmPinnedMessageBanner(
             Icon(
                 painter = painterResource(id = R.drawable.ic_pin),
                 contentDescription = null,
-                tint = colors.primaryBlue,
+                tint = chatColors.pinnedBannerAccent,
                 modifier = Modifier.size(16.dp)
             )
             Spacer(modifier = Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = stringResource(R.string.dm_pinned_message),
-                    color = colors.primaryBlue,
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Bold
+                    style = ChatTypography.pinnedBannerTitle.copy(color = chatColors.pinnedBannerAccent)
                 )
                 Text(
-                    text = pinnedMessage.content.ifBlank { stringResource(R.string.dm_media_attachment) },
-                    color = colors.primaryText,
-                    fontSize = 13.sp,
-                    style = TextStyle(textDirection = TextDirection.Content),
+                    text = previewText,
+                    style = ChatTypography.pinnedBannerPreview.copy(color = colors.primaryText),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )

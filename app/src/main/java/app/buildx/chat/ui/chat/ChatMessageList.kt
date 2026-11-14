@@ -1,10 +1,8 @@
 package app.buildx.chat.ui.chat
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -36,7 +34,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
@@ -84,13 +84,15 @@ fun ChatMessageList(
     modifier: Modifier = Modifier,
     topContentPadding: Dp = ChatDimens.ListTopPadding,
     bottomContentPadding: Dp = ChatDimens.ListBottomPadding,
-    scrollToBottomFabBottomOffset: Dp = bottomContentPadding + 8.dp,
+    scrollToBottomFabBottomOffset: Dp = bottomContentPadding + 14.dp,
     jumpToMessageId: String? = null,
     onConsumeJumpToMessage: () -> Unit = {},
     todayOverride: java.time.LocalDate? = null,
     onImageClick: (DmMessage) -> Unit = onMessageTap,
     onMessageLongPress: (DmMessage) -> Unit = onMessageTap,
-    highlightedMessageId: String? = null
+    highlightedMessageId: String? = null,
+    composerFlightBoundsInWindow: Rect? = null,
+    lastOptimisticMessageId: String? = null
 ) {
     val coroutineScope = rememberCoroutineScope()
     var transientHighlightId by remember { mutableStateOf<String?>(null) }
@@ -155,8 +157,8 @@ fun ChatMessageList(
     }
 
     // Scroll to bottom only when user isn't already pinned at bottom so item placement and send lift don't fight
-    LaunchedEffect(justSentClientTempIds) {
-        if (justSentClientTempIds.isNotEmpty() && items.isNotEmpty()) {
+    LaunchedEffect(justSentClientTempIds, lastOptimisticMessageId) {
+        if ((justSentClientTempIds.isNotEmpty() || !lastOptimisticMessageId.isNullOrBlank()) && items.isNotEmpty()) {
             if (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 24) {
                 listState.animateScrollToItem(0)
             }
@@ -186,14 +188,19 @@ fun ChatMessageList(
     }
 
     val hasActiveMenu = activeMenuMessageId != null
-    // Zero full-screen backdrop dimming or sibling fading on message context menu
-    val menuBackdropColor = Color.Transparent
-    val nonMessageDimAlpha = 1f
+    val menuFocusProgress by animateFloatAsState(
+        targetValue = if (hasActiveMenu) 1f else 0f,
+        animationSpec = if (reduceMotion) snap() else ChatMotion.interactiveSpring(),
+        label = "menu_backdrop_focus"
+    )
+    val menuBackdropColor = chatColors.menuBackdropScrim.copy(
+        alpha = (chatColors.menuBackdropScrim.alpha * menuFocusProgress).coerceIn(0f, 1f)
+    )
+    val nonMessageDimAlpha = (1f - (0.38f * menuFocusProgress)).coerceIn(0.45f, 1f)
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(menuBackdropColor)
             .then(
                 if (hasActiveMenu) {
                     Modifier.clickable(
@@ -206,6 +213,13 @@ fun ChatMessageList(
                 }
             )
     ) {
+        if (menuFocusProgress > 0.01f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(menuBackdropColor)
+            )
+        }
         if (isLoadingInitial && items.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -240,15 +254,12 @@ fun ChatMessageList(
                         }
                     }
                 ) { item ->
-                    val placementModifier = if (reduceMotion) {
+                    val placementModifier = if (reduceMotion || !initialized) {
                         Modifier
                     } else {
                         Modifier.animateItem(
-                            fadeInSpec = if (item is ChatListItem.MessageItem) null else tween(160),
-                            placementSpec = spring(
-                                dampingRatio = ChatMotion.ItemPlacementDamping,
-                                stiffness = ChatMotion.ItemPlacementStiffness
-                            ),
+                            fadeInSpec = null,
+                            placementSpec = ChatMotion.layoutGestureSpring(),
                             fadeOutSpec = null
                         )
                     }
@@ -256,19 +267,29 @@ fun ChatMessageList(
                     when (item) {
                         is ChatListItem.MessageItem -> {
                             val tempId = item.message.clientTempId
-                            val isJustSent = tempId != null && tempId in justSentClientTempIds
-                            val isNewlyReceived = item.stableKey in newlyReceivedKeys
+                            val isJustSent = item.isOwn && (
+                                item.isNewlyInserted ||
+                                    (tempId != null && (tempId in justSentClientTempIds || tempId == lastOptimisticMessageId))
+                                )
+                            val isNewlyReceived = !item.isOwn && item.stableKey in newlyReceivedKeys
+                            val isThisMenuOpen = activeMenuMessageId == item.message.id
+                            val siblingBlurModifier = if (hasActiveMenu && !isThisMenuOpen && !reduceMotion) {
+                                Modifier.blur((2.5f * menuFocusProgress).dp)
+                            } else {
+                                Modifier
+                            }
 
                             ChatMessageRow(
                                 item = item,
                                 chatColors = chatColors,
-                                isMenuOpen = activeMenuMessageId == item.message.id,
-                                menuItems = if (activeMenuMessageId == item.message.id) buildMenuItems(item) else emptyList(),
+                                isMenuOpen = isThisMenuOpen,
+                                menuItems = if (isThisMenuOpen) buildMenuItems(item) else emptyList(),
                                 isJustSent = isJustSent,
                                 isNewlyReceived = isNewlyReceived,
                                 reduceMotion = reduceMotion,
                                 onConsumeJustSent = {
-                                    if (tempId != null) onConsumeJustSent(tempId)
+                                    val consumeId = tempId ?: lastOptimisticMessageId?.takeIf { it == item.message.id }
+                                    if (consumeId != null) onConsumeJustSent(consumeId)
                                 },
                                 onConsumeNewlyReceived = {
                                     newlyReceivedKeys = newlyReceivedKeys - item.stableKey
@@ -292,8 +313,9 @@ fun ChatMessageList(
                                 onSwipeToReply = { onSwipeToReply(item.message) },
                                 onSenderProfileClick = onViewProfileClick,
                                 isHighlighted = item.message.id == highlightedMessageId || item.message.id == transientHighlightId,
-                                isDimmed = false,
-                                modifier = placementModifier
+                                isDimmed = hasActiveMenu && !isThisMenuOpen,
+                                composerFlightBoundsInWindow = composerFlightBoundsInWindow,
+                                modifier = placementModifier.then(siblingBlurModifier)
                             )
                         }
 
@@ -341,10 +363,18 @@ fun ChatMessageList(
         // Floating Scroll-to-Bottom button with unread count badge
         AnimatedVisibility(
             visible = !isAtBottom && items.isNotEmpty(),
-            enter = fadeIn(tween(if (reduceMotion) 0 else ChatMotion.ScrollToBottomAnimMs)) +
-                scaleIn(tween(if (reduceMotion) 0 else ChatMotion.ScrollToBottomAnimMs), initialScale = 0.8f),
-            exit = fadeOut(tween(if (reduceMotion) 0 else ChatMotion.ScrollToBottomAnimMs)) +
-                scaleOut(tween(if (reduceMotion) 0 else ChatMotion.ScrollToBottomAnimMs), targetScale = 0.8f),
+            enter = fadeIn(
+                animationSpec = if (reduceMotion) snap() else ChatMotion.interactiveSpring()
+            ) + scaleIn(
+                animationSpec = if (reduceMotion) snap() else ChatMotion.interactiveSpring(),
+                initialScale = 0.8f
+            ),
+            exit = fadeOut(
+                animationSpec = if (reduceMotion) snap() else ChatMotion.fastOutBezierTween(ChatMotion.ScrollToBottomAnimMs)
+            ) + scaleOut(
+                animationSpec = if (reduceMotion) snap() else ChatMotion.fastOutBezierTween(ChatMotion.ScrollToBottomAnimMs),
+                targetScale = 0.8f
+            ),
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(end = ChatDimens.ScrollToBottomMargin, bottom = scrollToBottomFabBottomOffset)
