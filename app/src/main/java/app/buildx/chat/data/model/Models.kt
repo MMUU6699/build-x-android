@@ -357,12 +357,12 @@ data class DmMemberAvatar(
 
 @Serializable
 data class DmLastMessageSummary(
-    val id: String,
-    @SerialName("sender_id") val senderId: String,
+    val id: String = "",
+    @SerialName("sender_id") val senderId: String = "",
     @SerialName("sender_name") val senderName: String? = null,
     @SerialName("message_type") val messageType: String = "text",
     val content: String = "",
-    @SerialName("created_at") val createdAt: String,
+    @SerialName("created_at") val createdAt: String = "",
     @SerialName("deleted_at") val deletedAt: String? = null
 )
 
@@ -401,6 +401,13 @@ data class DmInboxItem(
     val effectiveTitle: String get() = displayName ?: title ?: peer?.displayName ?: "Chat"
     val effectiveAvatarUrl: String? get() = avatarUrl ?: peer?.avatarUrl
     val effectiveIsVerified: Boolean get() = isVerified || peer?.isVerified == true
+    val effectiveLastMessageId: String? get() = lastMessageId ?: lastMessage?.id?.takeIf { it.isNotBlank() }
+    val effectiveLastMessageText: String? get() = lastMessageText ?: lastMessage?.content
+    val effectiveLastMessageType: String get() = lastMessageType ?: lastMessage?.messageType ?: "text"
+    val effectiveLastMessageSenderId: String? get() = lastMessageSenderId ?: lastMessage?.senderId?.takeIf { it.isNotBlank() }
+    val effectiveLastMessageAt: String? get() = lastMessageAt ?: lastMessage?.createdAt?.takeIf { it.isNotBlank() } ?: lastActivityAt
+    val effectiveIsUnread: Boolean get() = unreadCount > 0 || isMarkedUnread
+    val effectiveIsMuted: Boolean get() = isMuted || !mutedUntil.isNullOrBlank()
 }
 
 @Serializable
@@ -486,8 +493,8 @@ data class DmConversationDetail(
 
 @Serializable
 data class DmReplyPreview(
-    val id: String,
-    @SerialName("sender_id") val senderId: String,
+    val id: String = "",
+    @SerialName("sender_id") val senderId: String = "",
     @SerialName("sender_display_name") val senderDisplayName: String? = null,
     val content: String = "",
     @SerialName("attachment_mime") val attachmentMime: String? = null,
@@ -497,8 +504,8 @@ data class DmReplyPreview(
 @Serializable
 data class DmMessage(
     val id: String,
-    @SerialName("conversation_id") val conversationId: String,
-    @SerialName("sender_id") val senderId: String,
+    @SerialName("conversation_id") val conversationId: String = "",
+    @SerialName("sender_id") val senderId: String = "",
     @SerialName("sender_username") val senderUsername: String? = null,
     @SerialName("sender_handle") val senderHandle: String? = null,
     @SerialName("sender_display_name") val senderDisplayName: String? = null,
@@ -515,9 +522,15 @@ data class DmMessage(
     @SerialName("client_temp_id") val clientTempId: String? = null,
     @SerialName("edited_at") val editedAt: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
-    @SerialName("created_at") val createdAt: String,
+    @SerialName("created_at") val createdAt: String = "",
     val localSendStatus: DmSendStatus = DmSendStatus.SENT
-)
+) {
+    val isDeleted: Boolean
+        get() = deletedAt != null || messageType == "deleted"
+
+    val isEdited: Boolean
+        get() = editedAt != null && !isDeleted
+}
 
 enum class WallpaperCategory {
     SIGNATURE,

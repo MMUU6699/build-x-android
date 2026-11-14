@@ -443,4 +443,59 @@ class DmMessagingTest {
         assertTrue(defaultWp.blur)
         assertFalse(defaultWp.isCustom)
     }
+
+    @Test
+    fun testPinnedMessageDeserializationWithoutConversationIdDoesNotCrash() {
+        val payload = """
+            {
+                "success": true,
+                "conversation": {
+                    "id": "conv-pin-1",
+                    "kind": "group",
+                    "title": "BuildX Core",
+                    "pinned_message_id": "msg-pinned-1"
+                },
+                "pinned_message": {
+                    "id": "msg-pinned-1",
+                    "sender_id": "u-1",
+                    "sender_display_name": "Mustafa",
+                    "content": "Release checklist locked",
+                    "attachment_mime": null,
+                    "created_at": "2026-11-12T14:20:00Z"
+                }
+            }
+        """.trimIndent()
+        val detail = json.decodeFromString<DmConversationDetail>(payload)
+        assertTrue(detail.success)
+        assertNotNull(detail.pinnedMessage)
+        assertEquals("msg-pinned-1", detail.pinnedMessage?.id)
+        assertEquals("Release checklist locked", detail.pinnedMessage?.content)
+        assertEquals("", detail.pinnedMessage?.conversationId)
+    }
+
+    @Test
+    fun testDmInboxItemNormalizedAndLegacyEffectiveHelpers() {
+        val normalized = """
+            {
+                "conversation_id": "conv-norm",
+                "kind": "direct",
+                "display_name": "Sara",
+                "unread_count": 0,
+                "is_marked_unread": true,
+                "muted_until": "infinity",
+                "last_message_id": "m-99",
+                "last_message_text": "See you soon",
+                "last_message_type": "text",
+                "last_message_sender_id": "u-2",
+                "last_message_at": "2026-11-12T15:00:00Z"
+            }
+        """.trimIndent()
+        val item = json.decodeFromString<DmInboxItem>(normalized)
+        assertEquals("conv-norm", item.effectiveId)
+        assertEquals("m-99", item.effectiveLastMessageId)
+        assertEquals("See you soon", item.effectiveLastMessageText)
+        assertEquals("u-2", item.effectiveLastMessageSenderId)
+        assertTrue(item.effectiveIsUnread)
+        assertTrue(item.effectiveIsMuted)
+    }
 }

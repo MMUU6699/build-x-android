@@ -1965,7 +1965,14 @@ class BuildXRepository(val context: Context) {
                 put("p_conversation_id", conversationId)
             }
             val response = supabase.postgrest.rpc("get_dm_conversation_detail", params)
-            val detail = json.decodeFromString<DmConversationDetail>(response.data)
+            val decoded = json.decodeFromString<DmConversationDetail>(response.data)
+            val detail = decoded.pinnedMessage?.let { pinned ->
+                if (pinned.conversationId.isBlank()) {
+                    decoded.copy(pinnedMessage = pinned.copy(conversationId = conversationId))
+                } else {
+                    decoded
+                }
+            } ?: decoded
             if (response.data.contains("\"wallpaper_id\"")) {
                 saveConversationWallpaperLocal(conversationId, detail.resolvedWallpaper)
             }
@@ -2015,7 +2022,8 @@ class BuildXRepository(val context: Context) {
                 error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to send message")
             }
             val msgElement = obj["message"] ?: error("Missing message object in response")
-            json.decodeFromJsonElement(DmMessage.serializer(), msgElement)
+            val msg = json.decodeFromJsonElement(DmMessage.serializer(), msgElement)
+            if (msg.conversationId.isBlank()) msg.copy(conversationId = conversationId) else msg
         }
     }
 
@@ -2029,7 +2037,11 @@ class BuildXRepository(val context: Context) {
             }
             val response = supabase.postgrest.rpc("mark_conversation_read", params)
             val obj = json.decodeFromString<JsonObject>(response.data)
-            obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
+            if (!success) {
+                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to mark conversation read")
+            }
+            true
         }
     }
 
@@ -2150,7 +2162,11 @@ class BuildXRepository(val context: Context) {
             }
             val response = supabase.postgrest.rpc("delete_conversation_for_me", params)
             val obj = json.decodeFromString<JsonObject>(response.data)
-            obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
+            if (!success) {
+                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to delete conversation")
+            }
+            true
         }
     }
 
@@ -2161,7 +2177,11 @@ class BuildXRepository(val context: Context) {
             }
             val response = supabase.postgrest.rpc("leave_group", params)
             val obj = json.decodeFromString<JsonObject>(response.data)
-            obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
+            if (!success) {
+                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to leave group")
+            }
+            true
         }
     }
 
@@ -2180,7 +2200,11 @@ class BuildXRepository(val context: Context) {
             }
             val response = supabase.postgrest.rpc("mark_conversation_unread", params)
             val obj = json.decodeFromString<JsonObject>(response.data)
-            obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
+            val success = obj["success"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
+            if (!success) {
+                error(obj["error"]?.jsonPrimitive?.contentOrNull ?: "Failed to mark conversation unread")
+            }
+            true
         }
     }
 
