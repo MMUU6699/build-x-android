@@ -215,6 +215,106 @@ object ChatMessageMapper {
         )
     }
 
+    fun isSystemEventMessage(msg: DmMessage): Boolean {
+        if (msg.isDeleted) return false
+        if (msg.messageType.equals("system", ignoreCase = true)) return true
+        val trimmed = msg.content.trim()
+        if (trimmed.isEmpty()) return false
+        return trimmed.equals("created the group", ignoreCase = true) ||
+            trimmed.equals("joined the group", ignoreCase = true) ||
+            trimmed.equals("left the group", ignoreCase = true) ||
+            trimmed.startsWith("created the group", ignoreCase = true) ||
+            trimmed.endsWith("created the group", ignoreCase = true)
+    }
+
+    fun formatSystemEventText(
+        msg: DmMessage,
+        senderDisplayName: String?
+    ): String {
+        val trimmed = msg.content.trim()
+        if (trimmed.isEmpty()) return ""
+        val lower = trimmed.lowercase(Locale.ROOT)
+        val isBareAction = lower == "created the group" ||
+            lower == "joined the group" ||
+            lower == "left the group"
+        val cleanSender = senderDisplayName?.trim()?.takeIf { it.isNotBlank() }
+        return if (isBareAction && cleanSender != null && !trimmed.startsWith(cleanSender, ignoreCase = true)) {
+            "$cleanSender $trimmed"
+        } else {
+            trimmed
+        }
+    }
+
+    fun toggleMessageReaction(
+        reactionsByMessageId: Map<String, Map<String, Int>>,
+        myReactionsByMessageId: Map<String, String>,
+        messageId: String,
+        emoji: String
+    ): Pair<Map<String, Map<String, Int>>, Map<String, String>> {
+        val cleanEmoji = emoji.trim()
+        if (messageId.isBlank() || cleanEmoji.isEmpty()) {
+            return reactionsByMessageId to myReactionsByMessageId
+        }
+        val currentMy = myReactionsByMessageId[messageId]
+        val nextCounts = (reactionsByMessageId[messageId] ?: emptyMap()).toMutableMap()
+        val nextMyMap = myReactionsByMessageId.toMutableMap()
+
+        if (currentMy == cleanEmoji) {
+            val updated = (nextCounts[cleanEmoji] ?: 1) - 1
+            if (updated <= 0) nextCounts.remove(cleanEmoji) else nextCounts[cleanEmoji] = updated
+            nextMyMap.remove(messageId)
+        } else {
+            if (!currentMy.isNullOrBlank()) {
+                val prevUpdated = (nextCounts[currentMy] ?: 1) - 1
+                if (prevUpdated <= 0) nextCounts.remove(currentMy) else nextCounts[currentMy] = prevUpdated
+            }
+            nextCounts[cleanEmoji] = (nextCounts[cleanEmoji] ?: 0) + 1
+            nextMyMap[messageId] = cleanEmoji
+        }
+
+        val nextReactions = reactionsByMessageId.toMutableMap()
+        if (nextCounts.isEmpty()) {
+            nextReactions.remove(messageId)
+        } else {
+            nextReactions[messageId] = nextCounts.toMap()
+        }
+        return nextReactions.toMap() to nextMyMap.toMap()
+    }
+
+    fun shouldSkipRealtimeMessageInsert(
+        messageId: String?,
+        clientTempId: String?,
+        senderId: String?,
+        currentUserId: String?,
+        currentMessages: List<DmMessage>,
+        knownClientTempIds: Set<String>
+    ): Boolean {
+        if (!clientTempId.isNullOrBlank() && clientTempId in knownClientTempIds) return true
+        if (!messageId.isNullOrBlank() && currentMessages.any { it.id == messageId }) return true
+        if (!currentUserId.isNullOrBlank() && senderId == currentUserId && !clientTempId.isNullOrBlank()) {
+            if (currentMessages.any { it.clientTempId == clientTempId }) return true
+        }
+        return false
+    }
+
+    fun shouldSkipRealtimeMessageUpdate(
+        messageId: String?,
+        content: String?,
+        editedAt: String?,
+        deletedAt: String?,
+        currentMessages: List<DmMessage>
+    ): Boolean {
+        if (messageId.isNullOrBlank()) return false
+        val local = currentMessages.firstOrNull { it.id == messageId } ?: return false
+        val isRemoteDeleted = !deletedAt.isNullOrBlank()
+        if (isRemoteDeleted && local.isDeleted) return true
+        val normalizedContent = content.orEmpty()
+        return !isRemoteDeleted &&
+            !local.isDeleted &&
+            local.content == normalizedContent &&
+            local.editedAt == editedAt
+    }
+
     /**
      * Maps chronological [messages] (oldest -> newest) into reversed UI items
      * (newest -> oldest) for `LazyColumn(reverseLayout = true)`.
@@ -229,7 +329,9 @@ object ChatMessageMapper {
         defaultRtl: Boolean,
         zoneId: ZoneId = ZoneId.systemDefault(),
         locale: Locale = Locale.getDefault(),
-        newlyInsertedIds: Set<String> = emptySet()
+        newlyInsertedIds: Set<String> = emptySet(),
+        reactionsByMessageId: Map<String, Map<String, Int>> = emptyMap(),
+        myReactionsByMessageId: Map<String, String> = emptyMap()
     ): List<ChatListItem> {
         if (messages.isEmpty()) {
             return if (isDirect && peerIntro != null) {
@@ -244,6 +346,16 @@ object ChatMessageMapper {
         val maxPeerReadAtMillis = otherParticipants
             .mapNotNull { it.lastReadAt?.let(::parseInstantMillis) }
             .maxOrNull()
+        val messageIndexById = HashMap<String, Int>(messages.size)
+        for (idx in messages.indices) {
+            messageIndexById[messages[idx].id] = idx
+        }
+        val otherReadIndexByUserId = otherParticipants.associate { p ->
+            p.userId to p.lastReadMessageId?.let { messageIndexById[it] }
+        }
+        val otherReadMillisByUserId = otherParticipants.associate { p ->
+            p.userId to p.lastReadAt?.let(::parseInstantMillis)
+        }
 
         val chronologicalItems = ArrayList<ChatListItem>(messages.size + 8)
 
@@ -277,15 +389,31 @@ object ChatMessageMapper {
                 )
             }
 
+            val participant = participantLookup[msg.senderId]
+            val resolvedSenderName = msg.senderDisplayName?.trim()?.takeIf { it.isNotBlank() }
+                ?: participant?.displayName?.trim()?.takeIf { it.isNotBlank() }
+            val isSystem = isSystemEventMessage(msg)
+            if (isSystem) {
+                val systemText = formatSystemEventText(msg, resolvedSenderName)
+                chronologicalItems.add(
+                    ChatListItem.SystemEventItem(
+                        stableKey = "system_${msg.clientTempId ?: msg.id}",
+                        message = msg,
+                        text = systemText,
+                        createdAtIso = msg.createdAt,
+                        isolatedText = ChatBidiFormatter.isolateFirstStrong(systemText)
+                    )
+                )
+                continue
+            }
+
             val isDeleted = msg.isDeleted
-            val isSystem = msg.messageType == "system"
             val isOwn = msg.senderId == currentUserId
 
             val groupedWithPrev = prev != null &&
                 !prev.isDeleted &&
-                prev.messageType != "system" &&
+                !isSystemEventMessage(prev) &&
                 !isDeleted &&
-                !isSystem &&
                 prev.senderId == msg.senderId &&
                 msgDay == prevDay &&
                 msgMillis != null && prevMillis != null &&
@@ -293,9 +421,8 @@ object ChatMessageMapper {
 
             val groupedWithNext = next != null &&
                 !next.isDeleted &&
-                next.messageType != "system" &&
+                !isSystemEventMessage(next) &&
                 !isDeleted &&
-                !isSystem &&
                 next.senderId == msg.senderId &&
                 msgDay == nextDay &&
                 msgMillis != null && nextMillis != null &&
@@ -317,16 +444,29 @@ object ChatMessageMapper {
                 isOwn = isOwn,
                 msgMillis = msgMillis,
                 otherParticipants = otherParticipants,
-                maxPeerReadAtMillis = maxPeerReadAtMillis
+                maxPeerReadAtMillis = maxPeerReadAtMillis,
+                messageIndex = i,
+                messageIndexById = messageIndexById
             )
 
-            val seenAtThisMessage = otherParticipants.filter {
-                it.userId != msg.senderId && it.lastReadMessageId == msg.id
+            val seenByParticipants = if (isOwn && msg.localSendStatus == DmSendStatus.SENT) {
+                otherParticipants.filter { peer ->
+                    peer.userId != msg.senderId && (
+                        peer.lastReadMessageId == msg.id ||
+                            ((otherReadIndexByUserId[peer.userId] ?: -1) >= i) ||
+                            (msgMillis != null && (otherReadMillisByUserId[peer.userId] ?: Long.MIN_VALUE) >= msgMillis)
+                        )
+                }
+            } else {
+                emptyList()
             }
+            val seenByNames = seenByParticipants.mapNotNull { peer ->
+                peer.displayName?.trim()?.takeIf { it.isNotBlank() }
+                    ?: peer.username?.trim()?.takeIf { it.isNotBlank() }
+                    ?: peer.handle?.trim()?.takeIf { it.isNotBlank() }
+            }.distinct()
+            val isSeenByPeer = isOwn && (deliveryStatus == ChatDeliveryStatus.READ || seenByParticipants.isNotEmpty())
 
-            val participant = participantLookup[msg.senderId]
-            val resolvedSenderName = msg.senderDisplayName?.trim()?.takeIf { it.isNotBlank() }
-                ?: participant?.displayName?.trim()?.takeIf { it.isNotBlank() }
             val resolvedSenderHandle = msg.senderHandle?.trim()?.takeIf { it.isNotBlank() }
                 ?: msg.senderUsername?.trim()?.takeIf { it.isNotBlank() }
                 ?: participant?.handle?.trim()?.takeIf { it.isNotBlank() }
@@ -335,6 +475,11 @@ object ChatMessageMapper {
             val formattedTime = formatShortTime(msg.createdAt, zoneId, locale)
             val isNewlyInserted = msg.id in newlyInsertedIds ||
                 (msg.clientTempId != null && msg.clientTempId in newlyInsertedIds)
+            val reactions = reactionsByMessageId[msg.id]
+                ?: msg.clientTempId?.let { reactionsByMessageId[it] }
+                ?: emptyMap()
+            val myReaction = myReactionsByMessageId[msg.id]
+                ?: msg.clientTempId?.let { myReactionsByMessageId[it] }
 
             chronologicalItems.add(
                 ChatListItem.MessageItem(
@@ -347,12 +492,16 @@ object ChatMessageMapper {
                     isRtlContent = isRtlText(msg.content, defaultRtl = defaultRtl),
                     position = position,
                     isGroupedWithPrevious = groupedWithPrev,
-                    showSenderName = !isDirect && !isOwn && !isDeleted && !isSystem && !groupedWithPrev && !resolvedSenderName.isNullOrBlank(),
+                    showSenderName = !isDirect && !isOwn && !isDeleted && !groupedWithPrev && !resolvedSenderName.isNullOrBlank(),
                     showSenderAvatar = !isDirect && !isOwn && !groupedWithNext,
                     formattedTime = formattedTime,
                     deliveryStatus = deliveryStatus,
                     replyPreview = msg.replyTo,
-                    seenParticipants = seenAtThisMessage,
+                    seenParticipants = emptyList(),
+                    seenByNames = seenByNames,
+                    isSeenByPeer = isSeenByPeer,
+                    reactions = reactions,
+                    myReaction = myReaction,
                     resolvedSenderName = resolvedSenderName,
                     resolvedSenderHandle = resolvedSenderHandle,
                     senderIsVerified = senderIsVerified,
@@ -384,14 +533,20 @@ object ChatMessageMapper {
         isOwn: Boolean,
         msgMillis: Long?,
         otherParticipants: List<DmParticipant>,
-        maxPeerReadAtMillis: Long?
+        maxPeerReadAtMillis: Long?,
+        messageIndex: Int = -1,
+        messageIndexById: Map<String, Int> = emptyMap()
     ): ChatDeliveryStatus {
         if (!isOwn) return ChatDeliveryStatus.SENT
         return when (message.localSendStatus) {
             DmSendStatus.SENDING -> ChatDeliveryStatus.SENDING
             DmSendStatus.FAILED -> ChatDeliveryStatus.FAILED
             DmSendStatus.SENT -> {
-                val isReadByPointer = otherParticipants.any { it.lastReadMessageId == message.id }
+                val isReadByPointer = otherParticipants.any { peer ->
+                    peer.lastReadMessageId == message.id ||
+                        (messageIndex >= 0 && peer.lastReadMessageId != null &&
+                            (messageIndexById[peer.lastReadMessageId] ?: -1) >= messageIndex)
+                }
                 val isReadByTimestamp = msgMillis != null && maxPeerReadAtMillis != null && maxPeerReadAtMillis >= msgMillis
                 if (isReadByPointer || isReadByTimestamp) {
                     ChatDeliveryStatus.READ

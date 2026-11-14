@@ -12,8 +12,11 @@ import app.buildx.chat.data.model.NoteLikeToggleResult
 import app.buildx.chat.data.model.PublicNote
 import app.buildx.chat.data.model.UserProfile
 import app.buildx.chat.data.model.WallpaperCategory
+import app.buildx.chat.ui.chat.ChatListItem
+import app.buildx.chat.ui.chat.ChatMessageMapper
 import app.buildx.chat.ui.chat.ChatWallpaperCatalog
 import app.buildx.chat.ui.screens.RowAnchoredPopupPositionProvider
+import java.time.ZoneOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
@@ -497,5 +500,36 @@ class DmMessagingTest {
         assertEquals("u-2", item.effectiveLastMessageSenderId)
         assertTrue(item.effectiveIsUnread)
         assertTrue(item.effectiveIsMuted)
+    }
+
+    @Test
+    fun testSystemGroupCreatedMessageDeserializesAndMapsToSystemEventItem() {
+        val rawJson = """
+            {
+                "id": "sys-msg-1",
+                "conversation_id": "group-1",
+                "sender_id": "user-creator",
+                "sender_display_name": "Mustafa",
+                "message_type": "system",
+                "content": "created the group",
+                "created_at": "2026-11-12T15:00:00Z"
+            }
+        """.trimIndent()
+        val msg = json.decodeFromString<DmMessage>(rawJson)
+        assertEquals("system", msg.messageType)
+        assertEquals("created the group", msg.content)
+
+        val items = ChatMessageMapper.mapToReversedListItems(
+            messages = listOf(msg),
+            currentUserId = "user-creator",
+            isDirect = false,
+            participants = listOf(DmParticipant(userId = "user-creator", displayName = "Mustafa")),
+            peerIntro = null,
+            defaultRtl = false,
+            zoneId = ZoneOffset.UTC
+        )
+        assertTrue(items.filterIsInstance<ChatListItem.MessageItem>().isEmpty())
+        val sys = items.filterIsInstance<ChatListItem.SystemEventItem>().single()
+        assertEquals("Mustafa created the group", sys.text)
     }
 }
