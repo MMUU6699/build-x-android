@@ -1,10 +1,8 @@
 package app.buildx.chat.ui.chat
 
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -13,27 +11,30 @@ import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.togetherWith
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -50,48 +51,48 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import app.buildx.chat.R
 import app.buildx.chat.data.model.DmMessage
 import app.buildx.chat.data.model.StagedAttachment
 import app.buildx.chat.ui.components.pressScaleClickable
-import app.buildx.chat.ui.theme.BuildXFontFamily
 import app.buildx.chat.ui.theme.BuildXTheme
 import app.buildx.chat.ui.theme.isRtlText
-import app.buildx.chat.ui.theme.softShadow
 import coil.compose.AsyncImage
+import kotlinx.coroutines.launch
 
 /**
- * Single-pill DM Composer aligned on an 8dp grid:
- * - Multi-line text field up to 6 lines with smooth animateContentSize
- * - Auto-detects Arabic/RTL vs English/LTR text direction
+ * Single-pill glassmorphic DM Composer (48dp min height, 24dp capsule radius -> 20dp expanded):
+ * - Hardware-accelerated glassmorphic backdrop (`RenderEffect.createBlurEffect` on Android 12+ with translucent gradient fallback)
+ * - Optional frame-by-frame `WindowInsets.ime` synchronization
+ * - Multi-line text field up to 6 lines with smooth spring-driven `animateContentSize`
+ * - Auto-detects Arabic/RTL vs English/LTR text direction using `TextDirection.ContentOrLtr`
  * - Attach button slides/fades smoothly out when typing to give maximum text room
- * - Primary circular button swaps between Mic and Send with crossfade + scale (0.6->1) + rotation
- * - Disables Send for blank/whitespace-only text and prevents rapid double-send
+ * - Primary circular button continuously morphs between Mic and Send using simultaneous scale (0f..1f)
+ *   and rotation (-90f..0f / 0f..90f) spring physics (`spring(dampingRatio = 0.65f, stiffness = 500f)`)
+ * - Captures window bounds for Input-to-Chat flight transition
  * - Triggers light haptic feedback on send and keeps the keyboard open
  */
 @Composable
@@ -109,7 +110,9 @@ fun ChatComposer(
     onVoiceDictationClick: () -> Unit,
     chatColors: ChatColors,
     reduceMotion: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onInputBoundsChanged: ((Rect) -> Unit)? = null,
+    applyImeInsets: Boolean = false
 ) {
     val colors = BuildXTheme.colors
     val strings = BuildXTheme.strings
@@ -118,8 +121,12 @@ fun ChatComposer(
     var lastSendClickMs by remember { mutableLongStateOf(0L) }
     var lineCount by remember { mutableIntStateOf(1) }
 
+    val composerMinHeight = 48.dp
+    val composerDefaultCorner = 24.dp
+    val composerExpandedCorner = ChatDimens.ComposerExpandedCorner
+
     val hasSendableContent = text.isNotBlank() || stagedAttachments.isNotEmpty()
-    val showSendMode = text.isNotEmpty() || stagedAttachments.isNotEmpty()
+    val showSendMode = hasSendableContent
     val isTextRtl = remember(text, strings.isRtl) {
         isRtlText(text, defaultRtl = strings.isRtl)
     }
@@ -137,11 +144,11 @@ fun ChatComposer(
     val hasTopBanner = replyingTo != null || editing != null || stagedAttachments.isNotEmpty()
     val targetCorner by animateDpAsState(
         targetValue = if (hasTopBanner || lineCount > 1) {
-            ChatDimens.ComposerExpandedCorner
+            composerExpandedCorner
         } else {
-            ChatDimens.ComposerCorner
+            composerDefaultCorner
         },
-        animationSpec = tween(if (reduceMotion) 0 else 180),
+        animationSpec = if (reduceMotion) tween(0) else ChatMotion.layoutGestureSpring(),
         label = "composer_corner"
     )
     val composerShape = RoundedCornerShape(targetCorner)
@@ -149,7 +156,9 @@ fun ChatComposer(
     val activeBannerTitle = when {
         replyingTo != null -> stringResource(
             R.string.dm_replying_to,
-            replyingTo.senderDisplayName ?: stringResource(R.string.dm_you)
+            ChatBidiFormatter.isolateFirstStrong(
+                replyingTo.senderDisplayName ?: stringResource(R.string.dm_you)
+            )
         )
         editing != null -> stringResource(R.string.dm_editing_message)
         else -> null
@@ -168,31 +177,44 @@ fun ChatComposer(
         lastBannerIsEdit = replyingTo == null && editing != null
     }
 
-    // Outer container owns padding -> minHeight -> softShadow -> clip -> background -> border
+    val composerGlassColor = chatColors.composerBg.copy(
+        alpha = if (colors.isDark) ChatGlassTokens.ComposerGlassAlphaDark else ChatGlassTokens.ComposerGlassAlphaLight
+    )
+
+    val containerModifier = modifier
+        .fillMaxWidth()
+        .then(
+            if (applyImeInsets) {
+                Modifier.windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+            } else {
+                Modifier
+            }
+        )
+        .padding(
+            start = ChatDimens.ComposerOuterPaddingH,
+            end = ChatDimens.ComposerOuterPaddingH,
+            top = ChatDimens.ComposerOuterPaddingTop,
+            bottom = ChatDimens.ComposerOuterPaddingBottom
+        )
+        .defaultMinSize(minHeight = composerMinHeight)
+        .onGloballyPositioned { coords ->
+            onInputBoundsChanged?.invoke(coords.boundsInWindow())
+        }
+
+    // Glassmorphic capsule container owns shadow -> clip -> backdrop blur -> border
     // so animateContentSize on the inner Column never clips or tears the outer shadow.
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(
-                start = ChatDimens.ComposerOuterPaddingH,
-                end = ChatDimens.ComposerOuterPaddingH,
-                top = ChatDimens.ComposerOuterPaddingTop,
-                bottom = ChatDimens.ComposerOuterPaddingBottom
-            )
-            .defaultMinSize(minHeight = ChatDimens.ComposerMinHeight)
-            .softShadow(
-                color = chatColors.composerShadow,
-                cornerRadius = targetCorner,
-                blurRadius = ChatDimens.ComposerShadowBlur,
-                offsetY = ChatDimens.ComposerShadowOffsetY
-            )
-            .clip(composerShape)
-            .background(chatColors.composerBg)
-            .border(
-                ChatDimens.ComposerBorderWidth,
-                chatColors.composerBorder,
-                composerShape
-            )
+    ChatGlassCapsuleContainer(
+        shape = composerShape,
+        glassColor = composerGlassColor,
+        borderColor = chatColors.composerBorder,
+        shadowColor = chatColors.composerShadow,
+        cornerRadius = targetCorner,
+        shadowBlur = ChatDimens.ComposerShadowBlur,
+        shadowOffsetY = ChatDimens.ComposerShadowOffsetY,
+        blurRadius = ChatGlassTokens.ComposerBlurRadius,
+        isDark = colors.isDark,
+        borderWidth = ChatDimens.ComposerBorderWidth,
+        modifier = containerModifier
     ) {
         Column(
             modifier = Modifier
@@ -201,10 +223,7 @@ fun ChatComposer(
                     animationSpec = if (reduceMotion) {
                         tween(0)
                     } else {
-                        spring(
-                            dampingRatio = Spring.DampingRatioNoBouncy,
-                            stiffness = Spring.StiffnessMediumLow
-                        )
+                        ChatMotion.layoutGestureSpring()
                     }
                 )
         ) {
@@ -213,18 +232,33 @@ fun ChatComposer(
                 enter = if (reduceMotion) {
                     fadeIn(tween(0))
                 } else {
-                    expandVertically(tween(180)) + fadeIn(tween(160))
+                    slideInVertically(
+                        animationSpec = spring(
+                            dampingRatio = 0.78f,
+                            stiffness = 460f
+                        ),
+                        initialOffsetY = { fullHeight -> fullHeight / 2 }
+                    ) + expandVertically(
+                        animationSpec = ChatMotion.layoutGestureSpring(),
+                        expandFrom = Alignment.Bottom
+                    ) + fadeIn(ChatMotion.interactiveSpring())
                 },
                 exit = if (reduceMotion) {
                     fadeOut(tween(0))
                 } else {
-                    shrinkVertically(tween(160)) + fadeOut(tween(120))
+                    slideOutVertically(
+                        animationSpec = ChatMotion.layoutGestureSpring(),
+                        targetOffsetY = { fullHeight -> fullHeight / 2 }
+                    ) + shrinkVertically(
+                        animationSpec = ChatMotion.layoutGestureSpring(),
+                        shrinkTowards = Alignment.Bottom
+                    ) + fadeOut(spring(stiffness = 550f))
                 }
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     ChatComposerContextBanner(
                         title = activeBannerTitle ?: lastBannerTitle,
-                        preview = activeBannerPreview ?: lastBannerPreview,
+                        preview = ChatBidiFormatter.isolateFirstStrong(activeBannerPreview ?: lastBannerPreview),
                         accentColor = colors.primaryBlue,
                         onCancel = if (lastBannerIsEdit) onCancelEdit else onCancelReply
                     )
@@ -233,7 +267,7 @@ fun ChatComposer(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp)
-                            .height(0.6.dp)
+                            .height(ChatDimens.DividerThickness)
                             .background(colors.hairlineBorder)
                     )
                 }
@@ -280,18 +314,27 @@ fun ChatComposer(
 
             val scope = rememberCoroutineScope()
             val sendPulseScale = remember { Animatable(1f) }
+            val micToSendSpring = remember(reduceMotion) {
+                if (reduceMotion) tween<Float>(0)
+                else spring(dampingRatio = 0.65f, stiffness = 500f)
+            }
+            val sendMorphProgress by animateFloatAsState(
+                targetValue = if (hasSendableContent) 1f else 0f,
+                animationSpec = micToSendSpring,
+                label = "mic_to_send_morph_progress"
+            )
 
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 6.dp, vertical = 5.dp),
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.Bottom
                 ) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .defaultMinSize(minHeight = ChatDimens.ComposerActionSize)
+                            .defaultMinSize(minHeight = 40.dp)
                             .padding(start = 10.dp, end = 6.dp, top = 9.dp, bottom = 9.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
@@ -304,18 +347,12 @@ fun ChatComposer(
                             Text(
                                 text = stringResource(R.string.dm_composer_placeholder),
                                 color = colors.secondaryText,
-                                style = TextStyle(
-                                    fontFamily = BuildXFontFamily,
-                                    fontSize = 16.sp,
-                                    lineHeight = 22.sp,
-                                    fontWeight = FontWeight.Normal,
-                                    textDirection = if (strings.isRtl) TextDirection.Rtl else TextDirection.Ltr
-                                ),
+                                style = ChatTypography.composerPlaceholder,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .alpha(placeholderAlpha),
+                                    .graphicsLayer { alpha = placeholderAlpha },
                                 textAlign = if (strings.isRtl) TextAlign.Right else TextAlign.Left
                             )
                         }
@@ -334,14 +371,10 @@ fun ChatComposer(
                                 onTextLayout = { layoutResult ->
                                     lineCount = layoutResult.lineCount
                                 },
-                                textStyle = TextStyle(
-                                    fontFamily = BuildXFontFamily,
+                                textStyle = ChatTypography.composerInput.copy(
                                     color = colors.primaryText,
-                                    fontSize = 16.sp,
-                                    lineHeight = 22.sp,
-                                    fontWeight = FontWeight.Normal,
-                                    textAlign = TextAlign.Start,
-                                    textDirection = if (effectiveInputRtl) TextDirection.Rtl else TextDirection.Ltr
+                                    textAlign = if (effectiveInputRtl) TextAlign.Right else TextAlign.Left,
+                                    textDirection = TextDirection.ContentOrLtr
                                 ),
                                 cursorBrush = SolidColor(colors.primaryBlue),
                                 modifier = Modifier
@@ -352,17 +385,26 @@ fun ChatComposer(
                         }
                     }
 
-                    // Right action tray: uniform 5dp/6dp outer row ring around 42dp circle button
+                    // Right action tray around 40dp attach & 40dp/42dp morphing action circle
                     Row(
-                        modifier = Modifier.heightIn(min = ChatDimens.ComposerActionSize),
+                        modifier = Modifier.heightIn(min = 40.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         AnimatedVisibility(
                             visible = text.isEmpty(),
-                            enter = fadeIn(tween(if (reduceMotion) 0 else ChatMotion.AttachSlideDurationMs)) +
-                                expandHorizontally(tween(if (reduceMotion) 0 else ChatMotion.AttachSlideDurationMs)),
-                            exit = fadeOut(tween(if (reduceMotion) 0 else ChatMotion.AttachSlideDurationMs)) +
-                                shrinkHorizontally(tween(if (reduceMotion) 0 else ChatMotion.AttachSlideDurationMs))
+                            enter = fadeIn(
+                                animationSpec = if (reduceMotion) tween(0) else spring(
+                                    dampingRatio = 0.65f,
+                                    stiffness = 500f
+                                )
+                            ) + expandHorizontally(
+                                animationSpec = if (reduceMotion) tween(0) else ChatMotion.layoutGestureSpring()
+                            ),
+                            exit = fadeOut(
+                                animationSpec = if (reduceMotion) tween(0) else tween(ChatMotion.AttachSlideDurationMs)
+                            ) + shrinkHorizontally(
+                                animationSpec = if (reduceMotion) tween(0) else ChatMotion.layoutGestureSpring()
+                            )
                         ) {
                             Box(
                                 modifier = Modifier
@@ -382,8 +424,7 @@ fun ChatComposer(
 
                         Spacer(modifier = Modifier.width(2.dp))
 
-                        val actionEnabled = if (showSendMode) hasSendableContent else true
-                        val actionBg = if (showSendMode && !hasSendableContent) {
+                        val actionBg = if (text.isNotEmpty() && !hasSendableContent) {
                             chatColors.composerActionDisabledBg
                         } else {
                             chatColors.composerActionBg
@@ -399,7 +440,7 @@ fun ChatComposer(
                                 .clip(CircleShape)
                                 .background(actionBg)
                                 .pressScaleClickable(
-                                    enabled = actionEnabled
+                                    enabled = true
                                 ) {
                                     if (showSendMode) {
                                         val now = System.currentTimeMillis()
@@ -412,55 +453,57 @@ fun ChatComposer(
                                                     sendPulseScale.animateTo(
                                                         targetValue = 1f,
                                                         animationSpec = spring(
-                                                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                                                            stiffness = Spring.StiffnessMedium
+                                                            dampingRatio = 0.65f,
+                                                            stiffness = 500f
                                                         )
                                                     )
                                                 }
                                             }
                                             onSendClick()
                                         }
-                                    } else {
+                                    } else if (text.isEmpty()) {
                                         onVoiceDictationClick()
                                     }
                                 },
                             contentAlignment = Alignment.Center
                         ) {
-                            val iconRotation by animateFloatAsState(
-                                targetValue = if (showSendMode) 0f else -ChatMotion.ActionSwapRotationDeg,
-                                animationSpec = tween(if (reduceMotion) 0 else ChatMotion.ActionSwapDurationMs),
-                                label = "composer_action_rotation"
-                            )
-                            AnimatedContent(
-                                targetState = showSendMode,
-                                transitionSpec = {
-                                    if (reduceMotion) {
-                                        fadeIn(tween(0)) togetherWith fadeOut(tween(0))
-                                    } else {
-                                        (fadeIn(tween(ChatMotion.ActionSwapDurationMs)) +
-                                            scaleIn(
-                                                tween(ChatMotion.ActionSwapDurationMs),
-                                                initialScale = ChatMotion.ActionSwapStartScale
-                                            )) togetherWith
-                                            (fadeOut(tween(ChatMotion.ActionSwapDurationMs)) +
-                                                scaleOut(
-                                                    tween(ChatMotion.ActionSwapDurationMs),
-                                                    targetScale = ChatMotion.ActionSwapStartScale
-                                                ))
-                                    }
-                                },
-                                label = "composer_mic_send_swap"
-                            ) { isSend ->
+                            val clamped = sendMorphProgress.coerceIn(0f, 1f)
+                            val micScale = (1f - sendMorphProgress).coerceAtLeast(0f)
+                            val micRotation = -90f * clamped
+                            val micAlpha = (1f - clamped).coerceIn(0f, 1f)
+
+                            val sendScale = sendMorphProgress.coerceAtLeast(0f)
+                            val sendRotation = 90f * (1f - sendMorphProgress)
+                            val sendAlpha = clamped
+
+                            if (micAlpha > 0.005f) {
                                 Icon(
-                                    painter = painterResource(
-                                        id = if (isSend) R.drawable.ic_arrow_up else R.drawable.ic_mic
-                                    ),
-                                    contentDescription = if (isSend) stringResource(R.string.dm_send) else "Voice",
+                                    painter = painterResource(id = R.drawable.ic_mic),
+                                    contentDescription = "Voice",
                                     tint = Color.White,
                                     modifier = Modifier
                                         .size(20.dp)
                                         .graphicsLayer {
-                                            rotationZ = if (isSend) iconRotation else iconRotation + ChatMotion.ActionSwapRotationDeg
+                                            scaleX = micScale
+                                            scaleY = micScale
+                                            rotationZ = micRotation
+                                            alpha = micAlpha
+                                        }
+                                )
+                            }
+
+                            if (sendAlpha > 0.005f) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_arrow_up),
+                                    contentDescription = stringResource(R.string.dm_send),
+                                    tint = Color.White,
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .graphicsLayer {
+                                            scaleX = sendScale
+                                            scaleY = sendScale
+                                            rotationZ = sendRotation
+                                            alpha = sendAlpha
                                         }
                                 )
                             }
@@ -484,6 +527,7 @@ private fun ChatComposerContextBanner(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 8.dp, end = 8.dp, top = 8.dp)
+            .heightIn(min = 36.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(colors.surfaceMuted.copy(alpha = 0.72f))
             .padding(horizontal = 10.dp, vertical = 8.dp),
@@ -491,8 +535,8 @@ private fun ChatComposerContextBanner(
     ) {
         Box(
             modifier = Modifier
-                .width(3.dp)
-                .height(30.dp)
+                .width(ChatDimens.QuoteAccentBarWidth)
+                .height(36.dp)
                 .clip(RoundedCornerShape(1.5.dp))
                 .background(accentColor)
         )
@@ -501,19 +545,14 @@ private fun ChatComposerContextBanner(
             Text(
                 text = title,
                 color = accentColor,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
+                style = ChatTypography.quoteSender,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = preview,
                 color = colors.secondaryText,
-                style = TextStyle(
-                    fontFamily = BuildXFontFamily,
-                    fontSize = 13.sp,
-                    textDirection = TextDirection.Content
-                ),
+                style = ChatTypography.quoteBody,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -524,7 +563,7 @@ private fun ChatComposerContextBanner(
                 .size(26.dp)
                 .clip(CircleShape)
                 .background(colors.cardBackground.copy(alpha = 0.7f))
-                .clickable(onClick = onCancel),
+                .pressScaleClickable(onClick = onCancel),
             contentAlignment = Alignment.Center
         ) {
             Icon(
